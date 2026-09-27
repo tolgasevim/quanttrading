@@ -1,0 +1,75 @@
+{
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "USD",
+     "symbol": "NVDA",
+     "exchangeName": "NMS",
+     "exchangeTimezoneName": "America/New_York",
+     "regularMarketPrice": 185.43
+    },
+    "timestamp": [
+     1789997400,
+     1790083800,
+     1790170200,
+     1790256600,
+     1790343000
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "open": [
+        180.0,
+        181.5,
+        null,
+        182.0,
+        180.1
+       ],
+       "high": [
+        182.4,
+        184.0,
+        null,
+        182.9,
+        186.0
+       ],
+       "low": [
+        179.1,
+        180.9,
+        null,
+        178.5,
+        179.8
+       ],
+       "close": [
+        181.2,
+        183.05,
+        null,
+        179.9,
+        185.43
+       ],
+       "volume": [
+        201334500,
+        188220100,
+        null,
+        230118700,
+        210556400
+       ]
+      }
+     ],
+     "adjclose": [
+      {
+       "adjclose": [
+        181.19,
+        183.04,
+        null,
+        179.89,
+        185.43
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ }
+}
