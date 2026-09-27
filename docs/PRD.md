@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25, Q26, Q29, Q30 and Q31, and the opportunity reserve (D29). See §13, Open Questions. |
+| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25–Q31, and the opportunity reserve (D29). See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
 | **Last updated** | 2026-09-27 (v0.4) |
 | **Working name** | QuantTrading (placeholder) |
@@ -49,6 +49,8 @@ The app **never places trades**. Users import their broker statements. The app c
 | D28 | Parallel Nasdaq-100 plans | **Intentional**, keep both (Q29) | FR-46 gets an "intentional overlap" exemption, so the app doesn't nag about them. |
 | D29 | Car reserve | The car reserve is an **opportunity reserve**: not invested in normal operation, but investable **if there is a genuinely strong opportunity** | FR-28a gets two reserve types. The strict unlock rules are in FR-28b. |
 | D30 | Deployment and car timing | Investable cash goes in over **6 monthly tranches** (Q30). The car purchase is expected in **about 12 months** (target date around Sep 2027). The FR-28b unlock defaults are confirmed (Q31). | FR-49 default stands. The unlock window for the car reserve closes around **Mar 2027**, 6 months before the target date. |
+| D31 | Tech taxonomy | The nine FR-47 sub-groups are **confirmed** as proposed (Q27). Clean-tech stays a tech-adjacent sub-group. Non-tech single stocks (e.g. healthcare) are tagged **non-tech** for reporting. | FR-47 is final. Non-tech stocks stay in the single-stock bucket with no separate cap. |
+| D32 | Crypto cap | **10%** of the portfolio for combined crypto exposure is confirmed. There is **no altcoin sub-cap**: XRP and ADA are treated like BTC and ETH (Q28). | FR-29 and FR-40 are final. |
 
 ## 3. Goals and non-goals
 
@@ -235,7 +237,9 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   6. **IT services** (Accenture, EPAM, …)
   7. **Media and streaming** (Netflix, Spotify, …)
   8. **Crypto-linked equities** (miners, treasury companies, exchanges)
-  9. **Clean-tech and energy tech** (e.g. SMA Solar); tagged as tech-adjacent, with the owner to confirm (Q27)
+  9. **Clean-tech and energy tech** (e.g. SMA Solar), tagged as tech-adjacent (D31)
+
+  Single stocks outside tech (e.g. healthcare such as Novo Nordisk) are tagged **non-tech**. They are reported separately but stay in the single-stock bucket, with no separate cap (D31).
 
   Tech ETFs are split into sub-groups through look-through (FR-24). The single-stock cap (D17) still applies across sub-groups.
 - **FR-48 (P0)**: **Trading book** (D24). Leveraged/inverse ETPs, knock-outs and any position the user tags as a "short-term trade" live in a separate book:
@@ -366,11 +370,10 @@ External: data providers (§8), LLM API, SMTP relay
 
 **Answered in round 3**: Q18 (cash supplied, D19), Q19 (history supplied, D20), Q20 (smaller gold hedge, D21; the rest of the target is re-proposed as Q25), Q21 (tech sub-groups, D22), Q22 (real crypto held, D23; this also closes the old Q12), Q23 (short-term trades, D24), Q24 (consolidate but protect good small bets, D25), Q16 (savings plans derived from history).
 
-**Answered after round 3**: Q25 (target confirmed, D26), Q26 (part of the cash is investable and the rest is reserved for a car, D27), Q29 (both Nasdaq-100 plans are intentional, D28), Q30 (6 monthly tranches; car in about 12 months, D30), Q31 (unlock defaults confirmed, D30).
+**Answered after round 3**: Q25 (target confirmed, D26), Q26 (part of the cash is investable and the rest is reserved for a car, D27), Q29 (both Nasdaq-100 plans are intentional, D28), Q30 (6 monthly tranches; car in about 12 months, D30), Q31 (unlock defaults confirmed, D30), Q27 (taxonomy confirmed, D31), Q28 (10% crypto cap, no altcoin sub-cap, D32).
 
 **Blocking the MVP design:**
-- **Q27 — Tech taxonomy**: are the nine sub-groups in FR-47 right? Should clean-tech/energy tech (e.g. SMA Solar) and healthcare holdings (e.g. Novo Nordisk) sit in tech or in a separate "non-tech" bucket with its own cap?
-- **Q28 — Crypto cap**: is 10% the right cap for combined crypto exposure (coins plus crypto-linked equities)? Should altcoins (XRP, ADA) have a sub-cap relative to BTC/ETH?
+- None. All MVP-blocking questions are answered.
 
 **Still open from round 1:**
 - **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or inherit Growth?
