@@ -46,8 +46,8 @@ The app **never places trades**. Users import their broker statements. The app c
 | D25 | Long tail | App should **push towards consolidation** but must **not kill small positions that score well** | FR-45 reworked: consolidation is a guided, paced programme with a "protected small bet" status. |
 | D26 | Target allocation | **Confirmed** as proposed (Q25): tech stocks 35 / ETFs 45 / crypto 7 / gold 3 / cash 5, trading book capped at 3% | FR-40 defaults are final for the owner. |
 | D27 | Cash split | Part of the cash is **up for investment**; the rest is **earmarked for a planned purchase (a car)** and must not be invested. Amounts are kept out of the repo. | New: earmarked reserves (FR-28a) and a cash deployment plan (FR-49). |
-| D29 | Car reserve | The car reserve is an **opportunity reserve**: not invested in normal operation, but investable **if there is a genuinely strong opportunity** | FR-28a gets two reserve types. The strict unlock rules are in FR-28b. |
 | D28 | Parallel Nasdaq-100 plans | **Intentional**, keep both (Q29) | FR-46 gets an "intentional overlap" exemption, so the app doesn't nag about them. |
+| D29 | Car reserve | The car reserve is an **opportunity reserve**: not invested in normal operation, but investable **if there is a genuinely strong opportunity** | FR-28a gets two reserve types. The strict unlock rules are in FR-28b. |
 
 ## 3. Goals and non-goals
 
