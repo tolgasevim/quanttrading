@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.3 — updated after round 3 of Q&A and analysis of the full TR transaction history and crypto statement. See §13, Open Questions. |
+| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25, Q26 and Q29. See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
-| **Last updated** | 2026-09-27 (v0.3) |
+| **Last updated** | 2026-09-27 (v0.4) |
 | **Working name** | QuantTrading (placeholder) |
 
 ---
@@ -44,6 +44,9 @@ The app **never places trades**. Users import their broker statements. The app c
 | D23 | Crypto | Owner **holds real crypto at TR** (BTC, ETH, XRP, ADA; statement supplied) | Crypto moves from non-goal to tracked asset class: import, valuation, bucket, cap, German crypto tax rules (FR-29, FR-11b). Still no trading, wallets or DeFi. |
 | D24 | Leveraged / knock-out products | **Short-term trades** | Kept in a separate **trading book** (FR-48), excluded from long-term targets, with strict holding-time and knock-out alerts. |
 | D25 | Long tail | App should **push towards consolidation** but must **not kill small positions that score well** | FR-45 reworked: consolidation is a guided, paced programme with a "protected small bet" status. |
+| D26 | Target allocation | **Confirmed** as proposed (Q25): tech stocks 35 / ETFs 45 / crypto 7 / gold 3 / cash 5, trading book capped at 3% | FR-40 defaults are final for the owner. |
+| D27 | Cash split | Part of the cash is **up for investment**; the rest is **earmarked for a planned purchase (a car)** and must not be invested. Amounts are kept out of the repo. | New: earmarked reserves (FR-28a) and a cash deployment plan (FR-49). |
+| D28 | Parallel Nasdaq-100 plans | **Intentional**, keep both (Q29) | FR-46 gets an "intentional overlap" exemption, so the app doesn't nag about them. |
 
 ## 3. Goals and non-goals
 
@@ -138,6 +141,12 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   - *ELTIFs / private-market funds*: illiquid, infrequent net asset value; show a liquidity and valuation-staleness flag.
   - *Pre-IPO or thinly traded shares*: prices flagged as low-confidence.
 - **FR-28 (P0)**: **Cash**: a Depotauszug does not include the cash account. Cash is the **user-entered balance**, cross-checked against the balance rebuilt from the transaction export (sum of amount + fee + tax). Any difference is shown, and a warning is raised if it exceeds 2%. On the owner's data the two agree to within 0.7%. The residual is expected from pending card transactions and interest timing.
+- **FR-28a (P0)**: **Earmarked reserves** (D27). The user can set aside parts of the cash balance as named reserves (e.g. "car", with an amount and an optional target date). Reserves:
+  - are **excluded from the investable portfolio**: they don't count towards the cash bucket, drift or deployment suggestions, and the AI must never propose investing them;
+  - are still shown in total net worth, as a separate line;
+  - raise an alert if the actual cash balance falls below the sum of all reserves, meaning reserved money was spent or invested;
+  - can be released or shrunk by the user at any time (e.g. the car costs less than planned). Released money becomes investable cash.
+  - *Suggestion (P1)*: while a reserve waits, point out options that keep it liquid and low-risk, such as TR interest on cash or a money-market ETF. For a reserve due within 12 months, never suggest equities.
 - **FR-29 (P0)**: **Crypto** (D23): coins held at TR (BTC, ETH, XRP, ADA today) are valued daily in EUR and shown as their own asset class and bucket. German crypto tax rules apply, not Abgeltungssteuer: a sale is a private disposal (§23 EStG). It is **tax-free after a 1-year holding period per lot (FIFO)**; otherwise it is taxed at the personal income-tax rate, with an annual exemption limit (Freigrenze) of €1,000. The app shows a per-lot "tax-free from" date and the share of each coin that is already tax-free. All crypto tax figures are labelled "estimate, verify with a tax advisor".
 - **FR-25 (P0)**: FX: EUR base currency using daily ECB reference rates. Show the FX contribution to return separately.
 - **FR-26 (P1)**: German tax estimate: 25% Abgeltungssteuer plus 5.5% Soli (plus optional church tax), the €1,000 Sparerpauschbetrag (€2,000 joint), 30% Teilfreistellung for equity ETFs, Vorabpauschale, and separate loss pots (equity loss pot vs. general). Show both pre-tax and estimated after-tax P&L.
@@ -163,7 +172,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 - **FR-35 (P0)**: Score history is stored daily so trends ("quality falling for 3 months") can be shown and backtested later.
 
 ### 6.5 Guidance and rebalancing
-- **FR-40 (P0)**: The user defines a **target allocation** as buckets with bands. Proposed default for the Growth profile (owner to confirm, Q25):
+- **FR-40 (P0)**: The user defines a **target allocation** as buckets with bands. Default for the Growth profile (confirmed by the owner, D26):
 
   | Bucket | Target | Band |
   |---|---|---|
@@ -171,7 +180,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   | Broad and tech ETFs | 45% | ±5 pp |
   | Crypto (coins at TR) | 7% | 0–10%; the cap also covers combined crypto exposure |
   | Commodity hedge (gold/silver ETC) | 3% | 0–5% (D21), optional |
-  | Cash | 5% | 3–10%; excess cash triggers a deployment plan (Q26) |
+  | Cash | 5% | 3–10% of the investable portfolio; excess cash triggers a deployment plan (FR-49). Earmarked reserves (FR-28a) are excluded. |
   | Trading book (FR-48) | 0% target | Hard cap of 3%, excluded from drift maths |
 
   *Current split* stays in the owner-only analysis, not in the repo.
@@ -190,7 +199,12 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
     - **Keep as tracker**: the user's explicit choice. It is excluded from nagging for 6 months, then re-reviewed.
   - *Pacing*: at most N consolidation prompts per week (default 3), bundled in the weekly digest. Loss harvesting is preferred at year end to use the Sparerpauschbetrag and loss pots.
   - *Guardrail*: the AI layer (FR-51) must use the same classification. It may not recommend exiting a protected small bet without saying explicitly that it overrides the protection, and why.
-- **FR-46 (P0)**: **Redundancy detection**: several ETFs tracking the same or a heavily overlapping index (e.g. two Nasdaq-100 ETFs, two World Momentum ETFs), with a consolidation suggestion that respects tax (e.g. redirect savings plans instead of selling).
+- **FR-46 (P0)**: **Redundancy detection**: several ETFs tracking the same or a heavily overlapping index (e.g. two Nasdaq-100 ETFs, two World Momentum ETFs), with a consolidation suggestion that respects tax (e.g. redirect savings plans instead of selling). The user can mark an overlap as **intentional** (e.g. the owner's two Nasdaq-100 plans, EUR Acc and USD Dist, D28). An intentional overlap is excluded from consolidation prompts but still counts in look-through concentration (FR-24) and caps. It is re-confirmed once a year.
+- **FR-49 (P0)**: **Cash deployment plan** (D27). When investable cash (the balance minus reserves) is above the cash band, the app proposes a plan to invest the excess:
+  - by default it is split into **6 monthly tranches**, configurable from a lump sum to 12 months (Q30);
+  - each tranche is steered to the most **underweight buckets and tech sub-groups** (FR-40, FR-47). Within a bucket it prefers high-scoring holdings and **protected small bets** that are below conviction size (FR-45), then ETFs;
+  - it is delivered as concrete orders or temporary savings-plan increases ("this month: €X into Y, €Z into W"), with a rationale. After each import the app ticks off the tranches actually executed;
+  - if the market falls more than 10% from the plan start, the user is offered the option to pull the remaining tranches forward. This is only an offer, never automatic.
 - **FR-47 (P0)**: **Tech sub-groups** (D22). Every tech instrument is tagged with exactly one sub-group, with auto-tagging from its sector code and a manual override. Each sub-group has an optional soft target and cap, and is shown in allocation, drift and look-through views. Initial taxonomy:
   1. **Semiconductors and semi equipment** (NVDA, TSMC, ASML, Infineon, …)
   2. **Software and cloud** (MSFT, Atlassian, SAP, …)
@@ -331,12 +345,12 @@ External: data providers (§8), LLM API, SMTP relay
 
 **Answered in round 3**: Q18 (cash supplied, D19), Q19 (history supplied, D20), Q20 (smaller gold hedge, D21; the rest of the target is re-proposed as Q25), Q21 (tech sub-groups, D22), Q22 (real crypto held, D23; this also closes the old Q12), Q23 (short-term trades, D24), Q24 (consolidate but protect good small bets, D25), Q16 (savings plans derived from history).
 
+**Answered after round 3**: Q25 (target confirmed, D26), Q26 (part of the cash is investable and the rest is reserved for a car, D27), Q29 (both Nasdaq-100 plans are intentional, D28).
+
 **Blocking the MVP design:**
-- **Q25 — Target allocation**: is the proposed default in FR-40 right (tech stocks 35 / ETFs 45 / crypto 7 / gold 3 / cash 5, plus a trading book capped at 3%)?
-- **Q26 — Cash deployment**: if cash is well above target, should the app propose deploying it (e.g. spread over 6–12 months into underweight buckets), or is the cash deliberately held (emergency fund, planned expense, dry powder)? If it is held, how much of it should be excluded from the portfolio?
 - **Q27 — Tech taxonomy**: are the nine sub-groups in FR-47 right? Should clean-tech/energy tech (e.g. SMA Solar) and healthcare holdings (e.g. Novo Nordisk) sit in tech or in a separate "non-tech" bucket with its own cap?
 - **Q28 — Crypto cap**: is 10% the right cap for combined crypto exposure (coins plus crypto-linked equities)? Should altcoins (XRP, ADA) have a sub-cap relative to BTC/ETH?
-- **Q29 — Nasdaq-100 duplicate**: two Nasdaq-100 savings plans run in parallel (EUR Acc and USD Dist). Is that intentional, e.g. for distributions? If not, the first consolidation suggestion will be to merge them into one accumulating plan.
+- **Q30 — Deployment pace**: should the investable cash go in as a lump sum, or over the default 6 months (FR-49)? When is the car purchase expected, so the reserve can get a target date?
 
 **Still open from round 1:**
 - **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or inherit Growth?
@@ -360,5 +374,6 @@ External: data providers (§8), LLM API, SMTP relay
 - **Depotauszug / Crypto-Übersicht**: TR's securities and crypto holdings statements (PDF).
 - **Knock-out (Turbo)**: leveraged certificate that expires, nearly worthless, when the underlying touches a barrier.
 - **Trading book**: the separate sub-portfolio for short-term trades (FR-48).
+- **Earmarked reserve**: cash set aside for a planned expense, which is excluded from investing (FR-28a).
 - **Protected small bet**: a small position that scores well and is exempt from exit suggestions (FR-45).
 - **§23 EStG**: private disposal rule under which crypto is taxed; tax-free after one year of holding.
