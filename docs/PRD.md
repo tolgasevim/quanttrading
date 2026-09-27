@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25, Q26 and Q29, and the opportunity reserve (D29). See §13, Open Questions. |
+| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25, Q26, Q29, Q30 and Q31, and the opportunity reserve (D29). See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
 | **Last updated** | 2026-09-27 (v0.4) |
 | **Working name** | QuantTrading (placeholder) |
@@ -48,6 +48,7 @@ The app **never places trades**. Users import their broker statements. The app c
 | D27 | Cash split | Part of the cash is **up for investment**; the rest is **earmarked for a planned purchase (a car)** and must not be invested. Amounts are kept out of the repo. | New: earmarked reserves (FR-28a) and a cash deployment plan (FR-49). |
 | D28 | Parallel Nasdaq-100 plans | **Intentional**, keep both (Q29) | FR-46 gets an "intentional overlap" exemption, so the app doesn't nag about them. |
 | D29 | Car reserve | The car reserve is an **opportunity reserve**: not invested in normal operation, but investable **if there is a genuinely strong opportunity** | FR-28a gets two reserve types. The strict unlock rules are in FR-28b. |
+| D30 | Deployment and car timing | Investable cash goes in over **6 monthly tranches** (Q30). The car purchase is expected in **about 12 months** (target date around Sep 2027). The FR-28b unlock defaults are confirmed (Q31). | FR-49 default stands. The unlock window for the car reserve closes around **Mar 2027**, 6 months before the target date. |
 
 ## 3. Goals and non-goals
 
@@ -151,7 +152,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   - are still shown in total net worth, as a separate line;
   - raise an alert if the actual cash balance falls below the sum of all reserves, meaning reserved money was spent or invested;
   - can be released or shrunk by the user at any time (e.g. the car costs less than planned). Released money becomes investable cash.
-  - *Suggestion (P1)*: while a reserve waits, point out options that keep it liquid and low-risk, such as TR interest on cash or a money-market ETF. For a reserve due within 12 months, never suggest equities.
+  - *Suggestion (P1)*: while a reserve waits, point out options that keep it liquid and low-risk, such as TR interest on cash or a money-market ETF. For a reserve due within 12 months, never suggest equities *for parking*. Deliberate opportunity unlocks follow FR-28b instead.
 - **FR-28b (P0)**: **Opportunity unlock** (D29). The app may propose investing part of an opportunity reserve only when the bar is clearly higher than for normal deployment (FR-49):
   - *Triggers*: at least one must fire, with thresholds configurable.
     - **Market dislocation**: the Nasdaq-100 or MSCI World is at least 20% below its 52-week high.
@@ -221,7 +222,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   - *Guardrail*: the AI layer (FR-51) must use the same classification. It may not recommend exiting a protected small bet without saying explicitly that it overrides the protection, and why.
 - **FR-46 (P0)**: **Redundancy detection**: several ETFs tracking the same or a heavily overlapping index (e.g. two Nasdaq-100 ETFs, two World Momentum ETFs), with a consolidation suggestion that respects tax (e.g. redirect savings plans instead of selling). The user can mark an overlap as **intentional** (e.g. the owner's two Nasdaq-100 plans, EUR Acc and USD Dist, D28). An intentional overlap is excluded from consolidation prompts but still counts in look-through concentration (FR-24) and caps. It is re-confirmed once a year.
 - **FR-49 (P0)**: **Cash deployment plan** (D27). When investable cash (the balance minus reserves) is above the cash band, the app proposes a plan to invest the excess:
-  - by default it is split into **6 monthly tranches**, configurable from a lump sum to 12 months (Q30);
+  - by default it is split into **6 monthly tranches**, configurable from a lump sum to 12 months (confirmed by the owner, D30);
   - each tranche is steered to the most **underweight buckets and tech sub-groups** (FR-40, FR-47). Within a bucket it prefers high-scoring holdings and **protected small bets** that are below conviction size (FR-45), then ETFs;
   - it is delivered as concrete orders or temporary savings-plan increases ("this month: €X into Y, €Z into W"), with a rationale. After each import the app ticks off the tranches actually executed;
   - if the market falls more than 10% from the plan start, the user is offered the option to pull the remaining tranches forward. This is only an offer, never automatic.
@@ -365,13 +366,11 @@ External: data providers (§8), LLM API, SMTP relay
 
 **Answered in round 3**: Q18 (cash supplied, D19), Q19 (history supplied, D20), Q20 (smaller gold hedge, D21; the rest of the target is re-proposed as Q25), Q21 (tech sub-groups, D22), Q22 (real crypto held, D23; this also closes the old Q12), Q23 (short-term trades, D24), Q24 (consolidate but protect good small bets, D25), Q16 (savings plans derived from history).
 
-**Answered after round 3**: Q25 (target confirmed, D26), Q26 (part of the cash is investable and the rest is reserved for a car, D27), Q29 (both Nasdaq-100 plans are intentional, D28).
+**Answered after round 3**: Q25 (target confirmed, D26), Q26 (part of the cash is investable and the rest is reserved for a car, D27), Q29 (both Nasdaq-100 plans are intentional, D28), Q30 (6 monthly tranches; car in about 12 months, D30), Q31 (unlock defaults confirmed, D30).
 
 **Blocking the MVP design:**
 - **Q27 — Tech taxonomy**: are the nine sub-groups in FR-47 right? Should clean-tech/energy tech (e.g. SMA Solar) and healthcare holdings (e.g. Novo Nordisk) sit in tech or in a separate "non-tech" bucket with its own cap?
 - **Q28 — Crypto cap**: is 10% the right cap for combined crypto exposure (coins plus crypto-linked equities)? Should altcoins (XRP, ADA) have a sub-cap relative to BTC/ETH?
-- **Q30 — Deployment pace and car timing**: should the investable cash go in as a lump sum, or over the default 6 months (FR-49)? When is the car purchase expected? This matters more now, because opportunity unlocks are blocked within 6 months of the target date (FR-28b).
-- **Q31 — Unlock thresholds**: are the FR-28b defaults right (a market at least 20% off its high, or a top-10% score at least 25% off its high; at most 50% of the reserve per opportunity)?
 
 **Still open from round 1:**
 - **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or inherit Growth?
