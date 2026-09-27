@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25, Q26 and Q29. See §13, Open Questions. |
+| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25, Q26 and Q29, and the opportunity reserve (D29). See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
 | **Last updated** | 2026-09-27 (v0.4) |
 | **Working name** | QuantTrading (placeholder) |
@@ -46,6 +46,7 @@ The app **never places trades**. Users import their broker statements. The app c
 | D25 | Long tail | App should **push towards consolidation** but must **not kill small positions that score well** | FR-45 reworked: consolidation is a guided, paced programme with a "protected small bet" status. |
 | D26 | Target allocation | **Confirmed** as proposed (Q25): tech stocks 35 / ETFs 45 / crypto 7 / gold 3 / cash 5, trading book capped at 3% | FR-40 defaults are final for the owner. |
 | D27 | Cash split | Part of the cash is **up for investment**; the rest is **earmarked for a planned purchase (a car)** and must not be invested. Amounts are kept out of the repo. | New: earmarked reserves (FR-28a) and a cash deployment plan (FR-49). |
+| D29 | Car reserve | The car reserve is an **opportunity reserve**: not invested in normal operation, but investable **if there is a genuinely strong opportunity** | FR-28a gets two reserve types. The strict unlock rules are in FR-28b. |
 | D28 | Parallel Nasdaq-100 plans | **Intentional**, keep both (Q29) | FR-46 gets an "intentional overlap" exemption, so the app doesn't nag about them. |
 
 ## 3. Goals and non-goals
@@ -141,12 +142,31 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   - *ELTIFs / private-market funds*: illiquid, infrequent net asset value; show a liquidity and valuation-staleness flag.
   - *Pre-IPO or thinly traded shares*: prices flagged as low-confidence.
 - **FR-28 (P0)**: **Cash**: a Depotauszug does not include the cash account. Cash is the **user-entered balance**, cross-checked against the balance rebuilt from the transaction export (sum of amount + fee + tax). Any difference is shown, and a warning is raised if it exceeds 2%. On the owner's data the two agree to within 0.7%. The residual is expected from pending card transactions and interest timing.
-- **FR-28a (P0)**: **Earmarked reserves** (D27). The user can set aside parts of the cash balance as named reserves (e.g. "car", with an amount and an optional target date). Reserves:
+- **FR-28a (P0)**: **Earmarked reserves** (D27). The user can set aside parts of the cash balance as named reserves (e.g. "car", with an amount and an optional target date). Each reserve has one of two types:
+  - **Hard**: never investable.
+  - **Opportunity** (D29; the owner's car reserve): not investable in normal operation. It can be unlocked only through FR-28b.
+
+  In normal operation, reserves of both types:
   - are **excluded from the investable portfolio**: they don't count towards the cash bucket, drift or deployment suggestions, and the AI must never propose investing them;
   - are still shown in total net worth, as a separate line;
   - raise an alert if the actual cash balance falls below the sum of all reserves, meaning reserved money was spent or invested;
   - can be released or shrunk by the user at any time (e.g. the car costs less than planned). Released money becomes investable cash.
   - *Suggestion (P1)*: while a reserve waits, point out options that keep it liquid and low-risk, such as TR interest on cash or a money-market ETF. For a reserve due within 12 months, never suggest equities.
+- **FR-28b (P0)**: **Opportunity unlock** (D29). The app may propose investing part of an opportunity reserve only when the bar is clearly higher than for normal deployment (FR-49):
+  - *Triggers*: at least one must fire, with thresholds configurable.
+    - **Market dislocation**: the Nasdaq-100 or MSCI World is at least 20% below its 52-week high.
+    - **Instrument opportunity**: a holding or watchlist name with a composite score in the top 10% of the universe, data quality OK (FR-34), and a price at least 25% below its 52-week high **without** a deterioration in the quality score (a cheap price, not a broken thesis).
+    - **Manual**: the user flags an opportunity, and the app shows the same checks before confirming.
+  - *Limits*:
+    - at most 50% of the reserve per opportunity;
+    - only liquid instruments; no crypto, trading book (FR-48), ELTIFs or small caps below a liquidity threshold;
+    - single-stock and sub-group caps (D17, FR-47) still apply.
+  - *Before confirming*, a card shows the **"car stress test"**: the shortfall against the reserve amount if the position falls 20% or 35% by the reserve's target date. It also shows the time left to the target date. Within 6 months of the target date, unlock proposals are blocked.
+  - *Afterwards*:
+    - the unlocked amount is tracked as a **reserve loan** and shown on the dashboard;
+    - the app proposes a refill plan from future deposits or later sales, and alerts if the loan can't be refilled by the target date;
+    - every unlock is logged in the decision journal (FR-44) and the pick log (FR-52), so it is scored like any other call.
+  - *AI* (FR-51): the AI may raise an unlock proposal, but only when a trigger fires. It must label it "uses car reserve" and attach the stress test.
 - **FR-29 (P0)**: **Crypto** (D23): coins held at TR (BTC, ETH, XRP, ADA today) are valued daily in EUR and shown as their own asset class and bucket. German crypto tax rules apply, not Abgeltungssteuer: a sale is a private disposal (§23 EStG). It is **tax-free after a 1-year holding period per lot (FIFO)**; otherwise it is taxed at the personal income-tax rate, with an annual exemption limit (Freigrenze) of €1,000. The app shows a per-lot "tax-free from" date and the share of each coin that is already tax-free. All crypto tax figures are labelled "estimate, verify with a tax advisor".
 - **FR-25 (P0)**: FX: EUR base currency using daily ECB reference rates. Show the FX contribution to return separately.
 - **FR-26 (P1)**: German tax estimate: 25% Abgeltungssteuer plus 5.5% Soli (plus optional church tax), the €1,000 Sparerpauschbetrag (€2,000 joint), 30% Teilfreistellung for equity ETFs, Vorabpauschale, and separate loss pots (equity loss pot vs. general). Show both pre-tax and estimated after-tax P&L.
@@ -350,7 +370,8 @@ External: data providers (§8), LLM API, SMTP relay
 **Blocking the MVP design:**
 - **Q27 — Tech taxonomy**: are the nine sub-groups in FR-47 right? Should clean-tech/energy tech (e.g. SMA Solar) and healthcare holdings (e.g. Novo Nordisk) sit in tech or in a separate "non-tech" bucket with its own cap?
 - **Q28 — Crypto cap**: is 10% the right cap for combined crypto exposure (coins plus crypto-linked equities)? Should altcoins (XRP, ADA) have a sub-cap relative to BTC/ETH?
-- **Q30 — Deployment pace**: should the investable cash go in as a lump sum, or over the default 6 months (FR-49)? When is the car purchase expected, so the reserve can get a target date?
+- **Q30 — Deployment pace and car timing**: should the investable cash go in as a lump sum, or over the default 6 months (FR-49)? When is the car purchase expected? This matters more now, because opportunity unlocks are blocked within 6 months of the target date (FR-28b).
+- **Q31 — Unlock thresholds**: are the FR-28b defaults right (a market at least 20% off its high, or a top-10% score at least 25% off its high; at most 50% of the reserve per opportunity)?
 
 **Still open from round 1:**
 - **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or inherit Growth?
@@ -374,6 +395,6 @@ External: data providers (§8), LLM API, SMTP relay
 - **Depotauszug / Crypto-Übersicht**: TR's securities and crypto holdings statements (PDF).
 - **Knock-out (Turbo)**: leveraged certificate that expires, nearly worthless, when the underlying touches a barrier.
 - **Trading book**: the separate sub-portfolio for short-term trades (FR-48).
-- **Earmarked reserve**: cash set aside for a planned expense, which is excluded from investing (FR-28a).
+- **Earmarked reserve**: cash set aside for a planned expense (FR-28a). A *hard* reserve is never invested. An *opportunity* reserve can be unlocked for exceptional opportunities (FR-28b).
 - **Protected small bet**: a small position that scores well and is exempt from exit suggestions (FR-45).
 - **§23 EStG**: private disposal rule under which crypto is taxed; tax-free after one year of holding.
