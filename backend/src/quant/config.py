@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="QT_", env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+psycopg://quant:quant@localhost:5432/quant"
+    # Role the app switches to after connecting, so row-level security applies (FR-3).
+    # Empty only for tooling that must act as the owner (migrations, test cleanup).
+    db_app_role: str = "quant_app"
+    max_upload_mb: int = 20
 
     # Auth
     session_ttl_hours: int = 24 * 14

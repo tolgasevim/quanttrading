@@ -14,10 +14,11 @@ import pytest  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from quant.db import get_engine, get_sessionmaker  # noqa: E402
+from quant.config import get_settings  # noqa: E402
+from quant.db import get_sessionmaker  # noqa: E402
 from quant.main import app  # noqa: E402
 from quant.models import Base, Role, User  # noqa: E402
 from quant.security import hash_password  # noqa: E402
@@ -39,8 +40,11 @@ def migrated_db() -> None:
 def clean_tables() -> Iterator[None]:
     yield
     names = ", ".join(t.name for t in reversed(Base.metadata.sorted_tables))
-    with get_engine().begin() as conn:
+    # As the owner: the app role may not TRUNCATE.
+    owner = create_engine(get_settings().database_url)
+    with owner.begin() as conn:
         conn.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+    owner.dispose()
 
 
 @pytest.fixture

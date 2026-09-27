@@ -7,6 +7,7 @@ from fastapi import Cookie, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from quant import rls
 from quant.db import get_db
 from quant.models import AuthSession, Role, User
 from quant.security import hash_token
@@ -35,3 +36,11 @@ def admin_user(user: CurrentUser) -> User:
 
 
 AdminUser = Annotated[User, Depends(admin_user)]
+
+
+def user_db(db: DbSession, user: CurrentUser) -> Session:
+    """A session that can only see the signed-in user's rows (FR-3, row-level security)."""
+    return rls.scope_to_user(db, user.id)
+
+
+UserDb = Annotated[Session, Depends(user_db)]

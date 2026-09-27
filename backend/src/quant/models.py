@@ -169,3 +169,71 @@ class JobRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rows_written: Mapped[int] = mapped_column(Integer, default=0)
     details: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+
+# --- User-owned data (Phase 1). Every table here has a user_id and a row-level security
+# policy (FR-3, see quant.rls); the API only reaches it through a user-scoped session.
+
+
+class ImportStatus(enum.StrEnum):
+    PREVIEW = "preview"
+    COMMITTED = "committed"
+    DISCARDED = "discarded"
+
+
+class Import(Base):
+    """One uploaded file. The file itself is never stored (FR-19a); only the parsed, stripped
+    rows are staged here until the user confirms the preview (FR-15)."""
+
+    __tablename__ = "imports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(30))  # e.g. "tr_transactions_csv"
+    status: Mapped[ImportStatus] = mapped_column(
+        Enum(ImportStatus, name="import_status", values_callable=_enum_values)
+    )
+    summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    staged: Mapped[list[dict[str, object]] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rows_inserted: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Transaction(Base):
+    """A normalised broker transaction (FR-10). Personal data is removed before it gets here."""
+
+    __tablename__ = "transactions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "external_id", name="uq_transactions_user_external"),
+        Index("ix_transactions_user_date", "user_id", "date"),
+        Index("ix_transactions_user_isin", "user_id", "isin"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    import_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("imports.id", ondelete="SET NULL")
+    )
+    broker: Mapped[str] = mapped_column(String(20))  # "tr"
+    external_id: Mapped[str] = mapped_column(String(100))  # broker's transaction id (FR-10b)
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    date: Mapped[date] = mapped_column(Date)
+    kind: Mapped[str] = mapped_column(String(20))  # normalised, see importers.tr_csv.Kind
+    category: Mapped[str] = mapped_column(String(40))  # broker's raw category
+    type: Mapped[str] = mapped_column(String(60))  # broker's raw type
+    asset_class: Mapped[str | None] = mapped_column(String(20))
+    isin: Mapped[str | None] = mapped_column(String(20))
+    name: Mapped[str | None] = mapped_column(String(200))  # instrument name only
+    shares: Mapped[Decimal | None] = mapped_column(Numeric(28, 10))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    fee: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    tax: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    original_amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    original_currency: Mapped[str | None] = mapped_column(String(3))
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 10))
+    savings_plan: Mapped[bool] = mapped_column(Boolean, default=False)
