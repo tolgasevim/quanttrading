@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25–Q31, and the opportunity reserve (D29). See §13, Open Questions. |
+| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25–Q31 and the round-1 questions (Q7–Q17), and the opportunity reserve (D29). See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
 | **Last updated** | 2026-09-27 (v0.4) |
 | **Working name** | QuantTrading (placeholder) |
@@ -29,9 +29,9 @@ The app **never places trades**. Users import their broker statements. The app c
 | D8 | Data budget | €0, behind a swappable provider interface | Caching is mandatory; the free-source licence risk is accepted (§11). |
 | D9 | AI | Heavy and **unrestricted** (owner's explicit choice) | Disclaimers, a pick log and accuracy tracking are mandatory (§6.6). |
 | D10 | Stack | Python (FastAPI) backend, Next.js front end, Postgres | Python for the quant ecosystem. |
-| D11 | Hosting | Home server / NAS | Docker Compose, a tunnel for friends, backups owned by the owner. |
+| D11 | Hosting | **Mac mini** (Apple Silicon) running Docker. It may move to hosted infrastructure once it has run smoothly for 6 months (D37). | Docker Compose, arm64 images, Tailscale for family access, backups owned by the owner. |
 | D12 | Notifications | In-app, email digest, Telegram bot | Three delivery channels. |
-| D13 | Default risk profile | Growth, long horizon (10+ years, tolerates 30%+ drawdowns) | Owner default. Per-user profiles are an open question (Q7). |
+| D13 | Default risk profile | Growth, long horizon (10+ years, tolerates 30%+ drawdowns) | Owner default. Invited members **inherit** it (D33). |
 | D14 | Friends' broker | Friends also use Trade Republic | MVP parsers cover TR only. Other brokers stay P2 (FR-16). |
 | D15 | Data licence | Switch to a licensed provider (~€20–30/month) once friends are onboarded | Free sources are for the owner-only phase. The provider swap is a release gate for inviting friends (§7). |
 | D16 | Universe | Nasdaq-100 + TecDAX + global semiconductors (all caps) + everything any user holds | See FR-30. |
@@ -51,6 +51,13 @@ The app **never places trades**. Users import their broker statements. The app c
 | D30 | Deployment and car timing | Investable cash goes in over **6 monthly tranches** (Q30). The car purchase is expected in **about 12 months** (target date around Sep 2027). The FR-28b unlock defaults are confirmed (Q31). | FR-49 default stands. The unlock window for the car reserve closes around **Mar 2027**, 6 months before the target date. |
 | D31 | Tech taxonomy | The nine FR-47 sub-groups are **confirmed** as proposed (Q27). Clean-tech stays a tech-adjacent sub-group. Non-tech single stocks (e.g. healthcare) are tagged **non-tech** for reporting. | FR-47 is final. Non-tech stocks stay in the single-stock bucket with no separate cap. |
 | D32 | Crypto cap | **10%** of the portfolio for combined crypto exposure is confirmed. There is **no altcoin sub-cap**: XRP and ADA are treated like BTC and ETH (Q28). | FR-29 and FR-40 are final. |
+| D33 | Members | **Family only** (Q10). Members **inherit the owner's Growth profile** (Q7), and AI picks are visible to them. | No risk questionnaire in the MVP. The legal risk (§11) is lower, but the non-commercial and disclaimer rules still apply. |
+| D34 | Tax | **Single filer**. The Freistellungsauftrag is **only at TR**, using the owner's own **€1,000** Sparerpauschbetrag, even though the account has a joint holder (Q8). | FR-26 defaults: single, €1,000, all at TR. Church tax is off until confirmed (Q34). |
+| D35 | Benchmark and UI | Benchmark **Nasdaq-100** (Q15), via a UCITS Nasdaq-100 ETF as the proxy. UI in **English only** (Q9). | FR-21 default changed. No i18n work in the MVP. |
+| D36 | LLM budget | **€2,000** spend cap (Q11) | FR-56 enforces it, with the period to confirm (Q33). |
+| D37 | Deployment path | Docker on a Mac mini first. It moves to hosting only after **6 months of smooth operation**. | Multi-arch images (arm64 and amd64). A single Compose file must run unchanged on the Mac mini and on a hosted VM. The 6-month stability log is the migration gate (§7). |
+| D38 | Builder | The app is **built by Claude Code**; the owner reviews and merges (Q17) | New §9a, Development process. The timeline is still open (Q32). |
+| D39 | Alerts | Daily-move alert thresholds confirmed (Q14): **±5% for single stocks, ±3% for ETFs, ±10% for crypto** | FR-72 defaults. |
 
 ## 3. Goals and non-goals
 
@@ -134,7 +141,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 
 ### 6.3 Portfolio analytics
 - **FR-20 (P0)**: Holdings table showing quantity, average cost (FIFO, matching German tax rules), market value in EUR, unrealised and realised P&L, weight and asset class.
-- **FR-21 (P0)**: Performance: time-weighted return and money-weighted return (XIRR), against a user-chosen benchmark (default: MSCI World; alternatives Nasdaq-100 and S&P 500 via UCITS ETF proxies).
+- **FR-21 (P0)**: Performance: time-weighted return and money-weighted return (XIRR), against a user-chosen benchmark (default: **Nasdaq-100** via a UCITS ETF proxy, D35; alternatives MSCI World and S&P 500).
 - **FR-22 (P0)**: Risk: annualised volatility, maximum drawdown, beta against the benchmark, portfolio correlation matrix, and 1-year historical VaR/CVaR at 95%.
 - **FR-23 (P0)**: Concentration by position, sector, country and currency (USD exposure), and asset class (equity, ETF, commodity ETC, cash).
 - **FR-24 (P0, promoted from P1)**: ETF look-through: aggregate the underlying holdings of ETFs (e.g. an MSCI World ETF plus NVDA shares means hidden NVDA overlap), using issuer holdings files. *Promoted because real portfolios hold several Nasdaq-100 and IT-sector ETFs **and** the same mega-caps directly, so direct weights understate true exposure. Caps (FR-43, D17) apply to look-through exposure.*
@@ -172,7 +179,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   - *AI* (FR-51): the AI may raise an unlock proposal, but only when a trigger fires. It must label it "uses car reserve" and attach the stress test.
 - **FR-29 (P0)**: **Crypto** (D23): coins held at TR (BTC, ETH, XRP, ADA today) are valued daily in EUR and shown as their own asset class and bucket. German crypto tax rules apply, not Abgeltungssteuer: a sale is a private disposal (§23 EStG). It is **tax-free after a 1-year holding period per lot (FIFO)**; otherwise it is taxed at the personal income-tax rate, with an annual exemption limit (Freigrenze) of €1,000. The app shows a per-lot "tax-free from" date and the share of each coin that is already tax-free. All crypto tax figures are labelled "estimate, verify with a tax advisor".
 - **FR-25 (P0)**: FX: EUR base currency using daily ECB reference rates. Show the FX contribution to return separately.
-- **FR-26 (P1)**: German tax estimate: 25% Abgeltungssteuer plus 5.5% Soli (plus optional church tax), the €1,000 Sparerpauschbetrag (€2,000 joint), 30% Teilfreistellung for equity ETFs, Vorabpauschale, and separate loss pots (equity loss pot vs. general). Show both pre-tax and estimated after-tax P&L.
+- **FR-26 (P1)**: German tax estimate: 25% Abgeltungssteuer plus 5.5% Soli (plus optional church tax), the €1,000 Sparerpauschbetrag (€2,000 joint; owner default: single, €1,000, Freistellungsauftrag fully at TR, D34), 30% Teilfreistellung for equity ETFs, Vorabpauschale, and separate loss pots (equity loss pot vs. general). Show both pre-tax and estimated after-tax P&L.
 
 ### 6.4 Factor scoring
 - **FR-30 (P0)**: The **universe** (D16) is the union of:
@@ -258,7 +265,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 - **FR-53 (P0)**: Each AI message carries a persistent "AI-generated, may be wrong, not investment advice" label, and shows which data points it used (tool calls visible).
 - **FR-54 (P0)**: A **weekly AI commentary** per user: portfolio changes, score movers, macro and commodity backdrop, suggested actions.
 - **FR-55 (P1)**: News and earnings summaries for holdings (from free RSS or SEC filings).
-- **FR-56 (P0)**: **LLM cost cap**: a monthly spend limit per user and in total, with graceful degradation when it is reached.
+- **FR-56 (P0)**: **LLM cost cap**: a spend limit per user and in total, with graceful degradation when it is reached. The total is €2,000 (D36; period to confirm, Q33). Alerts fire at 50%, 80% and 100% of it. At the cap, chat is paused, the weekly commentary switches to a template-only version, and the pick log keeps working.
 - **FR-57 (P0)**: **Privacy**: portfolio data is sent to the LLM provider. Each member must consent at onboarding. There is an option to anonymise amounts (weights only).
 
 ### 6.7 Commodities and macro (basic in the MVP, full in Phase 2)
@@ -274,7 +281,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 ### 6.8 Notifications
 - **FR-70 (P0)**: In-app notification centre.
 - **FR-71 (P0)**: Email digest, weekly by default and optionally daily (SMTP from the home server via a relay such as Brevo's free tier).
-- **FR-72 (P0)**: Telegram bot: each user links their own chat. Alert types: drift or guardrail breaches, a holding moving ±X% in a day, material score changes, the weekly AI commentary, data-job failures (admin only).
+- **FR-72 (P0)**: Telegram bot: each user links their own chat. Alert types: drift or guardrail breaches, a holding moving more than its threshold in a day (defaults ±5% single stock, ±3% ETF, ±10% crypto; D39), material score changes, the weekly AI commentary, data-job failures (admin only).
 - **FR-73 (P0)**: Per-user alert settings and quiet hours.
 
 ### 6.9 Later phases (P2)
@@ -289,7 +296,8 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 | **0 — Foundations** | Repo, Docker Compose, auth, database schema, provider interface, price and FX ingestion, CI | Owner can log in; daily EOD prices land in the database. |
 | **1 — MVP** | §6.1–6.8 P0 items | Owner imports the real TR history (D20); the history-derived holdings reconcile with the Depotauszug and Crypto-Übersicht (116/116 positions, after the review queue); cash within 2%; factor scores for 100+ tickers; weekly digest delivered by Telegram and email. |
 | **1.1** | P1 items (tax estimate, trade-confirmation import, news) | — |
-| **Friends gate** | Licensed data provider live (D15), privacy consent flow, legal check (Q10) | Required **before** the first non-owner invite. |
+| **Family gate** | Licensed data provider live (D15), privacy consent flow | Required **before** the first family invite. Membership is family only (D33). |
+| **Hosting gate** | 6 months of smooth operation on the Mac mini (D37): uptime of at least 99%, no data loss, a restore drill passed | Required before any move to hosted infrastructure. |
 | **2 — Macro & commodities** | Regime model, full commodity page | — |
 | **3 — Backtesting lab** | Engine plus UI | Reproduces a known benchmark strategy within tolerance. |
 | **4 — Swing scanner** | Signals gated by backtests | — |
@@ -317,7 +325,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 ```
 [Browser / PWA] ──HTTPS──> [Tunnel: Tailscale or Cloudflare Tunnel+Access]
                                    │
-                           [Home server — Docker Compose]
+                           [Mac mini — Docker Compose]
         ┌──────────────┬───────────┴──────────┬──────────────────┐
    [Next.js web]  [FastAPI api]        [Worker + scheduler]   [Telegram bot]
                         │                (APScheduler/Celery)       │
@@ -332,6 +340,20 @@ External: data providers (§8), LLM API, SMTP relay
 - **LLM**: provider behind an adapter (e.g. the Claude API) with tool calling into internal read-only endpoints.
 - **Security**: real broker statements and exports are never committed. The transaction export also contains **card spending, counterparty names and IBANs**, which are dropped at parse time (FR-10a). `.gitignore` blocks `*.pdf` and `statements/`, and parser fixtures are synthetic or fully anonymised. Secrets in `.env` stored outside git, row-level security in Postgres, uploaded statements encrypted at rest and deleted after parsing (configurable), rate limiting, automatic security updates on the host.
 - **Ops**: Uptime Kuma or healthchecks.io for job monitoring; nightly backups with restore tested quarterly; a UPS is recommended.
+- **Mac mini specifics** (D11, D37):
+  - Docker runtime: Docker Desktop or OrbStack, set to start at login;
+  - macOS energy settings: never sleep, and restart automatically after a power failure;
+  - all images built for arm64, with amd64 as well for the later move to hosting;
+  - Tailscale for family access, so nothing is exposed publicly;
+  - a stability log (uptime, failed jobs, restores) that feeds the hosting gate (§7).
+
+## 9a. Development process (D38)
+
+- **Builder**: Claude Code implements every phase. The owner reviews and merges pull requests; nothing reaches `main` without the owner's merge.
+- **Unit of work**: one PR per coherent slice (e.g. "TR CSV parser", "FIFO cost basis"). Each PR has tests and a short note on which PRD requirements (FR-x) it covers.
+- **Repo conventions**: a `CLAUDE.md` holds the build, test and run commands and the non-negotiables (no real data in the repo, FR-19a privacy, `user_id` scoping). CI (lint, type check, unit tests, `docker compose build` for arm64) runs on every PR.
+- **Real data stays local**: parser fixtures are synthetic, but modelled on the structure found in §6.2a. Reconciliation against the owner's real exports (the Phase 1 exit criterion) runs **on the Mac mini**, through a script that prints only pass/fail and diffs by position index, never names or amounts.
+- **Order**: Phase 0 → 1 → 1.1 → family gate, as in §7. No Phase 2+ work until the MVP exit criteria are met.
 
 ## 10. Non-functional requirements
 
@@ -343,14 +365,14 @@ External: data providers (§8), LLM API, SMTP relay
 | Availability | Best effort (home server). Target 99% monthly. |
 | Privacy | GDPR-minded: store the minimum personal data, allow export and delete per user, keep the consent log. |
 | Accessibility | Keyboard-navigable, colour-blind-safe charts, dark mode. |
-| Language | English UI. German and Turkish depend on Q9. |
+| Language | English only (D35). |
 | Mobile | Responsive PWA; no native app. |
 
 ## 11. Risks and mitigations
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **Regulatory**: sharing buy/sell calls (especially unrestricted AI picks) with other people could count as investment advice under German law (KWG/WpIG, §34f/h GewO) | High | Keep it **strictly non-commercial and invite-only**, with clear disclaimers and per-user acknowledgement. Consider a one-off legal check before inviting anyone outside family (see Q10). |
+| **Regulatory**: sharing buy/sell calls (especially unrestricted AI picks) with other people could count as investment advice under German law (KWG/WpIG, §34f/h GewO) | High | Keep it **strictly non-commercial and invite-only**, with clear disclaimers and per-user acknowledgement. Membership is **family only** (D33), which keeps this risk low. A legal check is needed only if that ever changes. |
 | Free data breaks or its licence forbids sharing with friends | Medium | Provider interface plus cache (D8). Budget a paid swap when friends join (Q3). |
 | AI hallucinates numbers or makes bad picks | High | Tool-grounded data, a visible sources panel, a pick log and track record (FR-52). |
 | TR changes its export format | Medium | Versioned parsers, fixture tests from real anonymised exports, manual-entry fallback. |
@@ -375,16 +397,12 @@ External: data providers (§8), LLM API, SMTP relay
 **Blocking the MVP design:**
 - None. All MVP-blocking questions are answered.
 
-**Still open from round 1:**
-- **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or inherit Growth?
-- **Q8 — Tax details**: single or joint filing? Church tax? A Freistellungsauftrag at TR only? (The history suggests a joint account holder; please confirm whether filing is joint.)
-- **Q9 — UI language**: English only, or German/Turkish as well?
-- **Q10 — Legal comfort**: family only, or also colleagues? Are the unrestricted AI picks visible to them?
-- **Q11 — LLM budget and provider**: maximum monthly spend, in total and per user.
-- **Q13 — Home server**: hardware (CPU/RAM, x86 or ARM)? Tailscale or Cloudflare Tunnel?
-- **Q14 — Alert thresholds**: which daily move should ping you (e.g. ±5% for stocks, ±3% for ETFs, ±10% for crypto)?
-- **Q15 — Benchmark**: MSCI World, Nasdaq-100, or a custom mix?
-- **Q17 — Development**: who builds it, and what is the MVP timeline?
+**Answered from round 1**: Q7 (inherit the owner's profile, D33), Q8 (single filer, €1,000 at TR, D34), Q9 (English, D35), Q10 (family only, D33), Q11 (€2,000, D36), Q13 (Mac mini with Docker, later hosting, D37), Q14 (thresholds confirmed, D39), Q15 (Nasdaq-100, D35), Q17 (built by Claude Code, D38).
+
+**Still open (none of these blocks Phase 0):**
+- **Q32 — Timeline**: is there a target date for the MVP (Phase 1)? Without one, the plan is Phase 0 first, then Phase 1 in PR-sized slices, reviewed as they land.
+- **Q33 — LLM budget period**: is the €2,000 per month or per year? This sets the FR-56 cap and alerts.
+- **Q34 — Church tax**: yes or no? The default is no.
 
 ## 14. Glossary
 
