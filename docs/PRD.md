@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25–Q31 and the round-1 questions (Q7–Q17), and the opportunity reserve (D29). See §13, Open Questions. |
+| **Status** | Draft v0.4 — v0.3 (round 3 of Q&A, full TR transaction history, crypto statement) plus the answers to Q25–Q34 and the round-1 questions (Q7–Q17), and the opportunity reserve (D29). See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
 | **Last updated** | 2026-09-27 (v0.4) |
 | **Working name** | QuantTrading (placeholder) |
@@ -52,12 +52,13 @@ The app **never places trades**. Users import their broker statements. The app c
 | D31 | Tech taxonomy | The nine FR-47 sub-groups are **confirmed** as proposed (Q27). Clean-tech stays a tech-adjacent sub-group. Non-tech single stocks (e.g. healthcare) are tagged **non-tech** for reporting. | FR-47 is final. Non-tech stocks stay in the single-stock bucket with no separate cap. |
 | D32 | Crypto cap | **10%** of the portfolio for combined crypto exposure is confirmed. There is **no altcoin sub-cap**: XRP and ADA are treated like BTC and ETH (Q28). | FR-29 and FR-40 are final. |
 | D33 | Members | **Family only** (Q10). Members **inherit the owner's Growth profile** (Q7), and AI picks are visible to them. | No risk questionnaire in the MVP. The legal risk (§11) is lower, but the non-commercial and disclaimer rules still apply. |
-| D34 | Tax | **Single filer**. The Freistellungsauftrag is **only at TR**, using the owner's own **€1,000** Sparerpauschbetrag, even though the account has a joint holder (Q8). | FR-26 defaults: single, €1,000, all at TR. Church tax is off until confirmed (Q34). |
+| D34 | Tax | **Single filer**. The Freistellungsauftrag is **only at TR**, using the owner's own **€1,000** Sparerpauschbetrag, even though the account has a joint holder (Q8). | FR-26 defaults: single, €1,000, all at TR. No church tax (D40). |
 | D35 | Benchmark and UI | Benchmark **Nasdaq-100** (Q15), via a UCITS Nasdaq-100 ETF as the proxy. UI in **English only** (Q9). | FR-21 default changed. No i18n work in the MVP. |
-| D36 | LLM budget | **€2,000** spend cap (Q11) | FR-56 enforces it, with the period to confirm (Q33). |
+| D36 | LLM budget | **€2,000 per month** spend cap (Q11, Q33) | FR-56 enforces it. |
 | D37 | Deployment path | Docker on a Mac mini first. It moves to hosting only after **6 months of smooth operation**. | Multi-arch images (arm64 and amd64). A single Compose file must run unchanged on the Mac mini and on a hosted VM. The 6-month stability log is the migration gate (§7). |
-| D38 | Builder | The app is **built by Claude Code**; the owner reviews and merges (Q17) | New §9a, Development process. The timeline is still open (Q32). |
+| D38 | Builder | The app is **built by Claude Code**; the owner reviews and merges (Q17) | New §9a, Development process. No fixed timeline; built phase by phase (D40). |
 | D39 | Alerts | Daily-move alert thresholds confirmed (Q14): **±5% for single stocks, ±3% for ETFs, ±10% for crypto** | FR-72 defaults. |
+| D40 | Timeline, LLM budget period, church tax | Build **phase by phase** with no fixed date (Q32). The LLM budget is **€2,000 per month** (Q33). **No church tax** (Q34). | §7 order is the schedule. FR-56 cap is monthly. FR-26 church tax is off. |
 
 ## 3. Goals and non-goals
 
@@ -265,7 +266,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 - **FR-53 (P0)**: Each AI message carries a persistent "AI-generated, may be wrong, not investment advice" label, and shows which data points it used (tool calls visible).
 - **FR-54 (P0)**: A **weekly AI commentary** per user: portfolio changes, score movers, macro and commodity backdrop, suggested actions.
 - **FR-55 (P1)**: News and earnings summaries for holdings (from free RSS or SEC filings).
-- **FR-56 (P0)**: **LLM cost cap**: a spend limit per user and in total, with graceful degradation when it is reached. The total is €2,000 (D36; period to confirm, Q33). Alerts fire at 50%, 80% and 100% of it. At the cap, chat is paused, the weekly commentary switches to a template-only version, and the pick log keeps working.
+- **FR-56 (P0)**: **LLM cost cap**: a spend limit per user and in total, with graceful degradation when it is reached. The total is €2,000 per month (D36). Alerts fire at 50%, 80% and 100% of it. At the cap, chat is paused, the weekly commentary switches to a template-only version, and the pick log keeps working.
 - **FR-57 (P0)**: **Privacy**: portfolio data is sent to the LLM provider. Each member must consent at onboarding. There is an option to anonymise amounts (weights only).
 
 ### 6.7 Commodities and macro (basic in the MVP, full in Phase 2)
@@ -399,10 +400,9 @@ External: data providers (§8), LLM API, SMTP relay
 
 **Answered from round 1**: Q7 (inherit the owner's profile, D33), Q8 (single filer, €1,000 at TR, D34), Q9 (English, D35), Q10 (family only, D33), Q11 (€2,000, D36), Q13 (Mac mini with Docker, later hosting, D37), Q14 (thresholds confirmed, D39), Q15 (Nasdaq-100, D35), Q17 (built by Claude Code, D38).
 
-**Still open (none of these blocks Phase 0):**
-- **Q32 — Timeline**: is there a target date for the MVP (Phase 1)? Without one, the plan is Phase 0 first, then Phase 1 in PR-sized slices, reviewed as they land.
-- **Q33 — LLM budget period**: is the €2,000 per month or per year? This sets the FR-56 cap and alerts.
-- **Q34 — Church tax**: yes or no? The default is no.
+**Answered last**: Q32 (phase by phase, D40), Q33 (per month, D40), Q34 (no church tax, D40).
+
+**Still open:** none. New questions will be added here as the build raises them.
 
 ## 14. Glossary
 
