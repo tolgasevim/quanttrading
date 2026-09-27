@@ -2,16 +2,16 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.2 — updated after round 2 of Q&A and analysis of a real TR statement. See §13, Open Questions. |
+| **Status** | Draft v0.3 — updated after round 3 of Q&A and analysis of the full TR transaction history and crypto statement. See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
-| **Last updated** | 2026-09-27 (v0.2) |
+| **Last updated** | 2026-09-27 (v0.3) |
 | **Working name** | QuantTrading (placeholder) |
 
 ---
 
 ## 1. Summary
 
-QuantTrading is a self-hosted web app that guides a small group of investors (the owner plus a few invited friends and family) through long-term investing. It focuses on **tech stocks and ETFs**, and adds **commodity intelligence** (gold, silver, oil, and more) that is invested in through ETCs/ETFs.
+QuantTrading is a self-hosted web app that guides a small group of investors (the owner plus a few invited friends and family) through long-term investing. It focuses on **tech stocks and ETFs** (split into tech sub-groups), tracks **crypto held at the broker**, and adds **commodity intelligence** (gold, silver, oil, and more) that is invested in through ETCs/ETFs. Short-term trades are kept in a separate **trading book** so they don't distort the long-term guidance.
 
 The app **never places trades**. Users import their broker statements. The app computes portfolio analytics, factor scores and rebalancing guidance with deterministic quant code, and an LLM layer turns that into explanations, opinions and picks.
 
@@ -37,6 +37,13 @@ The app **never places trades**. Users import their broker statements. The app c
 | D16 | Universe | Nasdaq-100 + TecDAX + global semiconductors (all caps) + everything any user holds | See FR-30. |
 | D17 | Single-stock cap | 15% | Measured on **look-through** exposure (direct holdings plus the share held inside ETFs), not on direct holdings alone. |
 | D18 | Real sample | Owner supplied a TR *Depotauszug* (securities account statement PDF) | A prototype parser reconciled 112/112 positions to the cent. The file is never committed (see §9 Security). |
+| D19 | Cash | Owner supplied the current cash balance (value kept out of the repo) | Cash is a manual input with a history-derived cross-check. The history-derived balance matched the stated balance to within 0.7% (FR-28). |
+| D20 | History | Owner supplied the full TR **transaction CSV** (7,761 rows, May 2021 – Sep 2026) | P&L, cost basis and tax become MVP-feasible. The export format differs from what v0.2 assumed; see FR-10 and §6.2a. |
+| D21 | Commodity hedge | Smaller than proposed: **target 3%, band 0–5%**, optional | FR-40 default changed. The app doesn't nag to build a hedge beyond the band. |
+| D22 | Tech taxonomy | **Sub-groups within tech**, each with its own soft target/cap | New FR-47. "Tech" stays the umbrella bucket for top-level allocation. |
+| D23 | Crypto | Owner **holds real crypto at TR** (BTC, ETH, XRP, ADA; statement supplied) | Crypto moves from non-goal to tracked asset class: import, valuation, bucket, cap, German crypto tax rules (FR-29, FR-11b). Still no trading, wallets or DeFi. |
+| D24 | Leveraged / knock-out products | **Short-term trades** | Kept in a separate **trading book** (FR-48), excluded from long-term targets, with strict holding-time and knock-out alerts. |
+| D25 | Long tail | App should **push towards consolidation** but must **not kill small positions that score well** | FR-45 reworked: consolidation is a guided, paced programme with a "protected small bet" status. |
 
 ## 3. Goals and non-goals
 
@@ -49,7 +56,9 @@ The app **never places trades**. Users import their broker statements. The app c
 
 ### Non-goals
 - Placing or routing orders, or storing broker credentials.
-- Futures, options, CFDs, crypto (open: Q12), forex trading.
+- Futures, options, CFDs, forex trading.
+- Crypto *trading*, self-custody wallets, on-chain/DeFi data. Crypto held at TR is **tracked** (D23), not traded.
+- Recommending new short-term trades. The trading book (FR-48) only tracks and polices trades the user places.
 - Intraday or real-time data and high-frequency strategies.
 - Filing tax returns. Tax figures are estimates, not tax advice.
 - Commercial use, payments, or public signup.
@@ -66,8 +75,10 @@ The app **never places trades**. Users import their broker statements. The app c
 1. **Onboarding**: accept the invite, sign in with a passkey or TOTP, accept the disclaimer, set the risk profile and target allocation, upload the first TR export, review the parsed positions, see the dashboard.
 2. **Weekly check-in**: open the email digest or Telegram message, jump to the dashboard, see drift and alerts, read the AI weekly commentary, adjust TR savings-plan (Sparplan) amounts as suggested.
 3. **New idea**: add a ticker or ISIN to the watchlist, get its factor scorecard, its fit with the current portfolio (overlap, concentration impact), and an AI verdict. Log a decision with "why".
-4. **Commodity check**: gold drops 5% in a week. Telegram alert, then the commodity page explains the drivers (real yields, USD) and suggests whether to top up the gold ETC hedge within the target band.
+4. **Commodity check**: gold drops 5% in a week. Telegram alert, then the commodity page explains the drivers (real yields, USD) and suggests whether to top up the gold ETC hedge within its small target band (0–5%).
 5. **Post-trade update**: buy at TR, upload the new export (or add the trade manually), the portfolio updates, and the rebalancing guidance is recomputed.
+6. **Short-term trade**: the user buys a knock-out at TR and imports it. The app files it in the trading book, asks for a thesis and stop, and alerts on barrier distance and holding time.
+7. **Consolidation session**: the weekly digest brings three consolidation prompts. For each one the user merges, exits, protects or keeps it as a tracker. Protected small bets are never re-prompted for exit.
 
 ## 6. Functional requirements (MVP unless marked otherwise)
 
@@ -81,8 +92,9 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 - **FR-5 (P1)**: The admin panel shows users, last import, data-job health and LLM spend.
 
 ### 6.2 Portfolio import
-- **FR-10 (P0)**: Parse the **Trade Republic transaction CSV export**: buys, sells, savings-plan executions, dividends, interest, fees, taxes, deposits and withdrawals.
+- **FR-10 (P0)**: Parse the **Trade Republic transaction CSV export** (the unified account export; details and edge cases in §6.2a): buys, sells, savings-plan executions, dividends and distributions, interest, fees, taxes, deposits and withdrawals, corporate actions, crypto trades and free deliveries (e.g. Saveback), private-market (ELTIF) buys, IPO subscriptions, and derivative trades including knock-outs (`WARRANT_EXERCISE` / `TILG`).
 - **FR-11 (P0)**: Parse the **TR Depotauszug** (securities account statement PDF), a holdings snapshot: quantity, name, ISIN, custody country, price and EUR value per line, plus the position count and total. Validated with a prototype on a real statement (112 positions, total reconciled exactly).
+- **FR-11b (P0)**: Parse the **TR Crypto-Übersicht** (crypto statement PDF): quantity, coin, price, **purchase value (Kaufwert)**, P&L and market value per coin, plus the position count and total. Unlike the Depotauszug it *does* carry cost basis, so it doubles as a cross-check for the crypto lots rebuilt from history. The same checksum rule applies (FR-19). Validated on the real statement: its 4 coin quantities match the transaction history exactly.
 - **FR-11a (P1)**: Parse **TR trade confirmations** (Abrechnungen) to get cost basis and tax withheld per trade.
 - **FR-17 (P0)**: **Snapshot vs. history**: a Depotauszug has *no cost basis*, so P&L and tax need the transaction history (FR-10/11a). Until history is imported, the app works in **snapshot mode**: allocation, risk, scores and guidance all work, while P&L and tax screens ask for history or a manual average cost per position.
 - **FR-18 (P0)**: Parser edge cases seen in real data:
@@ -98,6 +110,21 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 - **FR-15 (P0)**: An import preview screen shows the parsed rows, unmapped ISINs and warnings, and requires confirmation before committing.
 - **FR-16 (P2)**: Pluggable parsers for other brokers (Scalable, IBKR). How many are needed depends on Q2.
 
+### 6.2a Findings from the real transaction history (drives FR-10)
+
+The owner's full history was profiled, in aggregate only, to shape the parser. Per D18, the file stays out of the repo.
+
+| Finding | Requirement |
+|---|---|
+| **~72% of rows are bank/card activity** (`CARD_TRANSACTION`, `CARD_TRANSACTION_INTERNATIONAL`, SEPA transfers). TR is also a current account. | **FR-10a (P0)**: Card rows are only used for the cash balance, with their amounts aggregated per day. Merchant, MCC, counterparty name, IBAN and foreign-currency details are **dropped at parse time** and never stored (extends FR-19a). |
+| Columns: `datetime, date, account_type, category, type, asset_class, name, symbol (ISIN), shares, price, amount, fee, tax, currency, original_amount, original_currency, fx_rate, description, transaction_id, …` | **FR-10b (P0)**: `transaction_id` is the dedupe key (FR-13); there were no duplicates in 7,761 rows. Keep the fingerprint fallback for other sources. |
+| **Corporate actions record only the incoming leg** (splits, reverse splits, mergers, exchanges, spin-offs, stock dividends, liquidations, worthless write-offs). Naively replaying the history gives **149 open positions against 116 real ones** (112 securities + 4 coins). | **FR-10c (P0)**: A corporate-action engine that retires the old ISIN or rescales the quantity for each action type. It must be followed by **reconciliation against the latest Depotauszug/Crypto-Übersicht**: any position that doesn't match goes to a review queue ("ghost position?") and is never silently shown as a holding. |
+| Row-level `fee` and `tax` columns, including withholding on dividends and `TAX_OPTIMIZATION` (loss-pot/Freistellungsauftrag adjustments) | **FR-10d (P0)**: Store fee and tax per transaction. This feeds FR-26 and gives the P&L pre- and after-tax. |
+| Instrument mix: stocks, funds, bonds, private funds (ELTIF), crypto, derivatives (knock-outs), "synthetic" rights/stock-dividend lines | Confirms FR-27; adds knock-outs to it (FR-48). |
+| **Crypto free receipts** (dozens of small Saveback deliveries) and stock perks | **FR-10e (P0)**: Free receipts create tax lots with a cost basis equal to the market value on receipt (flag it as "verify with tax advisor"), each with its own holding-period clock for crypto (FR-29). |
+| Savings plans: **five ETF plans, twice a month**, including **two Nasdaq-100 ETFs in parallel** (EUR Acc and USD Dist) and two overlapping IT-sector ETFs (S&P 500 IT, MSCI World IT) | Answers Q16. Makes FR-46 (redundancy) a day-one feature. Savings plans are detected from history (`Savings plan execution …`) and don't need manual entry. |
+| Export filename starts in 2017, but the data starts in 2021 | Use the actual row dates, never the filename, to determine coverage. |
+
 ### 6.3 Portfolio analytics
 - **FR-20 (P0)**: Holdings table showing quantity, average cost (FIFO, matching German tax rules), market value in EUR, unrealised and realised P&L, weight and asset class.
 - **FR-21 (P0)**: Performance: time-weighted return and money-weighted return (XIRR), against a user-chosen benchmark (default: MSCI World; alternatives Nasdaq-100 and S&P 500 via UCITS ETF proxies).
@@ -105,12 +132,13 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 - **FR-23 (P0)**: Concentration by position, sector, country and currency (USD exposure), and asset class (equity, ETF, commodity ETC, cash).
 - **FR-24 (P0, promoted from P1)**: ETF look-through: aggregate the underlying holdings of ETFs (e.g. an MSCI World ETF plus NVDA shares means hidden NVDA overlap), using issuer holdings files. *Promoted because real portfolios hold several Nasdaq-100 and IT-sector ETFs **and** the same mega-caps directly, so direct weights understate true exposure. Caps (FR-43, D17) apply to look-through exposure.*
 - **FR-27 (P0)**: **Instrument-type awareness** beyond plain stocks and ETFs:
-  - *Leveraged/inverse ETPs* (e.g. 3x short oil): flag the decay from daily resets, show holding time, and warn when one is held past a configurable number of days.
-  - *Crypto-linked equities* (miners, treasury companies, exchanges): tagged as their own risk bucket.
+  - *Leveraged/inverse ETPs* (e.g. 3x short oil) and *knock-out certificates* (turbo long/short): these belong to the **trading book** (FR-48). For ETPs, flag the decay from daily resets. For knock-outs, show the distance to the barrier.
+  - *Crypto-linked equities* (miners, treasury companies, exchanges): tagged as a tech sub-group (FR-47). They also count towards a combined **crypto exposure** figure (coins plus crypto-linked equities) that has its own cap.
   - *Bonds*: maturity, yield to maturity, currency.
   - *ELTIFs / private-market funds*: illiquid, infrequent net asset value; show a liquidity and valuation-staleness flag.
   - *Pre-IPO or thinly traded shares*: prices flagged as low-confidence.
-- **FR-28 (P0)**: **Cash**: a Depotauszug does not include the cash account. Cash is entered manually or taken from the transaction export.
+- **FR-28 (P0)**: **Cash**: a Depotauszug does not include the cash account. Cash is the **user-entered balance**, cross-checked against the balance rebuilt from the transaction export (sum of amount + fee + tax). Any difference is shown, and a warning is raised if it exceeds 2%. On the owner's data the two agree to within 0.7%. The residual is expected from pending card transactions and interest timing.
+- **FR-29 (P0)**: **Crypto** (D23): coins held at TR (BTC, ETH, XRP, ADA today) are valued daily in EUR and shown as their own asset class and bucket. German crypto tax rules apply, not Abgeltungssteuer: a sale is a private disposal (§23 EStG). It is **tax-free after a 1-year holding period per lot (FIFO)**; otherwise it is taxed at the personal income-tax rate, with an annual exemption limit (Freigrenze) of €1,000. The app shows a per-lot "tax-free from" date and the share of each coin that is already tax-free. All crypto tax figures are labelled "estimate, verify with a tax advisor".
 - **FR-25 (P0)**: FX: EUR base currency using daily ECB reference rates. Show the FX contribution to return separately.
 - **FR-26 (P1)**: German tax estimate: 25% Abgeltungssteuer plus 5.5% Soli (plus optional church tax), the €1,000 Sparerpauschbetrag (€2,000 joint), 30% Teilfreistellung for equity ETFs, Vorabpauschale, and separate loss pots (equity loss pot vs. general). Show both pre-tax and estimated after-tax P&L.
 
@@ -135,15 +163,53 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 - **FR-35 (P0)**: Score history is stored daily so trends ("quality falling for 3 months") can be shown and backtested later.
 
 ### 6.5 Guidance and rebalancing
-- **FR-40 (P0)**: The user defines a **target allocation** as buckets with bands. Default for the Growth profile: tech single stocks 40%, broad/tech ETFs 45%, commodity hedge (gold/silver ETC) 5–10%, cash 5%.
+- **FR-40 (P0)**: The user defines a **target allocation** as buckets with bands. Proposed default for the Growth profile (owner to confirm, Q25):
+
+  | Bucket | Target | Band |
+  |---|---|---|
+  | Tech single stocks (split into sub-groups, FR-47) | 35% | ±5 pp |
+  | Broad and tech ETFs | 45% | ±5 pp |
+  | Crypto (coins at TR) | 7% | 0–10%; the cap also covers combined crypto exposure |
+  | Commodity hedge (gold/silver ETC) | 3% | 0–5% (D21), optional |
+  | Cash | 5% | 3–10%; excess cash triggers a deployment plan (Q26) |
+  | Trading book (FR-48) | 0% target | Hard cap of 3%, excluded from drift maths |
+
+  *Current split* stays in the owner-only analysis, not in the repo.
 - **FR-41 (P0)**: **Drift detection**: when a bucket leaves its band (default ±5 percentage points) or a single position exceeds its cap (default 15% for a single stock), raise an alert.
 - **FR-42 (P0)**: **Rebalancing suggestions** that are:
   - **Cash-flow first**: prefer adjusting TR savings-plan amounts or directing new deposits over selling, because selling creates taxable gains.
   - **Tax-aware** (P1): use the remaining Sparerpauschbetrag, harvest losses, and avoid selling lots that are highly taxed.
   - Shown as concrete instructions ("reduce Sparplan X from €200 to €100/month, add €100 to Y"), with a rationale.
 - **FR-43 (P0)**: **Guardrails** configurable per user: maximum single stock, maximum sector, maximum single-country exposure, minimum cash, and drawdown alert thresholds.
-- **FR-45 (P0)**: **Long-tail review**: flag positions below a size threshold (default 0.5% of the portfolio) and ask for a decision on each: *grow to conviction size, keep as a tracker, or exit* (with the tax impact of exiting). Real portfolios can have many dozens of positions under 0.5%.
+- **FR-45 (P0)**: **Consolidation programme** (D25). The app actively steers towards a leaner portfolio, but **being small is never on its own a reason to sell**.
+  - *Target*: a soft target of 40–60 positions (configurable). A progress bar shows the current count, direct and look-through.
+  - *Classification*: each position below 0.5% of the portfolio gets one of these statuses:
+    - **Protected small bet**: composite score in the top 30% of its sector, or explicitly pinned by the user. It is never suggested for exit; it gets an optional "grow to conviction size" suggestion when score and cash allow.
+    - **Consolidate**: redundant with another holding (same index or company, ETF overlap above 70%, FR-46). The suggestion is to merge into the better instrument, preferably by redirecting savings plans rather than selling.
+    - **Exit candidate**: a weak composite score (bottom 30%) or a broken thesis (delisted, worthless, liquidation, persistent data gaps). It is shown with the tax impact, the loss-pot usage and the proceeds.
+    - **Keep as tracker**: the user's explicit choice. It is excluded from nagging for 6 months, then re-reviewed.
+  - *Pacing*: at most N consolidation prompts per week (default 3), bundled in the weekly digest. Loss harvesting is preferred at year end to use the Sparerpauschbetrag and loss pots.
+  - *Guardrail*: the AI layer (FR-51) must use the same classification. It may not recommend exiting a protected small bet without saying explicitly that it overrides the protection, and why.
 - **FR-46 (P0)**: **Redundancy detection**: several ETFs tracking the same or a heavily overlapping index (e.g. two Nasdaq-100 ETFs, two World Momentum ETFs), with a consolidation suggestion that respects tax (e.g. redirect savings plans instead of selling).
+- **FR-47 (P0)**: **Tech sub-groups** (D22). Every tech instrument is tagged with exactly one sub-group, with auto-tagging from its sector code and a manual override. Each sub-group has an optional soft target and cap, and is shown in allocation, drift and look-through views. Initial taxonomy:
+  1. **Semiconductors and semi equipment** (NVDA, TSMC, ASML, Infineon, …)
+  2. **Software and cloud** (MSFT, Atlassian, SAP, …)
+  3. **Internet platforms and consumer internet** (Alphabet, Meta, Amazon, Alibaba, Uber, …)
+  4. **Hardware and devices** (Apple, …)
+  5. **Fintech and payments** (Adyen, PayPal, Klarna, …)
+  6. **IT services** (Accenture, EPAM, …)
+  7. **Media and streaming** (Netflix, Spotify, …)
+  8. **Crypto-linked equities** (miners, treasury companies, exchanges)
+  9. **Clean-tech and energy tech** (e.g. SMA Solar); tagged as tech-adjacent, with the owner to confirm (Q27)
+
+  Tech ETFs are split into sub-groups through look-through (FR-24). The single-stock cap (D17) still applies across sub-groups.
+- **FR-48 (P0)**: **Trading book** (D24). Leveraged/inverse ETPs, knock-outs and any position the user tags as a "short-term trade" live in a separate book:
+  - it is excluded from long-term targets, drift and factor-based guidance, but included in total net worth and risk;
+  - it has its own capital cap (default 3% of the portfolio) with an alert on breach;
+  - alerts cover holding time past N days (default 10 for daily-reset ETPs), knock-out barrier distance below X% (default 5%), and a stop level the user set at entry;
+  - it has its own P&L, hit rate and average holding time. The history shows several knock-outs that expired at the barrier, which is exactly what this stat should surface;
+  - for tax, derivative gains and losses are tracked separately. The €20k loss-offset limit for derivatives (Termingeschäfte) was abolished in 2024; the app shows it as "verify with a tax advisor";
+  - at entry, the user is prompted to log a thesis, target and stop in the decision journal (FR-44).
 - **FR-44 (P0)**: **Decision journal**: the user logs "bought / sold / ignored guidance" with a reason. It feeds into accuracy tracking.
 
 ### 6.6 AI layer (heavy, unrestricted per D9)
@@ -160,6 +226,7 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 - **FR-60 (P0)**: A commodity panel for gold, silver, WTI and Brent crude, copper, and natural gas (P1): price in USD and EUR, 1-week/1-month/1-year/5-year change, 52-week range.
 - **FR-61 (P0)**: A key-driver panel with free data:
   - Gold and silver: 10-year real yield (FRED DFII10), USD index (FRED DTWEXBGS), gold/silver ratio
+  - Crypto (P1): BTC and ETH price, 30-day volatility and drawdown from the all-time high, correlation with Nasdaq-100
   - Oil: EIA weekly inventories, Brent–WTI spread, OPEC headlines (P1)
 - **FR-62 (P1)**: Mapping of each commodity to tradable UCITS ETCs/ETFs that are available at TR.
 - **FR-63 (P2)**: A regime model (risk-on/off from rates, inflation, USD, credit spreads and oil) and its implication for tech weighting.
@@ -181,7 +248,7 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | **0 — Foundations** | Repo, Docker Compose, auth, database schema, provider interface, price and FX ingestion, CI | Owner can log in; daily EOD prices land in the database. |
-| **1 — MVP** | §6.1–6.8 P0 items | Owner imports real TR history; holdings match TR to within €1; factor scores for 100+ tickers; weekly digest delivered by Telegram and email. |
+| **1 — MVP** | §6.1–6.8 P0 items | Owner imports the real TR history (D20); the history-derived holdings reconcile with the Depotauszug and Crypto-Übersicht (116/116 positions, after the review queue); cash within 2%; factor scores for 100+ tickers; weekly digest delivered by Telegram and email. |
 | **1.1** | P1 items (tax estimate, trade-confirmation import, news) | — |
 | **Friends gate** | Licensed data provider live (D15), privacy consent flow, legal check (Q10) | Required **before** the first non-owner invite. |
 | **2 — Macro & commodities** | Regime model, full commodity page | — |
@@ -199,6 +266,7 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 | Macro | FRED API | Free API key. |
 | Oil inventories | EIA API | Free API key. |
 | Commodity spot and futures prices | yfinance (GC=F, SI=F, CL=F, BZ=F) | Front-month futures used as a proxy for spot. |
+| Crypto prices (EUR) | CoinGecko free API | Fallback: yfinance (BTC-EUR, …). The TR statement price is kept as the broker mark (FR-19). |
 | ISIN → ticker | OpenFIGI | Free, rate-limited. Cache permanently. |
 | ETF holdings | Issuer CSVs (iShares, Xtrackers, Vanguard) | Scraped weekly; fragile. |
 | News | RSS (company IR, Reuters/others), SEC 8-K | P1. |
@@ -223,7 +291,7 @@ External: data providers (§8), LLM API, SMTP relay
 
 - **Quant core**: pandas, numpy, scipy, statsmodels; `vectorbt` or a custom engine for the Phase 3 backtests.
 - **LLM**: provider behind an adapter (e.g. the Claude API) with tool calling into internal read-only endpoints.
-- **Security**: real broker statements and exports are never committed. `.gitignore` blocks `*.pdf` and `statements/`, and parser fixtures are synthetic or fully anonymised. Secrets in `.env` stored outside git, row-level security in Postgres, uploaded statements encrypted at rest and deleted after parsing (configurable), rate limiting, automatic security updates on the host.
+- **Security**: real broker statements and exports are never committed. The transaction export also contains **card spending, counterparty names and IBANs**, which are dropped at parse time (FR-10a). `.gitignore` blocks `*.pdf` and `statements/`, and parser fixtures are synthetic or fully anonymised. Secrets in `.env` stored outside git, row-level security in Postgres, uploaded statements encrypted at rest and deleted after parsing (configurable), rate limiting, automatic security updates on the host.
 - **Ops**: Uptime Kuma or healthchecks.io for job monitoring; nightly backups with restore tested quarterly; a UPS is recommended.
 
 ## 10. Non-functional requirements
@@ -259,29 +327,26 @@ External: data providers (§8), LLM API, SMTP relay
 - Fewer than 1 unhandled data-job failure per month.
 - Rebalancing guidance followed at least 50% of the time, measured from the decision journal. If it is lower, either the guidance or the target allocation is wrong.
 
-## 13. Open questions — round 3
+## 13. Open questions — round 4
 
-**Answered in round 2**: Q1 (statement supplied, D18), Q2 (friends use TR, D14), Q3 (paid data when friends join, D15), Q4 (universe, D16), Q6 (15% cap, D17). Q5 (target allocation) is partly answered, because the statement shows the current split. It is re-asked below as Q20.
+**Answered in round 3**: Q18 (cash supplied, D19), Q19 (history supplied, D20), Q20 (smaller gold hedge, D21; the rest of the target is re-proposed as Q25), Q21 (tech sub-groups, D22), Q22 (real crypto held, D23; this also closes the old Q12), Q23 (short-term trades, D24), Q24 (consolidate but protect good small bets, D25), Q16 (savings plans derived from history).
 
 **Blocking the MVP design:**
-- **Q18 — Cash**: the Depotauszug has no cash balance. How much cash or TR interest balance should count as the "cash" bucket?
-- **Q19 — History**: can you also export the **transaction history** (TR app → Settings → Account → transaction export, or a set of Abrechnung PDFs)? Without it there is no cost basis, so no P&L or tax figures.
-- **Q20 — Target allocation**: is the current split your target, or do you want the app to steer you somewhere else? (Actual split in the owner-only analysis; not stored in the repo.)
-- **Q21 — What counts as "tech"?**: consumer internet (Amazon, Alibaba, Uber), fintech (Adyen, PayPal, Klarna), media/streaming (Netflix, Spotify) and IT services (Accenture, EPAM): all "tech", or separate buckets with their own targets?
-- **Q22 — Crypto-linked equities** (miners, treasury companies, exchanges): a tagged sub-bucket with its own cap, or excluded from guidance? Should real crypto ever be tracked (the old Q12)?
-- **Q23 — Leveraged ETPs**: what are your leveraged or inverse ETP positions for: hedges, tactical trades, or leftovers? This decides whether the app treats leveraged ETPs as "trading book" (strict holding-time alerts) or rejects them in guidance.
-- **Q24 — Long tail**: are 0.5% as the "too small to matter" threshold and a target of roughly 40–60 positions reasonable, or do you deliberately want many small bets?
+- **Q25 — Target allocation**: is the proposed default in FR-40 right (tech stocks 35 / ETFs 45 / crypto 7 / gold 3 / cash 5, plus a trading book capped at 3%)?
+- **Q26 — Cash deployment**: if cash is well above target, should the app propose deploying it (e.g. spread over 6–12 months into underweight buckets), or is the cash deliberately held (emergency fund, planned expense, dry powder)? If it is held, how much of it should be excluded from the portfolio?
+- **Q27 — Tech taxonomy**: are the nine sub-groups in FR-47 right? Should clean-tech/energy tech (e.g. SMA Solar) and healthcare holdings (e.g. Novo Nordisk) sit in tech or in a separate "non-tech" bucket with its own cap?
+- **Q28 — Crypto cap**: is 10% the right cap for combined crypto exposure (coins plus crypto-linked equities)? Should altcoins (XRP, ADA) have a sub-cap relative to BTC/ETH?
+- **Q29 — Nasdaq-100 duplicate**: two Nasdaq-100 savings plans run in parallel (EUR Acc and USD Dist). Is that intentional, e.g. for distributions? If not, the first consolidation suggestion will be to merge them into one accumulating plan.
 
 **Still open from round 1:**
 - **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or inherit Growth?
-- **Q8 — Tax details**: single or joint filing? Church tax? A Freistellungsauftrag at TR only?
+- **Q8 — Tax details**: single or joint filing? Church tax? A Freistellungsauftrag at TR only? (The history suggests a joint account holder; please confirm whether filing is joint.)
 - **Q9 — UI language**: English only, or German/Turkish as well?
 - **Q10 — Legal comfort**: family only, or also colleagues? Are the unrestricted AI picks visible to them?
 - **Q11 — LLM budget and provider**: maximum monthly spend, in total and per user.
 - **Q13 — Home server**: hardware (CPU/RAM, x86 or ARM)? Tailscale or Cloudflare Tunnel?
-- **Q14 — Alert thresholds**: which daily move should ping you (e.g. ±5% for stocks, ±3% for ETFs)?
+- **Q14 — Alert thresholds**: which daily move should ping you (e.g. ±5% for stocks, ±3% for ETFs, ±10% for crypto)?
 - **Q15 — Benchmark**: MSCI World, Nasdaq-100, or a custom mix?
-- **Q16 — Savings plans**: which Sparpläne run today (instrument, amount, frequency)?
 - **Q17 — Development**: who builds it, and what is the MVP timeline?
 
 ## 14. Glossary
@@ -292,3 +357,8 @@ External: data providers (§8), LLM API, SMTP relay
 - **Teilfreistellung**: partial tax exemption for equity funds (30%).
 - **TWR / MWR (XIRR)**: time-weighted and money-weighted return.
 - **Drift band**: allowed deviation from the target weight before a rebalance is suggested.
+- **Depotauszug / Crypto-Übersicht**: TR's securities and crypto holdings statements (PDF).
+- **Knock-out (Turbo)**: leveraged certificate that expires, nearly worthless, when the underlying touches a barrier.
+- **Trading book**: the separate sub-portfolio for short-term trades (FR-48).
+- **Protected small bet**: a small position that scores well and is exempt from exit suggestions (FR-45).
+- **§23 EStG**: private disposal rule under which crypto is taxed; tax-free after one year of holding.
