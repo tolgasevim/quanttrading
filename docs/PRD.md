@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.1 — open for review. See §13, Open Questions. |
+| **Status** | Draft v0.2 — updated after round 2 of Q&A and analysis of a real TR statement. See §13, Open Questions. |
 | **Owner** | Tolga Sevim |
-| **Last updated** | 2026-09-27 |
+| **Last updated** | 2026-09-27 (v0.2) |
 | **Working name** | QuantTrading (placeholder) |
 
 ---
@@ -32,6 +32,11 @@ The app **never places trades**. Users import their broker statements. The app c
 | D11 | Hosting | Home server / NAS | Docker Compose, a tunnel for friends, backups owned by the owner. |
 | D12 | Notifications | In-app, email digest, Telegram bot | Three delivery channels. |
 | D13 | Default risk profile | Growth, long horizon (10+ years, tolerates 30%+ drawdowns) | Owner default. Per-user profiles are an open question (Q7). |
+| D14 | Friends' broker | Friends also use Trade Republic | MVP parsers cover TR only. Other brokers stay P2 (FR-16). |
+| D15 | Data licence | Switch to a licensed provider (~€20–30/month) once friends are onboarded | Free sources are for the owner-only phase. The provider swap is a release gate for inviting friends (§7). |
+| D16 | Universe | Nasdaq-100 + TecDAX + global semiconductors (all caps) + everything any user holds | See FR-30. |
+| D17 | Single-stock cap | 15% | Measured on **look-through** exposure (direct holdings plus the share held inside ETFs), not on direct holdings alone. |
+| D18 | Real sample | Owner supplied a TR *Depotauszug* (securities account statement PDF) | A prototype parser reconciled 112/112 positions to the cent. The file is never committed (see §9 Security). |
 
 ## 3. Goals and non-goals
 
@@ -77,7 +82,16 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 
 ### 6.2 Portfolio import
 - **FR-10 (P0)**: Parse the **Trade Republic transaction CSV export**: buys, sells, savings-plan executions, dividends, interest, fees, taxes, deposits and withdrawals.
-- **FR-11 (P1)**: Parse **TR PDF confirmations and statements** (Abrechnungen) as a fallback and to reconcile tax withheld.
+- **FR-11 (P0)**: Parse the **TR Depotauszug** (securities account statement PDF), a holdings snapshot: quantity, name, ISIN, custody country, price and EUR value per line, plus the position count and total. Validated with a prototype on a real statement (112 positions, total reconciled exactly).
+- **FR-11a (P1)**: Parse **TR trade confirmations** (Abrechnungen) to get cost basis and tax withheld per trade.
+- **FR-17 (P0)**: **Snapshot vs. history**: a Depotauszug has *no cost basis*, so P&L and tax need the transaction history (FR-10/11a). Until history is imported, the app works in **snapshot mode**: allocation, risk, scores and guidance all work, while P&L and tax screens ask for history or a manual average cost per position.
+- **FR-18 (P0)**: Parser edge cases seen in real data:
+  - the same ISIN on several lines (e.g. split custody), which must be aggregated;
+  - nominal-quoted instruments (bonds quoted in "USD" nominal, price in %) as well as piece-quoted "Stk.";
+  - fractional quantities (savings plans);
+  - multi-page tables with repeated headers and footers.
+- **FR-19 (P0)**: **Import checksum**: the parsed position count and total value must equal the statement footer, otherwise the import is rejected with a line-level diff. Prices in the statement are Lang & Schwarz closing prices; the app stores them as the "broker mark" next to its own market-data price and shows any difference.
+- **FR-19a (P0)**: **Personal data stripping**: name, address and account number are removed during parsing and never written to the database, logs, LLM prompts or test fixtures. Uploaded files are deleted after a successful import by default.
 - **FR-12 (P0)**: Map ISINs to tickers and exchanges (OpenFIGI API, cached), with a manual override when mapping fails.
 - **FR-13 (P0)**: Imports are idempotent: re-uploading overlapping exports must not duplicate transactions. Deduplicate on a transaction fingerprint.
 - **FR-14 (P0)**: Manual add, edit and delete of transactions, with an audit trail.
@@ -89,12 +103,25 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 - **FR-21 (P0)**: Performance: time-weighted return and money-weighted return (XIRR), against a user-chosen benchmark (default: MSCI World; alternatives Nasdaq-100 and S&P 500 via UCITS ETF proxies).
 - **FR-22 (P0)**: Risk: annualised volatility, maximum drawdown, beta against the benchmark, portfolio correlation matrix, and 1-year historical VaR/CVaR at 95%.
 - **FR-23 (P0)**: Concentration by position, sector, country and currency (USD exposure), and asset class (equity, ETF, commodity ETC, cash).
-- **FR-24 (P1)**: ETF look-through: aggregate the underlying holdings of ETFs (e.g. an MSCI World ETF plus NVDA shares means hidden NVDA overlap), using issuer holdings files.
+- **FR-24 (P0, promoted from P1)**: ETF look-through: aggregate the underlying holdings of ETFs (e.g. an MSCI World ETF plus NVDA shares means hidden NVDA overlap), using issuer holdings files. *Promoted because real portfolios hold several Nasdaq-100 and IT-sector ETFs **and** the same mega-caps directly, so direct weights understate true exposure. Caps (FR-43, D17) apply to look-through exposure.*
+- **FR-27 (P0)**: **Instrument-type awareness** beyond plain stocks and ETFs:
+  - *Leveraged/inverse ETPs* (e.g. 3x short oil): flag the decay from daily resets, show holding time, and warn when one is held past a configurable number of days.
+  - *Crypto-linked equities* (miners, treasury companies, exchanges): tagged as their own risk bucket.
+  - *Bonds*: maturity, yield to maturity, currency.
+  - *ELTIFs / private-market funds*: illiquid, infrequent net asset value; show a liquidity and valuation-staleness flag.
+  - *Pre-IPO or thinly traded shares*: prices flagged as low-confidence.
+- **FR-28 (P0)**: **Cash**: a Depotauszug does not include the cash account. Cash is entered manually or taken from the transaction export.
 - **FR-25 (P0)**: FX: EUR base currency using daily ECB reference rates. Show the FX contribution to return separately.
 - **FR-26 (P1)**: German tax estimate: 25% Abgeltungssteuer plus 5.5% Soli (plus optional church tax), the €1,000 Sparerpauschbetrag (€2,000 joint), 30% Teilfreistellung for equity ETFs, Vorabpauschale, and separate loss pots (equity loss pot vs. general). Show both pre-tax and estimated after-tax P&L.
 
 ### 6.4 Factor scoring
-- **FR-30 (P0)**: A **universe** made up of the user's holdings plus a watchlist plus a default tech universe (proposal: Nasdaq-100 plus large-cap EU tech such as ASML, SAP, Infineon, Adyen; see Q4).
+- **FR-30 (P0)**: The **universe** (D16) is the union of:
+  - Nasdaq-100 constituents;
+  - TecDAX constituents;
+  - **global semiconductors across all market caps**: US (PHLX SOX members plus small and mid caps), EU (ASML, Infineon, STMicro, ASM International, BE Semiconductor, Aixtron, Soitec, …) and Asia (TSMC, Samsung, SK Hynix, Tokyo Electron, Advantest, …);
+  - every instrument any user holds or watches.
+
+  Constituent lists refresh monthly. Free fundamentals for Asian and small-cap semis are weak, so their scores carry data-quality flags (FR-34) until the paid provider (D15) is in place.
 - **FR-31 (P0)**: **Stock factor scores**, computed as sector-relative percentile ranks from 0 to 100:
   - *Value*: EV/EBIT, free-cash-flow yield, EV/Sales (growth-adjusted)
   - *Quality*: ROIC, gross margin and its stability, accruals, net debt/EBITDA
@@ -115,6 +142,8 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
   - **Tax-aware** (P1): use the remaining Sparerpauschbetrag, harvest losses, and avoid selling lots that are highly taxed.
   - Shown as concrete instructions ("reduce Sparplan X from €200 to €100/month, add €100 to Y"), with a rationale.
 - **FR-43 (P0)**: **Guardrails** configurable per user: maximum single stock, maximum sector, maximum single-country exposure, minimum cash, and drawdown alert thresholds.
+- **FR-45 (P0)**: **Long-tail review**: flag positions below a size threshold (default 0.5% of the portfolio) and ask for a decision on each: *grow to conviction size, keep as a tracker, or exit* (with the tax impact of exiting). Real portfolios can have many dozens of positions under 0.5%.
+- **FR-46 (P0)**: **Redundancy detection**: several ETFs tracking the same or a heavily overlapping index (e.g. two Nasdaq-100 ETFs, two World Momentum ETFs), with a consolidation suggestion that respects tax (e.g. redirect savings plans instead of selling).
 - **FR-44 (P0)**: **Decision journal**: the user logs "bought / sold / ignored guidance" with a reason. It feeds into accuracy tracking.
 
 ### 6.6 AI layer (heavy, unrestricted per D9)
@@ -153,7 +182,8 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 |---|---|---|
 | **0 — Foundations** | Repo, Docker Compose, auth, database schema, provider interface, price and FX ingestion, CI | Owner can log in; daily EOD prices land in the database. |
 | **1 — MVP** | §6.1–6.8 P0 items | Owner imports real TR history; holdings match TR to within €1; factor scores for 100+ tickers; weekly digest delivered by Telegram and email. |
-| **1.1** | P1 items (tax estimate, PDF import, look-through, news) | — |
+| **1.1** | P1 items (tax estimate, trade-confirmation import, news) | — |
+| **Friends gate** | Licensed data provider live (D15), privacy consent flow, legal check (Q10) | Required **before** the first non-owner invite. |
 | **2 — Macro & commodities** | Regime model, full commodity page | — |
 | **3 — Backtesting lab** | Engine plus UI | Reproduces a known benchmark strategy within tolerance. |
 | **4 — Swing scanner** | Signals gated by backtests | — |
@@ -193,7 +223,7 @@ External: data providers (§8), LLM API, SMTP relay
 
 - **Quant core**: pandas, numpy, scipy, statsmodels; `vectorbt` or a custom engine for the Phase 3 backtests.
 - **LLM**: provider behind an adapter (e.g. the Claude API) with tool calling into internal read-only endpoints.
-- **Security**: secrets in `.env` stored outside git, row-level security in Postgres, uploaded statements encrypted at rest and deleted after parsing (configurable), rate limiting, automatic security updates on the host.
+- **Security**: real broker statements and exports are never committed. `.gitignore` blocks `*.pdf` and `statements/`, and parser fixtures are synthetic or fully anonymised. Secrets in `.env` stored outside git, row-level security in Postgres, uploaded statements encrypted at rest and deleted after parsing (configurable), rate limiting, automatic security updates on the host.
 - **Ops**: Uptime Kuma or healthchecks.io for job monitoring; nightly backups with restore tested quarterly; a UPS is recommended.
 
 ## 10. Non-functional requirements
@@ -229,28 +259,30 @@ External: data providers (§8), LLM API, SMTP relay
 - Fewer than 1 unhandled data-job failure per month.
 - Rebalancing guidance followed at least 50% of the time, measured from the decision journal. If it is lower, either the guidance or the target allocation is wrong.
 
-## 13. Open questions — next grilling round
+## 13. Open questions — round 3
 
-**Must answer before Phase 0:**
-- **Q1 — TR export sample**: can you provide an anonymised TR CSV export (and one PDF Abrechnung)? The parser is built against real files, not assumptions.
-- **Q2 — Friends' brokers**: do the friends also use TR? Each additional broker adds a parser and ongoing maintenance.
-- **Q3 — Data licence vs. friends**: yfinance is for personal use. Once friends are onboarded, are you willing to switch to a ~€20–30/month licensed provider? If not, friends' features may be limited.
-- **Q4 — Tech universe**: Nasdaq-100 plus which EU names? Include semis in Asia (TSMC ADR, Samsung)? Small or mid caps?
-- **Q5 — Target allocation**: are the defaults in FR-40 (40/45/5–10/5) close to your intent? What is your current actual split?
-- **Q6 — Single-stock cap**: 15% max per stock. Too tight or too loose for your conviction positions?
+**Answered in round 2**: Q1 (statement supplied, D18), Q2 (friends use TR, D14), Q3 (paid data when friends join, D15), Q4 (universe, D16), Q6 (15% cap, D17). Q5 (target allocation) is partly answered, because the statement shows the current split. It is re-asked below as Q20.
 
-**Must answer before the MVP is done:**
-- **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or do they inherit a fixed Growth profile?
-- **Q8 — Tax details**: single or joint filing (€1,000 vs. €2,000 allowance)? Church tax? Do you use a Freistellungsauftrag at TR, and do you have one at other banks?
+**Blocking the MVP design:**
+- **Q18 — Cash**: the Depotauszug has no cash balance. How much cash or TR interest balance should count as the "cash" bucket?
+- **Q19 — History**: can you also export the **transaction history** (TR app → Settings → Account → transaction export, or a set of Abrechnung PDFs)? Without it there is no cost basis, so no P&L or tax figures.
+- **Q20 — Target allocation**: is the current split your target, or do you want the app to steer you somewhere else? (Actual split in the owner-only analysis; not stored in the repo.)
+- **Q21 — What counts as "tech"?**: consumer internet (Amazon, Alibaba, Uber), fintech (Adyen, PayPal, Klarna), media/streaming (Netflix, Spotify) and IT services (Accenture, EPAM): all "tech", or separate buckets with their own targets?
+- **Q22 — Crypto-linked equities** (miners, treasury companies, exchanges): a tagged sub-bucket with its own cap, or excluded from guidance? Should real crypto ever be tracked (the old Q12)?
+- **Q23 — Leveraged ETPs**: what are your leveraged or inverse ETP positions for: hedges, tactical trades, or leftovers? This decides whether the app treats leveraged ETPs as "trading book" (strict holding-time alerts) or rejects them in guidance.
+- **Q24 — Long tail**: are 0.5% as the "too small to matter" threshold and a target of roughly 40–60 positions reasonable, or do you deliberately want many small bets?
+
+**Still open from round 1:**
+- **Q7 — Per-user risk profiles**: do friends get their own questionnaire, or inherit Growth?
+- **Q8 — Tax details**: single or joint filing? Church tax? A Freistellungsauftrag at TR only?
 - **Q9 — UI language**: English only, or German/Turkish as well?
-- **Q10 — Legal comfort**: who exactly are the "few friends"? Family only, or also colleagues? Do you want the AI's unrestricted picks visible to them, or only the quant outputs? (Your answer was "unrestricted"; this confirms it for *other people*.)
-- **Q11 — LLM budget**: what is the maximum monthly LLM spend, in total and per user? Which provider?
-- **Q12 — Crypto**: out of scope forever, or later?
-- **Q13 — Home server specifics**: what hardware (CPU/RAM, x86 or ARM), always on? Tailscale (friends install an app) or Cloudflare Tunnel (browser only)?
-- **Q14 — Alert thresholds**: what daily move should ping you? ±5% for single stocks, ±3% for ETFs?
-- **Q15 — Benchmark**: MSCI World, Nasdaq-100 or a custom mix (e.g. 70% Nasdaq-100 / 30% MSCI World)?
-- **Q16 — Savings plans**: which Sparpläne do you run at TR today (instrument, amount, frequency)? The rebalancing engine uses them as its main lever.
-- **Q17 — Development**: who builds it — you, or mostly Claude-assisted? What is the timeline expectation for the MVP?
+- **Q10 — Legal comfort**: family only, or also colleagues? Are the unrestricted AI picks visible to them?
+- **Q11 — LLM budget and provider**: maximum monthly spend, in total and per user.
+- **Q13 — Home server**: hardware (CPU/RAM, x86 or ARM)? Tailscale or Cloudflare Tunnel?
+- **Q14 — Alert thresholds**: which daily move should ping you (e.g. ±5% for stocks, ±3% for ETFs)?
+- **Q15 — Benchmark**: MSCI World, Nasdaq-100, or a custom mix?
+- **Q16 — Savings plans**: which Sparpläne run today (instrument, amount, frequency)?
+- **Q17 — Development**: who builds it, and what is the MVP timeline?
 
 ## 14. Glossary
 

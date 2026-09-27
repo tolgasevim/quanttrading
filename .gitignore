@@ -1,0 +1,7 @@
+# Never commit real broker data
+*.pdf
+statements/
+exports/
+*.csv
+!tests/fixtures/**/*.csv
+.env
