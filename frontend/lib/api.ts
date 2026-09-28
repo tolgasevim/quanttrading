@@ -59,3 +59,45 @@ export type JobRun = {
   rows_written: number;
   details: Record<string, unknown>;
 };
+
+export type ImportSummary = {
+  rows: number;
+  skipped: number;
+  by_kind: Record<string, number>;
+  first_date: string | null;
+  last_date: string | null;
+  instruments: number;
+  savings_plan_executions: number;
+  net_cash_flow: string;
+  warnings: string[];
+  warning_count: number;
+  new: number;
+  already_imported: number;
+};
+
+export type ImportRecord = {
+  id: string;
+  source: string;
+  status: "preview" | "committed" | "discarded";
+  summary: ImportSummary;
+  created_at: string;
+  committed_at: string | null;
+  rows_inserted: number;
+};
+
+/** Multipart upload; the browser sets the Content-Type boundary itself. */
+export async function uploadFile<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(path, { method: "POST", body: form, credentials: "same-origin" });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      detail = (await response.json()).detail ?? detail;
+    } catch {
+      // keep statusText
+    }
+    throw new ApiError(response.status, detail);
+  }
+  return (await response.json()) as T;
+}
