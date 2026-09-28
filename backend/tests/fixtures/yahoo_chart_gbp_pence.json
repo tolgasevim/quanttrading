@@ -1,0 +1,52 @@
+{
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "GBp",
+     "symbol": "SGLN.L",
+     "exchangeTimezoneName": "Europe/London"
+    },
+    "timestamp": [
+     1789974000,
+     1790060400
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "open": [
+        5210.0,
+        5230.5
+       ],
+       "high": [
+        5250.0,
+        5260.0
+       ],
+       "low": [
+        5190.0,
+        5201.0
+       ],
+       "close": [
+        5235.5,
+        5244.0
+       ],
+       "volume": [
+        120000,
+        98000
+       ]
+      }
+     ],
+     "adjclose": [
+      {
+       "adjclose": [
+        5235.5,
+        5244.0
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ }
+}

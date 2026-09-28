@@ -1,0 +1,59 @@
+# QuantTrading: runs unchanged on the Mac mini and, later, on a hosted VM (D37).
+# Usage: cp .env.example .env && edit, then `docker compose up -d --build`.
+name: quanttrading
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: quant
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant -d quant"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      QT_DATABASE_URL: postgresql+psycopg://quant:${POSTGRES_PASSWORD}@db:5432/quant
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "quant.worker"]
+    env_file: .env
+    environment:
+      QT_DATABASE_URL: postgresql+psycopg://quant:${POSTGRES_PASSWORD}@db:5432/quant
+    depends_on:
+      api:
+        condition: service_healthy  # the api runs the migrations
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # Bound to localhost only. Family access goes through Tailscale (`tailscale serve`), not an
+      # open port.
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
