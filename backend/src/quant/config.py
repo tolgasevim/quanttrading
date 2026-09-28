@@ -4,12 +4,20 @@ from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL, make_url
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="QT_", env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+psycopg://quant:quant@localhost:5432/quant"
+    # Either a full URL (QT_DATABASE_URL, must already be URL-encoded) or the parts below. The
+    # parts are safer for generated passwords: characters such as @ : / # are escaped for you.
+    database_url: str | None = None
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_user: str = "quant"
+    db_password: str = "quant"  # noqa: S105 - local-dev default; Compose passes the real one
+    db_name: str = "quant"
     # Role the app switches to after connecting, so row-level security applies (FR-3).
     # Empty only for tooling that must act as the owner (migrations, test cleanup).
     db_app_role: str = "quant_app"
@@ -36,6 +44,18 @@ class Settings(BaseSettings):
     backfill_days: int = 400
 
     instruments_file: str = "seed/instruments.yaml"
+
+    def db_url(self) -> URL:
+        if self.database_url:
+            return make_url(self.database_url)
+        return URL.create(
+            "postgresql+psycopg",
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        )
 
 
 @lru_cache

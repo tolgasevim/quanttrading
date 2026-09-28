@@ -14,7 +14,7 @@ from quant.config import get_settings
 @lru_cache
 def get_engine() -> Engine:
     settings = get_settings()
-    engine = create_engine(settings.database_url, pool_pre_ping=True)
+    engine = create_engine(settings.db_url(), pool_pre_ping=True)
     role = settings.db_app_role
     if role:
         if not role.isidentifier():

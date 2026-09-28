@@ -41,7 +41,7 @@ def clean_tables() -> Iterator[None]:
     yield
     names = ", ".join(t.name for t in reversed(Base.metadata.sorted_tables))
     # As the owner: the app role may not TRUNCATE.
-    owner = create_engine(get_settings().database_url)
+    owner = create_engine(get_settings().db_url())
     with owner.begin() as conn:
         conn.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
     owner.dispose()

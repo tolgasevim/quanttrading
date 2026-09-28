@@ -23,7 +23,9 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      QT_DATABASE_URL: postgresql+psycopg://quant:${POSTGRES_PASSWORD}@db:5432/quant
+      # Passed as parts, not a URL, so any characters in the password are safe.
+      QT_DB_HOST: db
+      QT_DB_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
@@ -39,7 +41,9 @@ services:
     command: ["python", "-m", "quant.worker"]
     env_file: .env
     environment:
-      QT_DATABASE_URL: postgresql+psycopg://quant:${POSTGRES_PASSWORD}@db:5432/quant
+      # Passed as parts, not a URL, so any characters in the password are safe.
+      QT_DB_HOST: db
+      QT_DB_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
       api:
         condition: service_healthy  # the api runs the migrations
