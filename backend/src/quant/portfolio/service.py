@@ -75,6 +75,10 @@ class Mark:
     price: Decimal
     as_of: date
     source: str
+    # What the price applies to: the quantity and cost on the statement date, so that value and
+    # profit describe one day even when later trades have changed the position.
+    quantity: Decimal
+    cost: PositionCost | None
 
 
 @dataclass
@@ -168,13 +172,23 @@ def cost_checks(
     return results
 
 
-def marks_from_snapshot(snapshot: Snapshot, current: list[Position]) -> dict[str, Mark]:
-    scoped = [p for p in current if p.asset_class in SOURCE_SCOPE[snapshot.source]]
+def marks_from_snapshot(
+    snapshot: Snapshot, as_of_positions: list[Position], book: LotBook
+) -> dict[str, Mark]:
+    """Prices from a statement, with the quantity and cost the position had on that day."""
+    scoped = [p for p in as_of_positions if p.asset_class in SOURCE_SCOPE[snapshot.source]]
+    costs = position_costs(book)
     marks: dict[str, Mark] = {}
     for line in snapshot.lines:
         position = find_by_name(scoped, line["name"])
         if position is not None and "price_eur" in line:
-            marks[position.isin] = Mark(Decimal(line["price_eur"]), snapshot.as_of, snapshot.source)
+            marks[position.isin] = Mark(
+                Decimal(line["price_eur"]),
+                snapshot.as_of,
+                snapshot.source,
+                position.quantity,
+                costs.get(position.isin),
+            )
     return marks
 
 
@@ -198,9 +212,10 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
         as_of_rows = [m for m in movements if m.date <= snapshot.as_of]
         as_of_positions = open_positions(compute_positions(as_of_rows))
         result = reconcile_snapshot(as_of_positions, snapshot)
-        result.cost_checks = cost_checks(snapshot, as_of_positions, build_lots(as_of_rows))
+        as_of_book = build_lots(as_of_rows)
+        result.cost_checks = cost_checks(snapshot, as_of_positions, as_of_book)
         holdings.reconciliations.append(result)
-        holdings.marks.update(marks_from_snapshot(snapshot, current))
+        holdings.marks.update(marks_from_snapshot(snapshot, as_of_positions, as_of_book))
         for f in result.findings:
             if f.isin is None:
                 continue

@@ -180,9 +180,27 @@ def test_a_purchase_after_the_statement_date_does_not_break_the_cost_check(
     import_history(client, history([later]))
     body = upload(client)
     assert all(c["ok"] for c in body["reconciliations"][0]["cost_checks"])
-    assert (
-        by_name(body)["Ethereum"]["purchase_value"] == "6500.00"
-    )  # the current holding includes it
+    eth = by_name(body)["Ethereum"]
+    assert eth["purchase_value"] == "6500.00"  # the current holding includes it
+    assert eth["quantity"] == "3"
+    # Price, quantity and cost all describe the statement date: 2 units, not 3.
+    assert (eth["market_value"], eth["unrealised_pnl"]) == ("5000.00", "998.00")
+
+
+def test_a_position_without_a_known_cost_has_no_unrealised_profit(
+    client: TestClient, admin: User
+) -> None:
+    login(client, admin.email)
+    gift = row(
+        9, "2025-01-05", "DELIVERY", "FREE_RECEIPT", "CRYPTO", "Cardano", "XF000ADA0010",
+        shares="100",
+    )  # fmt: skip
+    import_history(client, history([gift]))
+    rows = [*STATEMENT_ROWS, ("100", "Cardano", "1", "0", "100", "100")]
+    ada = by_name(upload(client, rows, total="10.100"))["Cardano"]
+    assert ada["cost_flags"] == ["cost_unknown"]
+    assert ada["market_value"] == "100.00"  # the value is known, the profit is not
+    assert ada["unrealised_pnl"] is None and ada["unrealised_pct"] is None
 
 
 def test_items_that_need_the_owner_are_listed(owner: TestClient) -> None:

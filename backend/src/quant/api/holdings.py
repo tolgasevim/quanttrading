@@ -151,10 +151,12 @@ def _position(p: Position, holdings: service.Holdings) -> PositionOut:
     mark = holdings.marks.get(p.isin)
     value = pnl = pct = None
     if mark is not None:
-        value = mark.price * p.quantity
-        if cost is not None:
-            pnl = value - cost.total_cost
-            pct = pnl / cost.total_cost * 100 if cost.total_cost else None
+        # Price, quantity and cost all belong to the statement date.
+        value = mark.price * mark.quantity
+        known = mark.cost is not None and FLAG_COST_UNKNOWN not in mark.cost.flags
+        if mark.cost is not None and known:
+            pnl = value - mark.cost.total_cost
+            pct = pnl / mark.cost.total_cost * 100 if mark.cost.total_cost else None
     average = cost.average_cost if cost else None
     return PositionOut(
         isin=p.isin,

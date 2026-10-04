@@ -230,6 +230,18 @@ def _groups(rows: list[LotTx]) -> list[_Group]:
     return groups
 
 
+def _pair_legs(
+    sources: dict[str, Decimal], targets: dict[str, Decimal]
+) -> list[tuple[dict[str, Decimal], dict[str, Decimal]]]:
+    """Unrelated swaps of one type booked together would share a group. When there are as many
+    outgoing as incoming instruments, pair them in booking order (one swap each) so cost and
+    acquisition dates are not mixed; any other shape (a split into many, a merger of many) is one
+    swap."""
+    if len(sources) > 1 and len(sources) == len(targets):
+        return [({s: sources[s]}, {t: targets[t]}) for s, t in zip(sources, targets, strict=True)]
+    return [(sources, targets)]
+
+
 class _Engine:
     def __init__(self) -> None:
         self.book = LotBook()
@@ -351,7 +363,8 @@ class _Engine:
             cash_by_isin[tx.isin] += tx.amount
 
         if sources and targets:
-            self._swap(sources, targets, cash_by_isin, when)
+            for part_sources, part_targets in _pair_legs(sources, targets):
+                self._swap(part_sources, part_targets, cash_by_isin, when)
         elif targets:
             self._additions(group.type, targets, cash_by_isin, when)
         elif sources:

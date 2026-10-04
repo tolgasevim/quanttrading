@@ -250,6 +250,22 @@ def test_merger_carries_cost_dates_and_flags_to_the_new_isin() -> None:
     assert not book.disposals
 
 
+def test_unrelated_swaps_booked_together_are_not_mixed() -> None:
+    ledger = (
+        Ledger()
+        .buy("OLD1", "10", "100", fee="0", at=at(1))
+        .buy("OLD2", "10", "900", fee="0", at=at(2))
+        .action("MERGER", "OLD1", "-10", at=at(10, 22, 4))
+        .action("MERGER", "OLD2", "-10", at=at(10, 22, 4))
+        .action("MERGER", "NEW1", "10", at=at(10, 22, 4))
+        .action("MERGER", "NEW2", "10", at=at(10, 22, 4))
+    )
+    book = ledger.book()
+    new1, new2 = (book.lots[i] for i in ("NEW1", "NEW2"))
+    assert [(lot.quantity, lot.cost, lot.acquired.day) for lot in new1] == [(D(10), D(100), 1)]
+    assert [(lot.quantity, lot.cost, lot.acquired.day) for lot in new2] == [(D(10), D(900), 2)]
+
+
 def test_a_swap_into_an_isin_already_held_keeps_fifo_order_by_date() -> None:
     ledger = (
         Ledger()
