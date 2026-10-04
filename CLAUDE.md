@@ -36,3 +36,9 @@ cd frontend && npm ci && npm run build && npm run typecheck
 - Every AI recommendation goes into the pick log (FR-52).
 - Money is `Decimal`/`Numeric`, never float.
 - One PR per coherent slice, with tests. CI must be green.
+
+## PR workflow
+- Never merge a PR without the owner's explicit approval.
+- When the owner asks for a PR review: review the diff against the non-negotiables above, check CI,
+  merge conflicts and open threads, show the results, then ask for permission to merge and which
+  merge method to use. Merge only after a clear yes.
