@@ -112,6 +112,16 @@ export type Position = {
   corporate_action: boolean;
   verified: boolean;
   differs: boolean;
+  purchase_value: string | null;
+  acquisition_costs: string | null;
+  total_cost: string | null;
+  average_cost: string | null;
+  cost_flags: ("cost_unknown" | "price_derived" | "carried" | "incomplete_history")[];
+  price: string | null;
+  price_as_of: string | null;
+  market_value: string | null;
+  unrealised_pnl: string | null;
+  unrealised_pct: string | null;
 };
 
 export type Finding = {
@@ -123,11 +133,47 @@ export type Finding = {
   difference: string | null;
 };
 
+export type CostCheck = {
+  name: string;
+  statement_cost: string;
+  computed_cost: string;
+  difference: string;
+  ok: boolean;
+};
+
 export type Reconciliation = {
   source: string;
   as_of: string;
   counts: Record<Finding["status"], number>;
   review: Finding[];
+  cost_checks: CostCheck[];
+};
+
+export type YearPnl = {
+  year: number;
+  gains: string;
+  losses: string;
+  net: string;
+  fees: string;
+  tax_withheld: string;
+  disposals: number;
+};
+
+export type InstrumentPnl = { isin: string; name: string | null; realised_pnl: string };
+
+export type Realised = {
+  by_year: YearPnl[];
+  best: InstrumentPnl[];
+  worst: InstrumentPnl[];
+  net_total: string;
+};
+
+export type UnattributedCash = {
+  isin: string;
+  name: string | null;
+  date: string;
+  type: string;
+  amount: string;
 };
 
 export type Holdings = {
@@ -135,4 +181,6 @@ export type Holdings = {
   by_class: Record<string, number>;
   verified: number;
   reconciliations: Reconciliation[];
+  realised: Realised;
+  review: { cost_unknown: number; unattributed_cash: UnattributedCash[] };
 };

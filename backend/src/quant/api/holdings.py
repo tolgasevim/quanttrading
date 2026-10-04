@@ -11,6 +11,11 @@ from quant.config import get_settings
 from quant.importers import tr_crypto_pdf
 from quant.models import Snapshot
 from quant.portfolio import service
+from quant.portfolio.lots import (
+    FLAG_COST_UNKNOWN,
+    realised_by_isin,
+    realised_by_year,
+)
 from quant.portfolio.positions import Position
 from quant.portfolio.reconcile import Finding, Status
 
@@ -29,6 +34,19 @@ class PositionOut(BaseModel):
     corporate_action: bool  # a split/merger/... touched it; cost basis needs a closer look
     verified: bool  # confirmed by a statement
     differs: bool  # a statement disagrees with the history
+    # Cost basis (FIFO). Purchase value is what broker statements quote; acquisition costs are
+    # the fees and transaction taxes on top. The average cost per unit includes both.
+    purchase_value: Decimal | None
+    acquisition_costs: Decimal | None
+    total_cost: Decimal | None  # purchase value plus acquisition costs
+    average_cost: Decimal | None
+    cost_flags: list[str]  # cost_unknown | price_derived | carried
+    # Market value from the latest broker statement that prices this position, if any.
+    price: Decimal | None
+    price_as_of: str | None
+    market_value: Decimal | None
+    unrealised_pnl: Decimal | None  # market value less purchase value and acquisition costs
+    unrealised_pct: Decimal | None
 
 
 class FindingOut(BaseModel):
@@ -40,11 +58,58 @@ class FindingOut(BaseModel):
     difference: Decimal | None
 
 
+class CostCheckOut(BaseModel):
+    name: str
+    statement_cost: Decimal
+    computed_cost: Decimal
+    difference: Decimal
+    ok: bool
+
+
 class ReconciliationOut(BaseModel):
     source: str
     as_of: str
     counts: dict[str, int]
     review: list[FindingOut]  # everything that is not a clean match
+    cost_checks: list[CostCheckOut]  # the statement's purchase value against the history's
+
+
+class YearOut(BaseModel):
+    year: int
+    gains: Decimal
+    losses: Decimal
+    net: Decimal
+    fees: Decimal
+    tax_withheld: Decimal
+    disposals: int
+
+
+class InstrumentPnlOut(BaseModel):
+    isin: str
+    name: str | None
+    realised_pnl: Decimal
+
+
+class RealisedOut(BaseModel):
+    """Gains and losses on everything sold so far, before tax, after fees (FIFO)."""
+
+    by_year: list[YearOut]
+    best: list[InstrumentPnlOut]
+    worst: list[InstrumentPnlOut]
+    net_total: Decimal
+
+
+class UnattributedOut(BaseModel):
+    isin: str
+    name: str | None
+    date: str
+    type: str
+    amount: Decimal
+
+
+class ReviewSummaryOut(BaseModel):
+    cost_unknown: int  # open positions whose cost the broker does not give
+    unattributed_cash: list[UnattributedOut]  # corporate-action cash that fits no action
 
 
 class HoldingsOut(BaseModel):
@@ -52,11 +117,22 @@ class HoldingsOut(BaseModel):
     by_class: dict[str, int]
     verified: int
     reconciliations: list[ReconciliationOut]
+    realised: RealisedOut
+    review: ReviewSummaryOut
 
 
 def _trim(value: Decimal | None) -> Decimal | None:
     """12423.8547020000 → 12423.854702 (the database keeps ten decimals)."""
     return None if value is None else Decimal(format(value.normalize(), "f"))
+
+
+def _money(value: Decimal | None) -> Decimal | None:
+    return None if value is None else value.quantize(Decimal("0.01"))
+
+
+def _cents(value: Decimal) -> Decimal:
+    """Always a Decimal with two places, including zero (`0.00`, which is falsy in Python)."""
+    return value.quantize(Decimal("0.01"))
 
 
 def _finding(f: Finding) -> FindingOut:
@@ -71,6 +147,15 @@ def _finding(f: Finding) -> FindingOut:
 
 
 def _position(p: Position, holdings: service.Holdings) -> PositionOut:
+    cost = holdings.costs.get(p.isin)
+    mark = holdings.marks.get(p.isin)
+    value = pnl = pct = None
+    if mark is not None:
+        value = mark.price * p.quantity
+        if cost is not None:
+            pnl = value - cost.total_cost
+            pct = pnl / cost.total_cost * 100 if cost.total_cost else None
+    average = cost.average_cost if cost else None
     return PositionOut(
         isin=p.isin,
         name=p.name,
@@ -81,6 +166,50 @@ def _position(p: Position, holdings: service.Holdings) -> PositionOut:
         corporate_action=p.corporate_action_touched,
         verified=p.isin in holdings.verified,
         differs=p.isin in holdings.differs,
+        purchase_value=_money(cost.cost) if cost else None,
+        acquisition_costs=_money(cost.costs) if cost else None,
+        total_cost=_money(cost.total_cost) if cost else None,
+        average_cost=average.quantize(Decimal("0.0001")) if average is not None else None,
+        cost_flags=sorted(cost.flags) if cost else [],
+        price=mark.price if mark else None,
+        price_as_of=mark.as_of.isoformat() if mark else None,
+        market_value=_money(value),
+        unrealised_pnl=_money(pnl),
+        unrealised_pct=pct.quantize(Decimal("0.01")) if pct is not None else None,
+    )
+
+
+def _name(holdings: service.Holdings, isin: str) -> str | None:
+    known = holdings.everything.get(isin)
+    return known.name if known else None
+
+
+def _realised(holdings: service.Holdings) -> RealisedOut:
+    disposals = holdings.book.disposals
+    years = realised_by_year(disposals)
+    per_isin = sorted(realised_by_isin(disposals).items(), key=lambda kv: kv[1])
+    losing = [kv for kv in per_isin if kv[1] < 0][:10]
+    winning = [kv for kv in reversed(per_isin) if kv[1] > 0][:10]
+
+    def entry(kv: tuple[str, Decimal]) -> InstrumentPnlOut:
+        return InstrumentPnlOut(isin=kv[0], name=_name(holdings, kv[0]), realised_pnl=_cents(kv[1]))
+
+    return RealisedOut(
+        by_year=[
+            YearOut(
+                year=y.year,
+                gains=_cents(y.gains),
+                losses=_cents(y.losses),
+                net=_cents(y.net),
+                fees=_cents(y.fees),
+                tax_withheld=_cents(y.tax_withheld),
+                disposals=y.disposals,
+            )
+            for y in years
+        ],
+        best=[entry(kv) for kv in winning],
+        worst=[entry(kv) for kv in losing],
+        net_total=_cents(sum((y.net for y in years), Decimal(0))),
     )
 
 
@@ -99,9 +228,33 @@ def _out(holdings: service.Holdings) -> HoldingsOut:
                 as_of=r.as_of,
                 counts=r.counts,
                 review=[_finding(f) for f in r.findings if f.status != Status.MATCH],
+                cost_checks=[
+                    CostCheckOut(
+                        name=c.name,
+                        statement_cost=_cents(c.statement_cost),
+                        computed_cost=_cents(c.computed_cost),
+                        difference=_cents(c.difference),
+                        ok=ok,
+                    )
+                    for c, ok in r.cost_checks
+                ],
             )
             for r in holdings.reconciliations
         ],
+        realised=_realised(holdings),
+        review=ReviewSummaryOut(
+            cost_unknown=sum(1 for c in holdings.costs.values() if FLAG_COST_UNKNOWN in c.flags),
+            unattributed_cash=[
+                UnattributedOut(
+                    isin=u.isin,
+                    name=_name(holdings, u.isin),
+                    date=u.date.isoformat(),
+                    type=u.type,
+                    amount=_cents(u.amount),
+                )
+                for u in holdings.book.unattributed
+            ],
+        ),
     )
 
 
