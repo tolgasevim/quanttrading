@@ -65,7 +65,7 @@ export default function HoldingsPage() {
     }
   };
 
-  const unknownCost = data?.positions.filter((p) => p.cost_flags.includes("cost_unknown")) ?? [];
+  const unknownCost = data?.positions.filter((p) => p.cost_flags.some((f) => f === "cost_unknown" || f === "incomplete_history")) ?? [];
 
   return (
     <>
@@ -313,7 +313,7 @@ export default function HoldingsPage() {
                   {data.positions.map((p) => {
                     // A cost of 0.00, or a partial one, would read as complete when the broker gave
                     // none for some units.
-                    const partial = p.cost_flags.includes("cost_unknown");
+                    const partial = p.cost_flags.some((f) => f === "cost_unknown" || f === "incomplete_history");
                     const noCost = partial && Number(p.total_cost) === 0;
                     return (
                     <tr key={p.isin}>
@@ -328,7 +328,17 @@ export default function HoldingsPage() {
                         {noCost ? "—" : eur(p.total_cost)}
                         {partial && !noCost && <div className="muted">partial</div>}
                       </td>
-                      <td className="num">{eur(p.market_value)}</td>
+                      <td className="num">
+                        {eur(p.market_value)}
+                        {p.price_as_of && (
+                          <div className="muted">
+                            as of {p.price_as_of}
+                            {p.valued_quantity !== null && Number(p.valued_quantity) !== Number(p.quantity)
+                              ? `, ${qty(p.valued_quantity)} units`
+                              : ""}
+                          </div>
+                        )}
+                      </td>
                       <td className={`num ${tone(p.unrealised_pnl)}`}>
                         {eur(p.unrealised_pnl)}
                         {p.unrealised_pct !== null && (

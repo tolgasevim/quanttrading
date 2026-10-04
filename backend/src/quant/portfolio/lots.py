@@ -38,6 +38,10 @@ FLAG_CARRIED = "carried"  # moved over from another ISIN by a corporate action
 FLAG_INCOMPLETE_HISTORY = "incomplete_history"  # sold more than the history shows was bought
 
 # One action's rows share a type and are written within minutes of each other.
+# Flags that mean part of the cost is missing (counted as zero), so a gain or profit on it is
+# overstated: the broker gave no cost, or the history has fewer purchases than sales.
+COST_MISSING = frozenset({FLAG_COST_UNKNOWN, FLAG_INCOMPLETE_HISTORY})
+
 GROUP_GAP = timedelta(minutes=5)
 # Cash rows of a corporate action are booked up to a day away from the unit rows.
 CASH_WINDOW = timedelta(days=1)
@@ -143,7 +147,7 @@ class Disposal:
     @property
     def cost_unknown(self) -> bool:
         """Some units sold had no cost from the broker, so the gain is overstated."""
-        return any(FLAG_COST_UNKNOWN in s.flags for s in self.slices)
+        return bool(self.flags & COST_MISSING) or any(s.flags & COST_MISSING for s in self.slices)
 
     @property
     def realised_pnl(self) -> Decimal:

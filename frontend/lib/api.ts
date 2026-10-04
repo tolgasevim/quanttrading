@@ -119,6 +119,7 @@ export type Position = {
   cost_flags: ("cost_unknown" | "price_derived" | "carried" | "incomplete_history")[];
   price: string | null;
   price_as_of: string | null;
+  valued_quantity: string | null;
   market_value: string | null;
   unrealised_pnl: string | null;
   unrealised_pct: string | null;

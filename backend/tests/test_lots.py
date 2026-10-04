@@ -459,3 +459,22 @@ def test_selling_units_with_a_known_cost_is_not_flagged() -> None:
     book = Ledger().buy("A", "10", "100").sell("A", "5", "80").book()
     assert not book.disposals[0].cost_unknown
     assert realised_by_year(book.disposals)[0].cost_unknown_disposals == 0
+
+
+def test_selling_more_than_was_bought_is_flagged_like_unknown_cost() -> None:
+    book = Ledger().buy("A", "5", "50").sell("A", "8", "160").book()
+    [d] = book.disposals
+    assert FLAG_INCOMPLETE_HISTORY in d.flags and d.cost_unknown  # 3 units counted at no cost
+    assert realised_by_year(book.disposals)[0].cost_unknown_disposals == 1
+
+
+def test_a_swap_of_units_the_history_never_bought_keeps_the_gap_flag() -> None:
+    ledger = (
+        Ledger()
+        .buy("OLD", "5", "50")
+        .action("MERGER", "OLD", "-8", at=at(10, 22, 4))
+        .action("MERGER", "NEW", "8", at=at(10, 22, 4))
+    )
+    new = position_costs(ledger.book())["NEW"]
+    assert new.quantity == D(8) and new.cost == D(50)
+    assert FLAG_INCOMPLETE_HISTORY in new.flags  # 3 of the 8 units have no cost

@@ -12,7 +12,7 @@ from quant.importers import tr_crypto_pdf
 from quant.models import Snapshot
 from quant.portfolio import service
 from quant.portfolio.lots import (
-    FLAG_COST_UNKNOWN,
+    COST_MISSING,
     cost_unknown_isins,
     realised_by_isin,
     realised_by_year,
@@ -45,6 +45,7 @@ class PositionOut(BaseModel):
     # Market value from the latest broker statement that prices this position, if any.
     price: Decimal | None
     price_as_of: str | None
+    valued_quantity: Decimal | None  # the quantity the value is for: the one on the statement date
     market_value: Decimal | None
     unrealised_pnl: Decimal | None  # market value less purchase value and acquisition costs
     unrealised_pct: Decimal | None
@@ -156,7 +157,7 @@ def _position(p: Position, holdings: service.Holdings) -> PositionOut:
     if mark is not None:
         # Price, quantity and cost all belong to the statement date.
         value = mark.price * mark.quantity
-        known = mark.cost is not None and FLAG_COST_UNKNOWN not in mark.cost.flags
+        known = mark.cost is not None and not mark.cost.flags & COST_MISSING
         if mark.cost is not None and known:
             pnl = value - mark.cost.total_cost
             pct = pnl / mark.cost.total_cost * 100 if mark.cost.total_cost else None
@@ -178,6 +179,7 @@ def _position(p: Position, holdings: service.Holdings) -> PositionOut:
         cost_flags=sorted(cost.flags) if cost else [],
         price=mark.price if mark else None,
         price_as_of=mark.as_of.isoformat() if mark else None,
+        valued_quantity=_trim(mark.quantity) if mark else None,
         market_value=_money(value),
         unrealised_pnl=_money(pnl),
         unrealised_pct=pct.quantize(Decimal("0.01")) if pct is not None else None,
@@ -255,7 +257,7 @@ def _out(holdings: service.Holdings) -> HoldingsOut:
         ],
         realised=_realised(holdings),
         review=ReviewSummaryOut(
-            cost_unknown=sum(1 for c in holdings.costs.values() if FLAG_COST_UNKNOWN in c.flags),
+            cost_unknown=sum(1 for c in holdings.costs.values() if c.flags & COST_MISSING),
             unattributed_cash=[
                 UnattributedOut(
                     isin=u.isin,

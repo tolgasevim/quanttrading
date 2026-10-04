@@ -185,6 +185,7 @@ def test_a_purchase_after_the_statement_date_does_not_break_the_cost_check(
     assert eth["quantity"] == "3"
     # Price, quantity and cost all describe the statement date: 2 units, not 3.
     assert (eth["market_value"], eth["unrealised_pnl"]) == ("5000.00", "998.00")
+    assert (eth["valued_quantity"], eth["price_as_of"]) == ("2", "2026-09-27")  # shown on the page
 
 
 def test_a_position_without_a_known_cost_has_no_unrealised_profit(
