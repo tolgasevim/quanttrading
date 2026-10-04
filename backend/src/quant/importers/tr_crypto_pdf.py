@@ -15,10 +15,12 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from pypdf import PdfReader
-from pypdf.errors import PyPdfError
 
 SOURCE = "tr_crypto_statement"
 ASSET_CLASSES = frozenset({"CRYPTO"})
+
+# A holdings statement is one or two pages; a "PDF" with hundreds is not one.
+MAX_PAGES = 20
 
 HEADER_MARKER = "NOMINALE"
 FOOTER_COUNT = re.compile(r"ANZAHL DER POSITIONEN:\s*(\d+)")
@@ -79,8 +81,12 @@ def german_decimal(text: str) -> Decimal:
 def extract_text(data: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(data))
+        if len(reader.pages) > MAX_PAGES:
+            raise StatementFormatError(f"this PDF has more than {MAX_PAGES} pages")
         return "\n".join(page.extract_text(extraction_mode="layout") for page in reader.pages)
-    except (PyPdfError, ValueError, KeyError) as exc:
+    except StatementFormatError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - pypdf raises many types on malformed input
         raise StatementFormatError("this file is not a readable PDF") from exc
 
 

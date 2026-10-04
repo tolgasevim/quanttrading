@@ -105,7 +105,12 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None) -> int:
             print(f"FAIL crypto statement: {exc}")
             return 1
         lines = [StatementLine(name=ln.name, quantity=ln.quantity) for ln in statement.lines]
-        counts = summarise(reconcile(positions, lines, tr_crypto_pdf.ASSET_CLASSES))
+        # Compare with the history up to the statement's own date, not up to today.
+        until = statement.as_of.isoformat()
+        as_of_positions = open_positions(
+            compute_positions([t for t in parsed.transactions if t.date <= until])
+        )
+        counts = summarise(reconcile(as_of_positions, lines, tr_crypto_pdf.ASSET_CLASSES))
         print(f"crypto statement of {statement.as_of}: {len(lines)} positions")
         for status, count in counts.items():
             print(f"  {status:<20}{count:>3}")

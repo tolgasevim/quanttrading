@@ -111,9 +111,11 @@ def get_holdings(user: CurrentUser, db: UserDb) -> HoldingsOut:
 
 
 @router.post("/statements/crypto", response_model=HoldingsOut, status_code=status.HTTP_201_CREATED)
-async def upload_crypto_statement(file: UploadFile, user: CurrentUser, db: UserDb) -> HoldingsOut:
+def upload_crypto_statement(file: UploadFile, user: CurrentUser, db: UserDb) -> HoldingsOut:
+    # A plain `def`: FastAPI runs it in a worker thread, so parsing a PDF never blocks other
+    # requests.
     limit = get_settings().max_upload_mb * 1024 * 1024
-    data = await file.read(limit + 1)
+    data = file.file.read(limit + 1)
     if len(data) > limit:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "file is too large")
     if not data.startswith(PDF_MAGIC):

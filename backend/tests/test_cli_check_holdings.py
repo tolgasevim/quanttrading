@@ -40,3 +40,12 @@ def test_works_without_a_statement(tmp_path: Path, capsys: pytest.CaptureFixture
     csv, _ = write(tmp_path)
     assert check_holdings(csv, None) == 0
     assert "open positions rebuilt from 10 transactions: 5" in capsys.readouterr().out
+
+
+def test_trades_after_the_statement_date_do_not_fail_the_check(tmp_path: Path) -> None:
+    history = [*HISTORY, (11, "TRADING", "BUY", "CRYPTO", "Bitcoin", "XF000BTC0017", "0.5")]
+    csv = tmp_path / "tx.csv"
+    pdf = tmp_path / "crypto.pdf"
+    csv.write_text(csv_text(history, dates={11: "2026-10-02"}))
+    pdf.write_bytes(crypto_statement_pdf(ROWS, total=TOTAL))
+    assert check_holdings(csv, pdf) == 0

@@ -40,16 +40,18 @@ class Holdings:
     reconciliations: list[SourceReconciliation] = field(default_factory=list)
 
 
-def load_positions(session: Session, user_id: uuid.UUID) -> dict[str, Position]:
-    rows = session.scalars(
-        select(Transaction).where(
-            Transaction.user_id == user_id,
-            Transaction.shares.is_not(None),
-            Transaction.isin.is_not(None),
-            Transaction.category.in_(QUANTITY_CATEGORIES),
+def load_movements(session: Session, user_id: uuid.UUID) -> list[Transaction]:
+    """Every row that can change a quantity (see quant.portfolio.positions)."""
+    return list(
+        session.scalars(
+            select(Transaction).where(
+                Transaction.user_id == user_id,
+                Transaction.shares.is_not(None),
+                Transaction.isin.is_not(None),
+                Transaction.category.in_(QUANTITY_CATEGORIES),
+            )
         )
     )
-    return compute_positions(rows)
 
 
 def statement_lines(snapshot: Snapshot) -> list[StatementLine]:
@@ -86,18 +88,26 @@ def reconcile_snapshot(positions: list[Position], snapshot: Snapshot) -> SourceR
 
 
 def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
-    positions = open_positions(load_positions(session, user_id))
-    holdings = Holdings(positions=positions)
+    movements = load_movements(session, user_id)
+    current = open_positions(compute_positions(movements))
+    current_by_isin = {p.isin: p for p in current}
+    holdings = Holdings(positions=current)
     for snapshot in latest_snapshots(session, user_id):
         if snapshot.source not in SOURCE_SCOPE:
             continue
-        result = reconcile_snapshot(positions, snapshot)
+        # A statement describes the day it was issued, so compare it with the history up to
+        # that day. Later trades are not discrepancies.
+        as_of = [m for m in movements if m.date <= snapshot.as_of]
+        result = reconcile_snapshot(open_positions(compute_positions(as_of)), snapshot)
         holdings.reconciliations.append(result)
         for f in result.findings:
             if f.isin is None:
                 continue
             if f.status == Status.MATCH:
-                holdings.verified.add(f.isin)
+                # Confirmed only while nothing has moved since the statement.
+                now = current_by_isin.get(f.isin)
+                if now is not None and now.last_date <= result.as_of:
+                    holdings.verified.add(f.isin)
             elif f.status in (Status.QUANTITY_MISMATCH, Status.NOT_ON_STATEMENT):
                 holdings.differs.add(f.isin)
     return holdings

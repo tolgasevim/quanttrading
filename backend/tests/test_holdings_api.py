@@ -33,11 +33,16 @@ HISTORY = [
 ]
 
 
-def csv_text(history: list[tuple[int, str, str, str, str, str, str]] = HISTORY) -> str:
+def csv_text(
+    history: list[tuple[int, str, str, str, str, str, str]] = HISTORY,
+    dates: dict[int, str] | None = None,
+) -> str:
+    """`dates` overrides the day of individual rows (by id); the default is 2024."""
     rows = [HEADER]
     for n, category, type_, cls, name, isin, shares in history:
+        day = (dates or {}).get(n, f"2024-0{min(n, 9)}-01")
         rows.append(
-            f'"2024-0{min(n, 9)}-01T09:00:00.000000Z","2024-0{min(n, 9)}-01","DEFAULT","{category}",'
+            f'"{day}T09:00:00.000000Z","{day}","DEFAULT","{category}",'
             f'"{type_}","{cls}","{name}","{isin}","{shares}","","","","","EUR","","","","",'
             f'"00000000-0000-4000-8000-{n:012d}","","","",""'
         )
@@ -171,3 +176,52 @@ def test_users_only_see_their_own_holdings_and_statements(
 def test_holdings_require_sign_in(client: TestClient) -> None:
     assert client.get("/api/holdings").status_code == 401
     assert upload_statement(client, b"%PDF-").status_code == 401
+
+
+def test_a_trade_after_the_statement_date_is_not_a_discrepancy(owner_client: TestClient) -> None:
+    """The statement is dated 2026-09-27: buying more Bitcoin on 2026-10-02 must not turn a
+    correct history into a mismatch."""
+    history = [*HISTORY, (11, "TRADING", "BUY", "CRYPTO", "Bitcoin", "XF000BTC0017", "0.5")]
+    import_history(owner_client, csv_text(history, dates={11: "2026-10-02"}))
+    body = upload_statement(owner_client, crypto_statement_pdf(ROWS, total=TOTAL)).json()
+    recon = body["reconciliations"][0]
+    assert recon["counts"]["match"] == 4 and recon["review"] == []
+
+    by_name = {p["name"]: p for p in body["positions"]}
+    assert by_name["Bitcoin"]["quantity"] == "0.593152"  # the current holding includes the trade
+    # Not confirmed any more, since it moved after the statement, but not flagged either.
+    assert (by_name["Bitcoin"]["verified"], by_name["Bitcoin"]["differs"]) == (False, False)
+    assert by_name["XRP"]["verified"] and body["verified"] == 3
+
+
+def test_a_trade_before_the_statement_date_still_counts(owner_client: TestClient) -> None:
+    history = [*HISTORY, (11, "TRADING", "BUY", "CRYPTO", "Bitcoin", "XF000BTC0017", "0.5")]
+    import_history(owner_client, csv_text(history, dates={11: "2026-09-27"}))  # same day
+    body = upload_statement(owner_client, crypto_statement_pdf(ROWS, total=TOTAL)).json()
+    review = {f["name"]: f for f in body["reconciliations"][0]["review"]}
+    assert review["Bitcoin"]["status"] == "quantity_mismatch"
+    assert review["Bitcoin"]["difference"] == "0.5"
+
+
+def test_upload_handlers_run_in_the_threadpool() -> None:
+    """A coroutine handler would parse files on the event loop and stall every other request."""
+    import inspect
+
+    from quant.api import holdings, imports
+
+    assert not inspect.iscoroutinefunction(holdings.upload_crypto_statement)
+    assert not inspect.iscoroutinefunction(imports.upload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"%PDF-1.4\n",
+        b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 99 0 R >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n",
+        b"%PDF-1.7\n" + b"\x00\xff" * 500,
+        b"%PDF-1.4\n%%EOF\n",
+    ],
+)
+def test_malformed_pdfs_are_a_422_not_a_500(owner_client: TestClient, payload: bytes) -> None:
+    response = upload_statement(owner_client, payload)
+    assert response.status_code == 422, response.text

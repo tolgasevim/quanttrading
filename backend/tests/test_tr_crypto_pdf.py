@@ -100,3 +100,44 @@ def test_extraction_from_a_real_pdf_file() -> None:
     assert statement.as_of == date(2026, 9, 27)
     for secret in PII:
         assert secret not in str(statement)
+
+
+def test_a_pdf_with_too_many_pages_is_rejected() -> None:
+    import io
+
+    from pypdf import PdfReader, PdfWriter
+
+    page = PdfReader(io.BytesIO(crypto_statement_pdf(ROWS, total=TOTAL)))
+    writer = PdfWriter()
+    for _ in range(c.MAX_PAGES + 1):
+        writer.add_page(page.pages[0])
+    out = io.BytesIO()
+    writer.write(out)
+    with pytest.raises(c.StatementFormatError, match="more than 20 pages"):
+        c.extract_text(out.getvalue())
+
+
+def test_corrupted_pdfs_only_ever_raise_a_statement_error() -> None:
+    """Fuzz: a seeded run of damaged copies of a valid statement. pypdf raises AttributeError,
+    TypeError, IndexError and LookupError on some of them, which used to escape as a 500."""
+    import random
+
+    base = crypto_statement_pdf(ROWS, total=TOTAL)
+    rng = random.Random(7)  # noqa: S311 - a reproducible fuzz seed, not cryptography
+    failures = 0
+    for _ in range(300):
+        data = bytearray(base)
+        for _ in range(rng.randint(1, 8)):
+            pos = rng.randrange(len(data))
+            roll = rng.random()
+            if roll < 0.5:
+                data[pos] = rng.randrange(256)
+            elif roll < 0.8:
+                del data[pos : pos + rng.randint(1, 40)]
+            else:
+                data[pos:pos] = bytes(rng.randrange(256) for _ in range(rng.randint(1, 20)))
+        try:
+            c.extract_text(bytes(data))
+        except c.StatementFormatError:
+            failures += 1
+    assert failures > 0  # the run really did produce damaged files

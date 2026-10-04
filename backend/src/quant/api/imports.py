@@ -37,9 +37,9 @@ class ImportOut(BaseModel):
         )
 
 
-async def _read_upload(file: UploadFile) -> str:
+def _read_upload(file: UploadFile) -> str:
     limit = get_settings().max_upload_mb * 1024 * 1024
-    data = await file.read(limit + 1)
+    data = file.file.read(limit + 1)
     if len(data) > limit:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "file is too large")
     try:
@@ -51,8 +51,10 @@ async def _read_upload(file: UploadFile) -> str:
 
 
 @router.post("", response_model=ImportOut, status_code=status.HTTP_201_CREATED)
-async def upload(file: UploadFile, user: CurrentUser, db: UserDb) -> ImportOut:
-    text = await _read_upload(file)
+def upload(file: UploadFile, user: CurrentUser, db: UserDb) -> ImportOut:
+    # A plain `def`: FastAPI runs it in a worker thread, so parsing and saving a large export
+    # never blocks other requests.
+    text = _read_upload(file)
     try:
         record = service.stage_tr_csv(db, user.id, text)
     except tr_csv.ImportFormatError as exc:
