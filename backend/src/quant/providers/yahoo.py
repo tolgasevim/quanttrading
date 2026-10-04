@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from quant.providers.base import Bar, Fetcher, PriceSeries, ProviderError
+from quant.providers.base import Bar, Fetcher, PriceSeries, ProviderError, round_price
 
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 
@@ -18,7 +18,7 @@ CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 def _dec(value: Any) -> Decimal | None:
     if value is None:
         return None
-    return Decimal(str(value))
+    return round_price(Decimal(str(value)))
 
 
 class YahooProvider:

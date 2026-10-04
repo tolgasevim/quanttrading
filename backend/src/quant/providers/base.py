@@ -9,6 +9,13 @@ from typing import Protocol
 
 import httpx
 
+PRICE_QUANTUM = Decimal("0.0001")
+
+
+def round_price(value: Decimal) -> Decimal:
+    """Prices are stored to 4 decimals; this also strips float noise from JSON sources."""
+    return value.quantize(PRICE_QUANTUM)
+
 
 class ProviderError(Exception):
     """A provider could not deliver data (network, HTTP error, bad payload)."""
@@ -110,12 +117,12 @@ def normalise_minor_units(series: PriceSeries) -> PriceSeries:
     major, factor = MINOR_UNITS[series.currency]
 
     def scale(value: Decimal | None) -> Decimal | None:
-        return None if value is None else value / factor
+        return None if value is None else round_price(value / factor)
 
     bars = [
         Bar(
             date=b.date,
-            close=b.close / factor,
+            close=round_price(b.close / factor),
             open=scale(b.open),
             high=scale(b.high),
             low=scale(b.low),
