@@ -7,6 +7,7 @@ relevant FR-x before building anything, and cite it in the PR description.
 - `backend/`: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, APScheduler. Package `quant` in `backend/src/quant`.
   - `providers/`: market-data providers behind `PriceProvider` / `FxProvider` (PRD §8). A new source is a new class plus a registry entry.
   - `ingest/`: scheduled jobs. Every run is recorded in `job_runs`.
+  - `importers/`: broker file parsers (pure functions) and the preview/commit workflow.
   - `api/`: HTTP routers. `worker.py`: the scheduler. `cli.py`: admin commands.
 - `frontend/`: Next.js (App Router). The browser only talks to Next, which proxies `/api/*` to FastAPI.
 - `docker-compose.yml`: db, api (runs the migrations), worker, web.
@@ -27,7 +28,10 @@ cd frontend && npm ci && npm run build && npm run typecheck
   Fixtures are synthetic. Checks against real exports run on the owner's Mac mini and print only
   pass/fail (PRD §9a).
 - Parsers drop personal data at parse time (FR-19a, FR-10a).
-- Every user-owned table is scoped by `user_id` and protected by Postgres row-level security (FR-3).
+- Every user-owned table is scoped by `user_id` and protected by Postgres row-level security (FR-3):
+  add it to `quant.rls.USER_TABLES` and apply `policy_sql` to it in its migration. API handlers use
+  the `UserDb` session *and* filter by `user_id` explicitly.
+- The app runs as the non-owner role `quant_app` (see `quant.db`); migrations run as the owner.
 - Guidance only: never place trades or store broker credentials (D2).
 - Every AI recommendation goes into the pick log (FR-52).
 - Money is `Decimal`/`Numeric`, never float.

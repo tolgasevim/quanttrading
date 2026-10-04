@@ -4,7 +4,8 @@ A self-hosted guide for long-term investing: portfolio analytics, factor scores 
 guidance for a Trade Republic portfolio. It never places trades. The full spec is in
 [docs/PRD.md](docs/PRD.md).
 
-**Status: Phase 0 (foundations).** Sign-in, invites, daily end-of-day prices and ECB FX rates.
+**Status: Phase 1 in progress.** Sign-in, invites, daily end-of-day prices and ECB FX rates, and
+import of the Trade Republic transaction export.
 
 ## Run it on the Mac mini
 
@@ -35,6 +36,18 @@ guidance for a Trade Republic portfolio. It never places trades. The full spec i
      `QT_COOKIE_SECURE=true` for this.
 
 Turn on two-factor sign-in under Settings after the first login.
+
+## Import your Trade Republic history
+
+1. In the TR app: Profile → Settings → Account → Export transactions (CSV).
+2. Optional dry run on the Mac mini, which stores nothing and prints only counts and pass/fail
+   (safe to share):
+   ```sh
+   docker compose cp ~/Downloads/transactions.csv api:/tmp/tx.csv
+   docker compose exec api python -m quant.cli check-tr-csv /tmp/tx.csv
+   docker compose exec api rm /tmp/tx.csv
+   ```
+3. In the app: Import → choose the file → check the preview → Import.
 
 ## Development
 
