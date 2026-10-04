@@ -231,7 +231,15 @@ export default function HoldingsPage() {
                       <td>{y.year}</td>
                       <td className="num">{eur(y.gains)}</td>
                       <td className="num">{eur(y.losses)}</td>
-                      <td className={`num ${tone(y.net)}`}>{eur(y.net)}</td>
+                      <td className={`num ${tone(y.net)}`}>
+                        {eur(y.net)}
+                        {y.cost_unknown_sales > 0 && (
+                          <div className="status-failed">
+                            {y.cost_unknown_sales} sale{y.cost_unknown_sales > 1 ? "s" : ""} without
+                            a known cost: gain overstated
+                          </div>
+                        )}
+                      </td>
                       <td className="num">{eur(y.fees)}</td>
                       <td className="num">{eur(y.tax_withheld)}</td>
                       <td className="num">{y.disposals}</td>
@@ -264,9 +272,15 @@ export default function HoldingsPage() {
                       const l = data.realised.worst[i];
                       return (
                         <tr key={i}>
-                          <td>{g ? (g.name ?? g.isin) : ""}</td>
+                          <td>
+                            {g ? (g.name ?? g.isin) : ""}
+                            {g?.cost_unknown && <div className="status-failed">cost unknown</div>}
+                          </td>
                           <td className={`num ${tone(g?.realised_pnl ?? null)}`}>{g ? eur(g.realised_pnl) : ""}</td>
-                          <td>{l ? (l.name ?? l.isin) : ""}</td>
+                          <td>
+                            {l ? (l.name ?? l.isin) : ""}
+                            {l?.cost_unknown && <div className="status-failed">cost unknown</div>}
+                          </td>
                           <td className={`num ${tone(l?.realised_pnl ?? null)}`}>{l ? eur(l.realised_pnl) : ""}</td>
                         </tr>
                       );

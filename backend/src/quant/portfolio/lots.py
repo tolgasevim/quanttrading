@@ -141,6 +141,11 @@ class Disposal:
         return sum((s.costs for s in self.slices), ZERO)
 
     @property
+    def cost_unknown(self) -> bool:
+        """Some units sold had no cost from the broker, so the gain is overstated."""
+        return any(FLAG_COST_UNKNOWN in s.flags for s in self.slices)
+
+    @property
     def realised_pnl(self) -> Decimal:
         """Gain before tax: proceeds less sell fees and the full acquisition cost."""
         return self.proceeds - self.fees - self.cost - self.acquisition_costs
@@ -533,6 +538,7 @@ class YearPnl:
     fees: Decimal
     tax_withheld: Decimal
     disposals: int
+    cost_unknown_disposals: int  # of which sold units whose cost the broker did not give
 
     @property
     def net(self) -> Decimal:
@@ -555,6 +561,7 @@ def realised_by_year(disposals: Iterable[Disposal]) -> list[YearPnl]:
                 fees=sum((d.fees for d in items), ZERO),
                 tax_withheld=sum((d.tax_withheld for d in items), ZERO),
                 disposals=len(items),
+                cost_unknown_disposals=sum(1 for d in items if d.cost_unknown),
             )
         )
     return out
@@ -565,3 +572,7 @@ def realised_by_isin(disposals: Iterable[Disposal]) -> dict[str, Decimal]:
     for d in disposals:
         totals[d.isin] += d.realised_pnl
     return dict(totals)
+
+
+def cost_unknown_isins(disposals: Iterable[Disposal]) -> set[str]:
+    return {d.isin for d in disposals if d.cost_unknown}

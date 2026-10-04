@@ -234,3 +234,19 @@ def test_money_is_serialised_as_exact_decimals(owner: TestClient) -> None:
     raw = owner.get("/api/holdings").text
     assert '"net_total":"96.60"' in raw.replace(" ", "")
     assert D("96.60") == D(owner.get("/api/holdings").json()["realised"]["net_total"])
+
+
+def test_a_sale_of_units_with_unknown_cost_is_flagged_in_the_realised_figures(
+    client: TestClient, admin: User
+) -> None:
+    login(client, admin.email)
+    sale = row(
+        9, "2025-08-01", "TRADING", "SELL", "STOCK", "Spin Co", SPIN,
+        shares="-6", price="10", amount="60", fee="-1",
+    )  # fmt: skip
+    import_history(client, history([sale]))
+    realised = client.get("/api/holdings").json()["realised"]
+    [year] = realised["by_year"]
+    assert year["cost_unknown_sales"] == 1
+    flagged = {i["name"]: i["cost_unknown"] for i in realised["best"] + realised["worst"]}
+    assert flagged == {"Spin Co": True, "Alpha Corp": False, "Beta Inc": False}

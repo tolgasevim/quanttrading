@@ -13,6 +13,7 @@ from quant.models import Snapshot
 from quant.portfolio import service
 from quant.portfolio.lots import (
     FLAG_COST_UNKNOWN,
+    cost_unknown_isins,
     realised_by_isin,
     realised_by_year,
 )
@@ -82,12 +83,14 @@ class YearOut(BaseModel):
     fees: Decimal
     tax_withheld: Decimal
     disposals: int
+    cost_unknown_sales: int  # sales of units with no known cost: the gain is overstated
 
 
 class InstrumentPnlOut(BaseModel):
     isin: str
     name: str | None
     realised_pnl: Decimal
+    cost_unknown: bool  # includes a sale of units with no known cost
 
 
 class RealisedOut(BaseModel):
@@ -189,12 +192,18 @@ def _name(holdings: service.Holdings, isin: str) -> str | None:
 def _realised(holdings: service.Holdings) -> RealisedOut:
     disposals = holdings.book.disposals
     years = realised_by_year(disposals)
+    unknown = cost_unknown_isins(disposals)
     per_isin = sorted(realised_by_isin(disposals).items(), key=lambda kv: kv[1])
     losing = [kv for kv in per_isin if kv[1] < 0][:10]
     winning = [kv for kv in reversed(per_isin) if kv[1] > 0][:10]
 
     def entry(kv: tuple[str, Decimal]) -> InstrumentPnlOut:
-        return InstrumentPnlOut(isin=kv[0], name=_name(holdings, kv[0]), realised_pnl=_cents(kv[1]))
+        return InstrumentPnlOut(
+            isin=kv[0],
+            name=_name(holdings, kv[0]),
+            realised_pnl=_cents(kv[1]),
+            cost_unknown=kv[0] in unknown,
+        )
 
     return RealisedOut(
         by_year=[
@@ -206,6 +215,7 @@ def _realised(holdings: service.Holdings) -> RealisedOut:
                 fees=_cents(y.fees),
                 tax_withheld=_cents(y.tax_withheld),
                 disposals=y.disposals,
+                cost_unknown_sales=y.cost_unknown_disposals,
             )
             for y in years
         ],

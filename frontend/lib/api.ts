@@ -157,9 +157,10 @@ export type YearPnl = {
   fees: string;
   tax_withheld: string;
   disposals: number;
+  cost_unknown_sales: number;
 };
 
-export type InstrumentPnl = { isin: string; name: string | null; realised_pnl: string };
+export type InstrumentPnl = { isin: string; name: string | null; realised_pnl: string; cost_unknown: boolean };
 
 export type Realised = {
   by_year: YearPnl[];

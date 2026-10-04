@@ -443,3 +443,19 @@ def test_a_positive_tax_amount_is_not_counted_as_withheld() -> None:
     ledger = Ledger().buy("A", "10", "100").sell("A", "5", "80")
     ledger.rows[-1].tax = D("3")  # a refund
     assert ledger.book().disposals[0].tax_withheld == D(0)
+
+
+def test_selling_units_with_unknown_cost_is_flagged() -> None:
+    ledger = Ledger().buy("PARENT", "30", "900").action("SPIN_OFF", "CHILD", "6")
+    ledger.sell("CHILD", "6", "60")
+    book = ledger.book()
+    [d] = book.disposals
+    assert d.cost_unknown and d.realised_pnl == D(59)  # the proceeds less the fee: overstated
+    [year] = realised_by_year(book.disposals)
+    assert year.cost_unknown_disposals == 1
+
+
+def test_selling_units_with_a_known_cost_is_not_flagged() -> None:
+    book = Ledger().buy("A", "10", "100").sell("A", "5", "80").book()
+    assert not book.disposals[0].cost_unknown
+    assert realised_by_year(book.disposals)[0].cost_unknown_disposals == 0
