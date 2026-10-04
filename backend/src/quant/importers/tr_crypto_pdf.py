@@ -24,12 +24,14 @@ MAX_PAGES = 20
 
 HEADER_MARKER = "NOMINALE"
 FOOTER_COUNT = re.compile(r"ANZAHL DER POSITIONEN:\s*(\d+)")
-FOOTER_TOTAL = re.compile(r"SUMME KURSWERTE:\s*(-?[\d.]+,\d+)")
+FOOTER_TOTAL = re.compile(r"SUMME KURSWERTE:\s*(-?[\d.]+(?:,\d+)?)")
 AS_OF = re.compile(r"CRYPTO-ÜBERSICHT\s+zum\s+(\d{2})\.(\d{2})\.(\d{4})")
 
-NUMBER = r"-?[\d.]+,\d+"
+# The broker drops trailing zeros: 2012.90 prints as "2.012,9" and 2500 as "2.500", so the
+# decimal part is optional everywhere.
+NUMBER = r"-?[\d.]+(?:,\d+)?"
 ROW = re.compile(
-    rf"^(?P<qty>[\d.]+,\d+)\s+(?:Stk\.\s+)?(?P<name>.+?)\s+(?P<price>{NUMBER})\s+(?P<cost>{NUMBER})"
+    rf"^(?P<qty>[\d.]+(?:,\d+)?)\s+(?:Stk\.\s+)?(?P<name>.+?)\s+(?P<price>{NUMBER})\s+(?P<cost>{NUMBER})"
     rf"\s+(?P<pl>{NUMBER})\s+(?P<value>{NUMBER})$"
 )
 
@@ -71,7 +73,7 @@ class CryptoStatement:
 
 
 def german_decimal(text: str) -> Decimal:
-    """'12.423,854702' → Decimal('12423.854702')."""
+    """'12.423,854702' → Decimal('12423.854702'); '2.500' (no decimals) → Decimal('2500')."""
     try:
         return Decimal(text.replace(".", "").replace(",", "."))
     except InvalidOperation as exc:

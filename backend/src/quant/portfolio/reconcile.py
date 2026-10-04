@@ -51,6 +51,13 @@ def normalise_name(name: str) -> str:
     return re.sub(r"\s+", " ", name).casefold()
 
 
+def find_by_name(positions: list[Position], name: str) -> Position | None:
+    """The one position with this name, or None when there is none or it is ambiguous."""
+    wanted = normalise_name(name)
+    matches = [p for p in positions if normalise_name(p.name or "") == wanted]
+    return matches[0] if len(matches) == 1 else None
+
+
 def reconcile(
     positions: list[Position], lines: list[StatementLine], asset_classes: frozenset[str]
 ) -> list[Finding]:

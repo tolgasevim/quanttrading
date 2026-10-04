@@ -78,8 +78,16 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None) -> int:
     from collections import Counter
 
     from quant.importers import tr_crypto_pdf, tr_csv
-    from quant.portfolio.positions import compute_positions, open_positions
-    from quant.portfolio.reconcile import StatementLine, reconcile, summarise
+    from quant.portfolio.lots import (
+        FLAG_COST_UNKNOWN,
+        FLAG_INCOMPLETE_HISTORY,
+        FLAG_PRICE_DERIVED,
+        build_lots,
+        position_costs,
+    )
+    from quant.portfolio.positions import DUST, compute_positions, open_positions
+    from quant.portfolio.reconcile import StatementLine, find_by_name, reconcile, summarise
+    from quant.portfolio.service import COST_TOLERANCE, COST_TOLERANCE_PER_DERIVED_LOT
 
     try:
         parsed = tr_csv.parse(csv_path.read_text(encoding="utf-8"))
@@ -95,6 +103,27 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None) -> int:
     print(f"positions touched by a corporate action: {touched}")
     ok = parsed.skipped == 0
     print(f"{'PASS' if ok else 'FAIL'} transactions parsed without skipped rows")
+
+    book = build_lots(parsed.transactions)
+    from_lots = book.open_quantities()
+    from_positions = {p.isin: p.quantity for p in positions}
+    agree = from_lots.keys() == from_positions.keys() and all(
+        abs(from_lots[i] - q) <= DUST for i, q in from_positions.items()
+    )
+    print(
+        f"{'PASS' if agree else 'FAIL'} cost-basis lots agree with the positions on every quantity"
+    )
+    gaps = sum(FLAG_INCOMPLETE_HISTORY in d.flags for d in book.disposals)
+    verdict = "PASS" if gaps == 0 else "FAIL"
+    print(f"{verdict} every sale is covered by earlier purchases ({gaps} are not)")
+    costs = position_costs(book)
+    print(
+        f"disposals: {len(book.disposals)}; positions needing a cost from you: "
+        f"{sum(FLAG_COST_UNKNOWN in c.flags for c in costs.values())}; positions valued at a "
+        f"receipt price: {sum(FLAG_PRICE_DERIVED in c.flags for c in costs.values())}; "
+        f"corporate-action cash that fits no action: {len(book.unattributed)}"
+    )
+    ok = ok and agree and gaps == 0
 
     if crypto_pdf is not None:
         try:
@@ -121,6 +150,26 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None) -> int:
         )
         print(f"{'PASS' if clean else 'FAIL'} crypto quantities match the statement")
         ok = ok and clean
+
+        # Purchase value (Kaufwert) against the lots as of the statement date.
+        as_of_rows = [t for t in parsed.transactions if t.date <= until]
+        as_of_book = build_lots(as_of_rows)
+        as_of_costs = position_costs(as_of_book)
+        checked = matched_cost = 0
+        for line, source in zip(lines, statement.lines, strict=True):
+            position = find_by_name(as_of_positions, line.name)
+            if position is None or position.isin not in as_of_costs:
+                continue
+            derived = sum(
+                FLAG_PRICE_DERIVED in lot.flags for lot in as_of_book.lots.get(position.isin, [])
+            )
+            tolerance = COST_TOLERANCE + COST_TOLERANCE_PER_DERIVED_LOT * derived
+            checked += 1
+            matched_cost += abs(as_of_costs[position.isin].cost - source.cost_eur) <= tolerance
+        cost_ok = checked == len(lines) and matched_cost == checked
+        print(f"cost basis matching the statement's purchase value: {matched_cost} of {len(lines)}")
+        print(f"{'PASS' if cost_ok else 'FAIL'} crypto cost basis matches the statement")
+        ok = ok and cost_ok
     return 0 if ok else 1
 
 

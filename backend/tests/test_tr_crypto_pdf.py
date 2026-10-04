@@ -141,3 +141,17 @@ def test_corrupted_pdfs_only_ever_raise_a_statement_error() -> None:
         except c.StatementFormatError:
             failures += 1
     assert failures > 0  # the run really did produce damaged files
+
+
+def test_whole_numbers_print_without_decimals_and_still_parse() -> None:
+    """The broker drops trailing zeros: 2012.90 prints as '2.012,9', 2500 as '2.500'."""
+    rows = [
+        ("100", "XRP", "1", "100", "5", "105"),
+        ("0,5", "Bitcoin", "74.360,55", "30.000", "7.180,28", "37.180,28"),
+    ]
+    statement = c.parse_text(c.extract_text(crypto_statement_pdf(rows, total="37.285,28")))
+    assert [(line.quantity, line.price_eur, line.value_eur) for line in statement.lines] == [
+        (Decimal(100), Decimal(1), Decimal(105)),
+        (Decimal("0.5"), Decimal("74360.55"), Decimal("37180.28")),
+    ]
+    assert c.german_decimal("2.500") == Decimal(2500)
