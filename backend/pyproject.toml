@@ -17,6 +17,7 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "pyyaml>=6.0",
     "python-multipart>=0.0.9",
+    "pypdf>=5.0",
 ]
 
 [dependency-groups]
@@ -43,7 +44,7 @@ select = ["E", "F", "I", "B", "UP", "S", "SIM"]
 ignore = ["S101", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S105", "S106"]
+"tests/**" = ["S105", "S106", "E501"]  # fixtures keep the statement's real column widths
 "migrations/**" = ["S608", "E501"]  # DDL built from module constants, not user input
 
 [tool.mypy]

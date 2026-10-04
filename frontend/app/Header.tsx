@@ -16,6 +16,7 @@ export function Header({ user }: { user: User }) {
       <nav>
         <Link href="/">Dashboard</Link>
         <Link href="/import">Import</Link>
+        <Link href="/holdings">Holdings</Link>
         {user.role === "admin" && <Link href="/admin/invites">Invites</Link>}
         <Link href="/settings">Settings</Link>
         <button className="link" onClick={logout}>
