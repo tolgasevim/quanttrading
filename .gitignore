@@ -3,5 +3,16 @@
 statements/
 exports/
 *.csv
-!tests/fixtures/**/*.csv
+!**/tests/fixtures/**/*.csv
 .env
+
+# Local environments and build output
+.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo

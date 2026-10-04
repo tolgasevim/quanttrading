@@ -1,0 +1,31 @@
+# Phase 0 starter universe: enough to prove ingestion end to end.
+# The full universe (Nasdaq-100 + TecDAX + global semis + holdings, FR-30) arrives in Phase 1.
+instruments:
+  - {code: NDX, name: NASDAQ-100 Index, asset_class: index, currency: USD,
+     symbols: {yahoo: "^NDX", stooq: "^ndx"}}
+  - {code: SXRV, isin: IE00B53SZB19, name: iShares NASDAQ 100 UCITS ETF (Acc), asset_class: etf,
+     currency: EUR, symbols: {yahoo: SXRV.DE}}   # benchmark proxy (D35)
+  - {code: NVDA, isin: US67066G1040, name: NVIDIA, asset_class: stock, currency: USD,
+     symbols: {yahoo: NVDA, stooq: nvda.us}}
+  - {code: MSFT, isin: US5949181045, name: Microsoft, asset_class: stock, currency: USD,
+     symbols: {yahoo: MSFT, stooq: msft.us}}
+  - {code: AAPL, isin: US0378331005, name: Apple, asset_class: stock, currency: USD,
+     symbols: {yahoo: AAPL, stooq: aapl.us}}
+  - {code: GOOGL, isin: US02079K3059, name: Alphabet A, asset_class: stock, currency: USD,
+     symbols: {yahoo: GOOGL, stooq: googl.us}}
+  - {code: AMZN, isin: US0231351067, name: Amazon, asset_class: stock, currency: USD,
+     symbols: {yahoo: AMZN, stooq: amzn.us}}
+  - {code: META, isin: US30303M1027, name: Meta Platforms, asset_class: stock, currency: USD,
+     symbols: {yahoo: META, stooq: meta.us}}
+  - {code: TSM, isin: US8740391003, name: TSMC (ADR), asset_class: stock, currency: USD,
+     symbols: {yahoo: TSM, stooq: tsm.us}}
+  - {code: ASML, isin: NL0010273215, name: ASML Holding, asset_class: stock, currency: EUR,
+     symbols: {yahoo: ASML.AS}}
+  - {code: SAP, isin: DE0007164600, name: SAP, asset_class: stock, currency: EUR,
+     symbols: {yahoo: SAP.DE}}
+  - {code: IFX, isin: DE0006231004, name: Infineon Technologies, asset_class: stock, currency: EUR,
+     symbols: {yahoo: IFX.DE}}
+  - {code: 4GLD, isin: DE000A0S9GB0, name: Xetra-Gold, asset_class: etc, currency: EUR,
+     symbols: {yahoo: 4GLD.DE}}
+  - {code: BTC, name: Bitcoin, asset_class: crypto, currency: EUR,
+     symbols: {yahoo: BTC-EUR}}
