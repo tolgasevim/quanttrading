@@ -418,3 +418,28 @@ def test_realised_totals_by_year_and_instrument() -> None:
     )
     assert (years[2025].gains, years[2025].losses, years[2025].net) == (D(0), D(-31), D(-31))
     assert realised_by_isin(book.disposals) == {"A": D(48), "B": D(-31)}
+
+
+def test_units_transferred_out_are_not_a_loss() -> None:
+    ledger = Ledger().receive("COIN", "10", "100")
+    ledger.rows.append(
+        Tx("COIN", "DELIVERY", "delivery", "TRANSFER_OUT", D("-4"), ledger._when(None))
+    )
+    book = ledger.book()
+    assert not book.disposals  # no sale, so no realised loss
+    assert position_costs(book)["COIN"].quantity == D(6)
+    assert position_costs(book)["COIN"].cost == D(600)
+
+
+def test_a_trade_row_without_shares_is_ignored() -> None:
+    ledger = Ledger().buy("A", "10", "100")
+    ledger.rows.append(Tx("A", "TRADING", "trade", "SELL", None, ledger._when(None)))
+    ledger.rows.append(Tx("A", "TRADING", "trade", "SELL", D("0"), ledger._when(None)))
+    book = ledger.book()
+    assert not book.disposals and position_costs(book)["A"].quantity == D(10)
+
+
+def test_a_positive_tax_amount_is_not_counted_as_withheld() -> None:
+    ledger = Ledger().buy("A", "10", "100").sell("A", "5", "80")
+    ledger.rows[-1].tax = D("3")  # a refund
+    assert ledger.book().disposals[0].tax_withheld == D(0)

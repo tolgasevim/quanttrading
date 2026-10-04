@@ -175,6 +175,11 @@ def _abs(value: Decimal | None) -> Decimal:
     return abs(value) if value is not None else ZERO
 
 
+def _withheld(value: Decimal | None) -> Decimal:
+    """Tax the broker took (a negative amount). A positive one is a refund, not withholding."""
+    return -value if value is not None and value < 0 else ZERO
+
+
 @dataclass
 class _Group:
     type: str
@@ -312,7 +317,7 @@ class _Engine:
                 quantity,
                 proceeds,
                 _abs(tx.fee),
-                _abs(tx.tax),
+                _withheld(tx.tax),
                 tuple(slices),
                 flags,
             )
@@ -320,21 +325,10 @@ class _Engine:
 
     def delivery(self, tx: LotTx) -> None:
         assert tx.isin is not None and tx.shares is not None
-        if tx.shares < 0:  # outgoing delivery: treat as a disposal without proceeds
-            slices, flags = self.consume(tx.isin, abs(tx.shares), _day(tx))
-            self.book.disposals.append(
-                Disposal(
-                    tx.isin,
-                    _day(tx),
-                    "write_off",
-                    abs(tx.shares),
-                    ZERO,
-                    ZERO,
-                    ZERO,
-                    tuple(slices),
-                    flags,
-                )
-            )
+        if tx.shares < 0:
+            # Units moved out (to a wallet or another depot) are not a sale: no proceeds, no gain
+            # or loss. The lots leave this book with their cost.
+            self.consume(tx.isin, abs(tx.shares), _day(tx))
             return
         if tx.price is not None:
             cost, flags = abs(tx.price * tx.shares), frozenset({FLAG_PRICE_DERIVED})
@@ -476,9 +470,10 @@ def build_lots(transactions: Iterable[LotTx]) -> LotBook:
         if isinstance(item, _Group):
             engine.corporate_action(item)
         elif item.category == "TRADING":
-            if (item.shares or ZERO) > 0:
+            shares = item.shares or ZERO
+            if shares > 0:
                 engine.buy(item)
-            else:
+            elif shares < 0:
                 engine.sell(item)
         else:
             engine.delivery(item)

@@ -297,8 +297,10 @@ export default function HoldingsPage() {
                 </thead>
                 <tbody>
                   {data.positions.map((p) => {
-                    // A cost of 0.00 would read as a real number when the broker gave none.
-                    const noCost = p.cost_flags.includes("cost_unknown") && Number(p.total_cost) === 0;
+                    // A cost of 0.00, or a partial one, would read as complete when the broker gave
+                    // none for some units.
+                    const partial = p.cost_flags.includes("cost_unknown");
+                    const noCost = partial && Number(p.total_cost) === 0;
                     return (
                     <tr key={p.isin}>
                       <td>
@@ -307,8 +309,11 @@ export default function HoldingsPage() {
                       </td>
                       <td>{CLASS_LABELS[p.asset_class ?? ""] ?? p.asset_class ?? "—"}</td>
                       <td className="num">{qty(p.quantity)}</td>
-                      <td className="num">{noCost ? "—" : eur(p.average_cost)}</td>
-                      <td className="num">{noCost ? "—" : eur(p.total_cost)}</td>
+                      <td className="num">{partial ? "—" : eur(p.average_cost)}</td>
+                      <td className="num">
+                        {noCost ? "—" : eur(p.total_cost)}
+                        {partial && !noCost && <div className="muted">partial</div>}
+                      </td>
                       <td className="num">{eur(p.market_value)}</td>
                       <td className={`num ${tone(p.unrealised_pnl)}`}>
                         {eur(p.unrealised_pnl)}
