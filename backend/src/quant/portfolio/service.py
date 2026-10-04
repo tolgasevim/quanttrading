@@ -32,6 +32,7 @@ from quant.portfolio.reconcile import (
     reconcile,
     summarise,
 )
+from quant.portfolio.tax import Income, Refund, YearEstimate, estimate
 
 # Which asset classes each statement source speaks for.
 SOURCE_SCOPE = {tr_crypto_pdf.SOURCE: tr_crypto_pdf.ASSET_CLASSES}
@@ -227,3 +228,24 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
             elif f.status in (Status.QUANTITY_MISMATCH, Status.NOT_ON_STATEMENT):
                 holdings.differs.add(f.isin)
     return holdings
+
+
+def build_tax(session: Session, user_id: uuid.UUID) -> list[YearEstimate]:
+    """The German tax estimate per year (FR-26) from the user's whole history."""
+    movements = load_movements(session, user_id)
+    book = build_lots(movements)
+    classes = {p.isin: p.asset_class for p in compute_positions(movements).values()}
+    rows = session.scalars(
+        select(Transaction).where(
+            Transaction.user_id == user_id, Transaction.kind.in_(("income", "interest", "tax"))
+        )
+    )
+    income: list[Income] = []
+    refunds: list[Refund] = []
+    for tx in rows:
+        if tx.kind == "tax":
+            if tx.tax is not None and tx.tax > 0:  # a refund (loss-pot or allowance adjustment)
+                refunds.append(Refund(tx.date, tx.tax))
+        elif tx.amount is not None:
+            income.append(Income(tx.date, tx.asset_class, tx.amount, -(tx.tax or Decimal(0))))
+    return estimate(book.disposals, classes, income, refunds)

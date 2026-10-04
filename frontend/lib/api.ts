@@ -186,3 +186,32 @@ export type Holdings = {
   realised: Realised;
   review: { cost_unknown: number; unattributed_cash: UnattributedCash[] };
 };
+
+export type CryptoTax = {
+  taxable_gain: string;
+  tax_free_gain: string;
+  freigrenze: string;
+  under_freigrenze: boolean;
+};
+
+export type YearTax = {
+  year: number;
+  stock_pnl: string;
+  fund_pnl: string;
+  other_pnl: string;
+  income: string;
+  stock_loss_brought: string;
+  general_loss_brought: string;
+  stock_loss_carried: string;
+  general_loss_carried: string;
+  taxable_before_allowance: string;
+  allowance_used: string;
+  taxable: string;
+  tax: string;
+  withheld: string;
+  to_settle: string;
+  fund_disposals: number;
+  crypto: CryptoTax;
+};
+
+export type TaxEstimate = { years: YearTax[]; assumptions: string[] };
