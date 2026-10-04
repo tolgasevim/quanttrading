@@ -237,3 +237,24 @@ class Transaction(Base):
     original_currency: Mapped[str | None] = mapped_column(String(3))
     fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 10))
     savings_plan: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Snapshot(Base):
+    """A broker holdings statement (e.g. the Crypto-Übersicht), reduced to its table rows.
+
+    The file itself is never stored (FR-19a). The newest snapshot per source is what holdings
+    are reconciled against; older ones are kept as history.
+    """
+
+    __tablename__ = "snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(30))
+    as_of: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    lines: Mapped[list[dict[str, str]]] = mapped_column(JSON)
+    footer_count: Mapped[int] = mapped_column(Integer)
+    footer_total: Mapped[Decimal] = mapped_column(Numeric(20, 2))

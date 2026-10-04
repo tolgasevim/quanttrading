@@ -4,8 +4,9 @@ A self-hosted guide for long-term investing: portfolio analytics, factor scores 
 guidance for a Trade Republic portfolio. It never places trades. The full spec is in
 [docs/PRD.md](docs/PRD.md).
 
-**Status: Phase 1 in progress.** Sign-in, invites, daily end-of-day prices and ECB FX rates, and
-import of the Trade Republic transaction export.
+**Status: Phase 1 in progress.** Sign-in, invites, daily end-of-day prices and ECB FX rates,
+import of the Trade Republic transaction export, and holdings rebuilt from it and checked against
+the crypto statement.
 
 ## Run it on the Mac mini
 
@@ -48,6 +49,20 @@ Turn on two-factor sign-in under Settings after the first login.
    docker compose exec api rm /tmp/tx.csv
    ```
 3. In the app: Import → choose the file → check the preview → Import.
+
+## Check your holdings
+
+Holdings are rebuilt from the transaction history. To compare them with a statement:
+
+1. Download the *Crypto-Übersicht* PDF from the TR app (Profile → Documents).
+2. In the app: Holdings → choose the PDF. Every difference is listed.
+3. Optional dry run that stores nothing and prints only counts and pass/fail:
+   ```sh
+   docker compose cp ~/Downloads/transactions.csv api:/tmp/tx.csv
+   docker compose cp ~/Downloads/crypto.pdf api:/tmp/crypto.pdf
+   docker compose exec api python -m quant.cli check-holdings /tmp/tx.csv --crypto-pdf /tmp/crypto.pdf
+   docker compose exec api rm /tmp/tx.csv /tmp/crypto.pdf
+   ```
 
 ## Development
 

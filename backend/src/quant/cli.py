@@ -70,6 +70,60 @@ def check_tr_csv(path: Path) -> int:
     return 0 if all(checks.values()) else 1
 
 
+def check_holdings(csv_path: Path, crypto_pdf: Path | None) -> int:
+    """Acceptance check on the owner's machine (PRD §9a): rebuild holdings from the transaction
+    export and compare them with the crypto statement. Nothing is stored. Prints only counts and
+    pass/fail, never names, ISINs or amounts, so the output is safe to share.
+    """
+    from collections import Counter
+
+    from quant.importers import tr_crypto_pdf, tr_csv
+    from quant.portfolio.positions import compute_positions, open_positions
+    from quant.portfolio.reconcile import StatementLine, reconcile, summarise
+
+    try:
+        parsed = tr_csv.parse(csv_path.read_text(encoding="utf-8"))
+    except tr_csv.ImportFormatError as exc:
+        print(f"FAIL transactions: {exc}")
+        return 1
+    positions = open_positions(compute_positions(parsed.transactions))
+    by_class = Counter(p.asset_class or "UNKNOWN" for p in positions)
+    print(f"open positions rebuilt from {len(parsed.transactions)} transactions: {len(positions)}")
+    for cls, count in sorted(by_class.items()):
+        print(f"  {cls:<14}{count:>5}")
+    touched = sum(p.corporate_action_touched for p in positions)
+    print(f"positions touched by a corporate action: {touched}")
+    ok = parsed.skipped == 0
+    print(f"{'PASS' if ok else 'FAIL'} transactions parsed without skipped rows")
+
+    if crypto_pdf is not None:
+        try:
+            statement = tr_crypto_pdf.parse_text(
+                tr_crypto_pdf.extract_text(crypto_pdf.read_bytes())
+            )
+        except tr_crypto_pdf.StatementFormatError as exc:
+            print(f"FAIL crypto statement: {exc}")
+            return 1
+        lines = [StatementLine(name=ln.name, quantity=ln.quantity) for ln in statement.lines]
+        # Compare with the history up to the statement's own date, not up to today.
+        until = statement.as_of.isoformat()
+        as_of_positions = open_positions(
+            compute_positions([t for t in parsed.transactions if t.date <= until])
+        )
+        counts = summarise(reconcile(as_of_positions, lines, tr_crypto_pdf.ASSET_CLASSES))
+        print(f"crypto statement of {statement.as_of}: {len(lines)} positions")
+        for status, count in counts.items():
+            print(f"  {status:<20}{count:>3}")
+        clean = counts["match"] == len(lines) and not (
+            counts["quantity_mismatch"]
+            or counts["missing_in_history"]
+            or counts["not_on_statement"]
+        )
+        print(f"{'PASS' if clean else 'FAIL'} crypto quantities match the statement")
+        ok = ok and clean
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="quant")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -87,6 +141,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("path")
 
+    p = sub.add_parser(
+        "check-holdings",
+        help="dry-run: rebuild holdings from a TR export and compare with the crypto statement",
+    )
+    p.add_argument("csv")
+    p.add_argument("--crypto-pdf", default=None)
+
     sub.add_parser("ingest-prices", help="run the EOD price job now")
     sub.add_parser("ingest-fx", help="run the ECB FX job now")
     sub.add_parser("worker", help="run the scheduler")
@@ -98,6 +159,9 @@ def main(argv: list[str] | None = None) -> None:
         path = Path(args.file or get_settings().instruments_file)
         with get_sessionmaker()() as session:
             print(f"seeded {seed_instruments(session, load_instruments(path))} instruments")
+    elif args.command == "check-holdings":
+        crypto = Path(args.crypto_pdf) if args.crypto_pdf else None
+        sys.exit(check_holdings(Path(args.csv), crypto))
     elif args.command == "check-tr-csv":
         sys.exit(check_tr_csv(Path(args.path)))
     elif args.command in ("ingest-prices", "ingest-fx", "worker"):

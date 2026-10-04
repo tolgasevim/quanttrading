@@ -101,3 +101,38 @@ export async function uploadFile<T>(path: string, file: File): Promise<T> {
   }
   return (await response.json()) as T;
 }
+
+export type Position = {
+  isin: string;
+  name: string | null;
+  asset_class: string | null;
+  quantity: string;
+  first_date: string;
+  last_date: string;
+  corporate_action: boolean;
+  verified: boolean;
+  differs: boolean;
+};
+
+export type Finding = {
+  status: "match" | "quantity_mismatch" | "missing_in_history" | "not_on_statement";
+  isin: string | null;
+  name: string;
+  history_quantity: string | null;
+  statement_quantity: string | null;
+  difference: string | null;
+};
+
+export type Reconciliation = {
+  source: string;
+  as_of: string;
+  counts: Record<Finding["status"], number>;
+  review: Finding[];
+};
+
+export type Holdings = {
+  positions: Position[];
+  by_class: Record<string, number>;
+  verified: number;
+  reconciliations: Reconciliation[];
+};
