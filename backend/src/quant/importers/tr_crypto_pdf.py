@@ -9,7 +9,6 @@ parsed result, the database or the logs. The uploaded file is not stored.
 """
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -36,12 +35,6 @@ ROW = re.compile(
     rf"^(?P<qty>[\d.]+(?:,\d+)?)\s+(?:Stk\.\s+)?(?P<name>.+?)\s+(?P<price>{NUMBER})\s+(?P<cost>{NUMBER})"
     rf"\s+(?P<pl>{NUMBER})\s+(?P<value>{NUMBER})$"
 )
-
-
-def is_crypto_text(text: str) -> bool:
-    """Whether the text is a Crypto-Übersicht, whatever the case or the form of the umlaut."""
-    plain = unicodedata.normalize("NFC", text).casefold()
-    return "crypto-übersicht" in plain or "crypto-uebersicht" in plain
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,8 @@
 """What the Trade Republic statement parsers share: reading a PDF into text, and German numbers."""
 
 import io
+import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 
 from pypdf import PdfReader
@@ -35,3 +37,17 @@ def extract_text(data: bytes) -> str:
         raise
     except Exception as exc:  # noqa: BLE001 - pypdf raises many types on malformed input
         raise StatementFormatError("this file is not a readable PDF") from exc
+
+
+_TITLES = {
+    "depot": re.compile(r"DEPOTAUSZUG", re.IGNORECASE),
+    "crypto": re.compile(r"CRYPTO-(?:Ü|U|UE)BERSICHT", re.IGNORECASE),
+}
+
+
+def detect_kind(text: str) -> str | None:
+    """ "depot" or "crypto": the title that comes first in the text is the statement's. A word of
+    the other title in a note further down does not change it. None when neither is there."""
+    plain = unicodedata.normalize("NFC", text)
+    found = {kind: m.start() for kind, rx in _TITLES.items() if (m := rx.search(plain))}
+    return min(found, key=lambda kind: found[kind]) if found else None

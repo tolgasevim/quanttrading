@@ -121,13 +121,6 @@ def test_a_missing_date_is_refused() -> None:
         d.parse_text(LAYOUT_TEXT.replace("zum 27.09.2026", "").replace("DATUM  ", "DATUM"))
 
 
-def test_depot_text_is_told_from_crypto_text() -> None:
-    from .test_tr_crypto_pdf import LAYOUT_TEXT as CRYPTO_TEXT
-
-    assert d.is_depot_text(LAYOUT_TEXT)
-    assert not d.is_depot_text(CRYPTO_TEXT)
-
-
 def test_a_real_pdf_goes_end_to_end() -> None:
     pdf = depot_statement_pdf(ROWS, total=TOTAL)
     statement = d.parse_text(extract_text(pdf))

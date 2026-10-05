@@ -189,10 +189,14 @@ def test_an_unknown_pdf_gets_a_plain_error_not_a_crypto_one(owner: TestClient, d
     assert "positions" not in error.json()["detail"]
 
 
-def test_the_crypto_statement_is_found_whatever_the_case_or_the_umlaut() -> None:
-    from quant.importers.tr_crypto_pdf import is_crypto_text
+def test_the_statement_kind_is_the_title_that_comes_first() -> None:
+    from quant.importers.statement_pdf import detect_kind
 
-    assert is_crypto_text("Crypto-Übersicht zum 27.09.2026")
-    assert is_crypto_text("CRYPTO-ÜBERSICHT")  # a decomposed umlaut
-    assert is_crypto_text("CRYPTO-UEBERSICHT")
-    assert not is_crypto_text("DEPOTAUSZUG")
+    assert detect_kind("DEPOTAUSZUG\nzum 27.09.2026") == "depot"
+    assert detect_kind("Crypto-Übersicht zum 27.09.2026") == "crypto"
+    assert detect_kind("CRYPTO-U\u0308BERSICHT") == "crypto"  # a decomposed umlaut
+    assert detect_kind("CRYPTO-UEBERSICHT") == "crypto"
+    # A note further down that names the other statement does not change the kind.
+    assert detect_kind("CRYPTO-ÜBERSICHT\n... siehe auch Depotauszug") == "crypto"
+    assert detect_kind("DEPOTAUSZUG\n... siehe auch Crypto-Übersicht") == "depot"
+    assert detect_kind("Some other letter") is None

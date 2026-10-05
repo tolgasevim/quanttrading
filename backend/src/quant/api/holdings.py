@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from quant.api.deps import CurrentUser, UserDb
 from quant.config import get_settings
 from quant.importers import tr_crypto_pdf, tr_depot_pdf
-from quant.importers.statement_pdf import StatementFormatError, extract_text
+from quant.importers.statement_pdf import StatementFormatError, detect_kind, extract_text
 from quant.ingest.mapping import PRICEABLE
 from quant.models import Snapshot
 from quant.portfolio import service
@@ -324,11 +324,8 @@ def _import_statement(
     try:
         text = extract_text(data)
         if kind is None:
-            if tr_depot_pdf.is_depot_text(text):
-                kind = "depot"
-            elif tr_crypto_pdf.is_crypto_text(text):
-                kind = "crypto"
-            else:
+            kind = detect_kind(text)
+            if kind is None:
                 raise StatementFormatError(
                     "this is neither a Trade Republic securities statement (Depotauszug) "
                     "nor a crypto statement (Crypto-Übersicht)"

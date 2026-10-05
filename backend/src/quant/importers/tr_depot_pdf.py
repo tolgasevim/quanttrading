@@ -84,10 +84,6 @@ def _clean(raw: str) -> str:
     return re.sub(r"[ \t]+", " ", raw.replace("\xa0", " ")).strip()
 
 
-def is_depot_text(text: str) -> bool:
-    return bool(TITLE.search(text)) and any(HEADER.search(_clean(raw)) for raw in text.splitlines())
-
-
 def _consistent(quantity: Decimal, price: Decimal, value: Decimal) -> bool:
     tolerance = max(PRICE_TOLERANCE_MIN, abs(value) * PRICE_TOLERANCE)
     return abs(quantity * price - value) <= tolerance
