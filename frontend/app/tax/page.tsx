@@ -55,6 +55,13 @@ export default function TaxPage() {
                 <a href="/costs">Enter the cost</a>
               </p>
             )}
+            {y.history_gap_sales > 0 && (
+              <p className="status-failed">
+                {y.history_gap_sales} sale{y.history_gap_sales > 1 ? "s" : ""} of units your history
+                never bought: an import is probably missing, so the gain is overstated.{" "}
+                <a href="/import">Import more history</a>
+              </p>
+            )}
             <table>
               <tbody>
                 <tr>

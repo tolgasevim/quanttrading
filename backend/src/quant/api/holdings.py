@@ -13,7 +13,9 @@ from quant.models import Snapshot
 from quant.portfolio import service
 from quant.portfolio.lots import (
     COST_MISSING,
+    FLAG_COST_UNKNOWN,
     cost_unknown_isins,
+    history_gap_isins,
     realised_by_isin,
     realised_by_year,
 )
@@ -84,14 +86,16 @@ class YearOut(BaseModel):
     fees: Decimal
     tax_withheld: Decimal
     disposals: int
-    cost_unknown_sales: int  # sales of units with no known cost: the gain is overstated
+    cost_unknown_sales: int  # sales of units received with no cost: enter it on the Costs page
+    history_gap_sales: int  # sales of units the history never bought: an import is missing
 
 
 class InstrumentPnlOut(BaseModel):
     isin: str
     name: str | None
     realised_pnl: Decimal
-    cost_unknown: bool  # includes a sale of units with no known cost
+    cost_unknown: bool  # includes a sale of units received with no cost
+    history_gap: bool  # includes a sale of units the history never bought
 
 
 class RealisedOut(BaseModel):
@@ -195,6 +199,7 @@ def _realised(holdings: service.Holdings) -> RealisedOut:
     disposals = holdings.book.disposals
     years = realised_by_year(disposals)
     unknown = cost_unknown_isins(disposals)
+    gaps = history_gap_isins(disposals)
     per_isin = sorted(realised_by_isin(disposals).items(), key=lambda kv: kv[1])
     losing = [kv for kv in per_isin if kv[1] < 0][:10]
     winning = [kv for kv in reversed(per_isin) if kv[1] > 0][:10]
@@ -205,6 +210,7 @@ def _realised(holdings: service.Holdings) -> RealisedOut:
             name=_name(holdings, kv[0]),
             realised_pnl=_cents(kv[1]),
             cost_unknown=kv[0] in unknown,
+            history_gap=kv[0] in gaps,
         )
 
     return RealisedOut(
@@ -218,6 +224,7 @@ def _realised(holdings: service.Holdings) -> RealisedOut:
                 tax_withheld=_cents(y.tax_withheld),
                 disposals=y.disposals,
                 cost_unknown_sales=y.cost_unknown_disposals,
+                history_gap_sales=y.history_gap_disposals,
             )
             for y in years
         ],
@@ -257,7 +264,7 @@ def _out(holdings: service.Holdings) -> HoldingsOut:
         ],
         realised=_realised(holdings),
         review=ReviewSummaryOut(
-            cost_unknown=sum(1 for c in holdings.costs.values() if c.flags & COST_MISSING),
+            cost_unknown=sum(1 for c in holdings.costs.values() if FLAG_COST_UNKNOWN in c.flags),
             unattributed_cash=[
                 UnattributedOut(
                     isin=u.isin,

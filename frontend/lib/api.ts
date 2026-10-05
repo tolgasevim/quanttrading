@@ -170,9 +170,16 @@ export type YearPnl = {
   tax_withheld: string;
   disposals: number;
   cost_unknown_sales: number;
+  history_gap_sales: number;
 };
 
-export type InstrumentPnl = { isin: string; name: string | null; realised_pnl: string; cost_unknown: boolean };
+export type InstrumentPnl = {
+  isin: string;
+  name: string | null;
+  realised_pnl: string;
+  cost_unknown: boolean;
+  history_gap: boolean;
+};
 
 export type Realised = {
   by_year: YearPnl[];
@@ -223,6 +230,7 @@ export type YearTax = {
   to_settle: string;
   fund_disposals: number;
   cost_unknown_sales: number;
+  history_gap_sales: number;
   crypto: CryptoTax;
 };
 

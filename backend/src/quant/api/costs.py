@@ -22,6 +22,7 @@ from quant.portfolio import service
 router = APIRouter(prefix="/api/costs", tags=["costs"])
 
 ISIN = re.compile(r"^[A-Z0-9]{12}$")
+MAX_UNIT_COST = Decimal(10) ** 12  # a trillion euros per unit; the column holds 18 whole digits
 
 
 class CostItemOut(BaseModel):
@@ -40,7 +41,7 @@ class CostsOut(BaseModel):
 
 
 class CostIn(BaseModel):
-    unit_cost: Annotated[Decimal, Field(ge=0, max_digits=28, decimal_places=10)]
+    unit_cost: Annotated[Decimal, Field(ge=0, le=MAX_UNIT_COST, max_digits=28, decimal_places=10)]
     note: Annotated[str | None, Field(max_length=200)] = None
 
 

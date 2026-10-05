@@ -467,7 +467,8 @@ def test_selling_more_than_was_bought_is_flagged_like_unknown_cost() -> None:
     book = Ledger().buy("A", "5", "50").sell("A", "8", "160").book()
     [d] = book.disposals
     assert FLAG_INCOMPLETE_HISTORY in d.flags and d.cost_unknown  # 3 units counted at no cost
-    assert realised_by_year(book.disposals)[0].cost_unknown_disposals == 1
+    year = realised_by_year(book.disposals)[0]
+    assert (year.cost_unknown_disposals, year.history_gap_disposals) == (0, 1)
 
 
 def test_a_swap_of_units_the_history_never_bought_keeps_the_gap_flag() -> None:
@@ -552,3 +553,17 @@ def test_entering_a_cost_keeps_the_fee_paid_on_the_purchase() -> None:
     entered = position_costs(ledger.book({"A": D(10)}))["A"]
     assert (entered.cost, entered.costs) == (D(50), D(2))
     assert FLAG_COST_UNKNOWN not in entered.flags
+
+
+def test_a_sale_is_either_without_a_cost_or_beyond_the_history() -> None:
+    spin = Ledger().buy("P", "30", "900").action("SPIN_OFF", "C", "6")
+    spin.sell("C", "6", "60", fee="0")
+    d = spin.book().disposals[0]
+    assert (d.no_cost_given, d.history_gap, d.cost_unknown) == (True, False, True)
+    over = Ledger().buy("A", "5", "50", fee="0").sell("A", "8", "160", fee="0")
+    d = over.book().disposals[0]
+    assert (d.no_cost_given, d.history_gap, d.cost_unknown) == (False, True, True)
+    [year] = realised_by_year(over.book().disposals)
+    assert (year.cost_unknown_disposals, year.history_gap_disposals) == (0, 1)
+    ok = Ledger().buy("A", "5", "50", fee="0").sell("A", "5", "80", fee="0")
+    assert not ok.book().disposals[0].cost_unknown

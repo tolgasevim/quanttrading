@@ -88,6 +88,11 @@ def test_bad_input_is_refused(owner: TestClient) -> None:
         owner.put(f"/api/costs/{SPIN}", json={"unit_cost": "1", "note": "x" * 201}).status_code
         == 422
     )
+    # Beyond what the database column holds: a clear refusal, not a server error.
+    assert owner.put(f"/api/costs/{SPIN}", json={"unit_cost": "1e20"}).status_code == 422
+    assert owner.put(f"/api/costs/{SPIN}", json={"unit_cost": "10000000000000"}).status_code == 422
+    assert owner.put(f"/api/costs/{SPIN}", json={"unit_cost": "1000000000000"}).status_code == 200
+    owner.delete(f"/api/costs/{SPIN}")
     # An ISIN that is not in the history cannot get an entry.
     assert owner.put("/api/costs/US0000000999", json={"unit_cost": "1"}).status_code == 404
 
@@ -153,3 +158,33 @@ def test_an_entered_cost_does_not_change_the_statement_cost_check(
     cardano = by_name(client.get("/api/holdings").json())["Cardano"]
     assert cardano["purchase_value"] == "500.00"  # the entered cost is in the cost basis
     assert checks()["Cardano"] is True  # but the check still compares the broker's figures
+
+
+def test_sales_without_a_cost_and_sales_beyond_the_history_are_told_apart(
+    client: TestClient, admin: User
+) -> None:
+    from .test_holdings_pnl_api import B
+
+    login(client, admin.email)
+    extra = [
+        # Spin Co: 6 units arrived with no cost, all sold.
+        row(50, "2025-08-01", "TRADING", "SELL", "STOCK", "Spin Co", SPIN, shares="-6", price="10", amount="60", fee="-1"),
+        # Beta Inc: all 5 units were sold already; this sells 3 more than the history ever bought.
+        row(51, "2025-09-01", "TRADING", "SELL", "STOCK", "Beta Inc", B, shares="-3", price="80", amount="240", fee="-1"),
+    ]  # fmt: skip
+    import_history(client, history(extra))
+    year = [y for y in client.get("/api/tax").json()["years"] if y["year"] == 2025][0]
+    assert (year["cost_unknown_sales"], year["history_gap_sales"]) == (1, 1)
+    realised = client.get("/api/holdings").json()["realised"]
+    flags = {
+        i["name"]: (i["cost_unknown"], i["history_gap"])
+        for i in realised["best"] + realised["worst"]
+    }
+    assert flags["Spin Co"] == (True, False)  # the Costs page can fix it
+    assert flags["Beta Inc"] == (False, True)  # only importing more history can
+    [by_year] = realised["by_year"]
+    assert (by_year["cost_unknown_sales"], by_year["history_gap_sales"]) == (1, 1)
+    # Entering the Spin Co cost clears the first and leaves the second.
+    client.put(f"/api/costs/{SPIN}", json={"unit_cost": "4"})
+    year = [y for y in client.get("/api/tax").json()["years"] if y["year"] == 2025][0]
+    assert (year["cost_unknown_sales"], year["history_gap_sales"]) == (0, 1)

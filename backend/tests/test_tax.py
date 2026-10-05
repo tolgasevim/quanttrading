@@ -137,12 +137,16 @@ def test_years_come_out_oldest_first() -> None:
     ]
 
 
-def test_sales_of_units_with_no_known_cost_are_counted() -> None:
+def test_sales_beyond_the_history_and_sales_without_a_cost_are_counted_apart() -> None:
     ledger = Ledger().buy("S", "5", "50", fee="0", at=when(2025, 1, 5))
     ledger.sell("S", "8", "160", fee="0", at=when(2025, 2, 5))  # 3 units were never bought
     gain(ledger, "T", 2025, "100")
     y = run(ledger, {"S": "STOCK", "T": "STOCK"})[2025]
-    assert y.cost_unknown_sales == 1
+    assert (y.cost_unknown_sales, y.history_gap_sales) == (0, 1)
+    spin = Ledger().buy("P", "30", "900", fee="0").action("SPIN_OFF", "C", "6")
+    spin.sell("C", "6", "60", fee="0")
+    y = run(spin, {"P": "STOCK", "C": "STOCK"})[2024]
+    assert (y.cost_unknown_sales, y.history_gap_sales) == (1, 0)
 
 
 def test_a_charge_booked_as_a_negative_refund_raises_what_was_withheld() -> None:

@@ -146,10 +146,23 @@ class Disposal:
     def acquisition_costs(self) -> Decimal:
         return sum((s.costs for s in self.slices), ZERO)
 
+    def _has(self, flag: str) -> bool:
+        return flag in self.flags or any(flag in s.flags for s in self.slices)
+
+    @property
+    def no_cost_given(self) -> bool:
+        """Units sold were received with no cost: the owner can enter it (FR-20)."""
+        return self._has(FLAG_COST_UNKNOWN)
+
+    @property
+    def history_gap(self) -> bool:
+        """Units sold that the history never bought: an import is probably missing."""
+        return self._has(FLAG_INCOMPLETE_HISTORY)
+
     @property
     def cost_unknown(self) -> bool:
-        """Some units sold had no cost from the broker, so the gain is overstated."""
-        return bool(self.flags & COST_MISSING) or any(s.flags & COST_MISSING for s in self.slices)
+        """Either way part of the cost counts as zero, so the gain is overstated."""
+        return self.no_cost_given or self.history_gap
 
     @property
     def realised_pnl(self) -> Decimal:
@@ -567,7 +580,8 @@ class YearPnl:
     fees: Decimal
     tax_withheld: Decimal
     disposals: int
-    cost_unknown_disposals: int  # of which sold units whose cost the broker did not give
+    cost_unknown_disposals: int  # of which sold units received with no cost (enter it)
+    history_gap_disposals: int  # of which sold units the history never bought (import more)
 
     @property
     def net(self) -> Decimal:
@@ -590,7 +604,8 @@ def realised_by_year(disposals: Iterable[Disposal]) -> list[YearPnl]:
                 fees=sum((d.fees for d in items), ZERO),
                 tax_withheld=sum((d.tax_withheld for d in items), ZERO),
                 disposals=len(items),
-                cost_unknown_disposals=sum(1 for d in items if d.cost_unknown),
+                cost_unknown_disposals=sum(1 for d in items if d.no_cost_given),
+                history_gap_disposals=sum(1 for d in items if d.history_gap),
             )
         )
     return out
@@ -604,7 +619,13 @@ def realised_by_isin(disposals: Iterable[Disposal]) -> dict[str, Decimal]:
 
 
 def cost_unknown_isins(disposals: Iterable[Disposal]) -> set[str]:
-    return {d.isin for d in disposals if d.cost_unknown}
+    """Instruments with a sale of units received with no cost."""
+    return {d.isin for d in disposals if d.no_cost_given}
+
+
+def history_gap_isins(disposals: Iterable[Disposal]) -> set[str]:
+    """Instruments with a sale of units the history never bought."""
+    return {d.isin for d in disposals if d.history_gap}
 
 
 @dataclass(frozen=True)

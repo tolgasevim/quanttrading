@@ -66,7 +66,7 @@ export default function HoldingsPage() {
     }
   };
 
-  const unknownCost = data?.positions.filter((p) => p.cost_flags.some((f) => f === "cost_unknown" || f === "incomplete_history")) ?? [];
+  const unknownCost = data?.positions.filter((p) => p.cost_flags.includes("cost_unknown")) ?? [];
 
   return (
     <>
@@ -241,6 +241,12 @@ export default function HoldingsPage() {
                             a known cost: gain overstated
                           </div>
                         )}
+                        {y.history_gap_sales > 0 && (
+                          <div className="status-failed">
+                            {y.history_gap_sales} sale{y.history_gap_sales > 1 ? "s" : ""} of units your
+                            history never bought: an import is probably missing
+                          </div>
+                        )}
                       </td>
                       <td className="num">{eur(y.fees)}</td>
                       <td className="num">{eur(y.tax_withheld)}</td>
@@ -277,11 +283,13 @@ export default function HoldingsPage() {
                           <td>
                             {g ? (g.name ?? g.isin) : ""}
                             {g?.cost_unknown && <div className="status-failed">cost unknown</div>}
+                            {g?.history_gap && <div className="status-failed">history incomplete</div>}
                           </td>
                           <td className={`num ${tone(g?.realised_pnl ?? null)}`}>{g ? eur(g.realised_pnl) : ""}</td>
                           <td>
                             {l ? (l.name ?? l.isin) : ""}
                             {l?.cost_unknown && <div className="status-failed">cost unknown</div>}
+                            {l?.history_gap && <div className="status-failed">history incomplete</div>}
                           </td>
                           <td className={`num ${tone(l?.realised_pnl ?? null)}`}>{l ? eur(l.realised_pnl) : ""}</td>
                         </tr>
