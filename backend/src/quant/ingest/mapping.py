@@ -101,7 +101,7 @@ def map_isins(
     isins: list[HeldIsin] | None = None,
     crypto: Sequence[CryptoResolver] = (),
 ) -> JobResult:
-    if not resolvers:
+    if not resolvers and not crypto:
         # Without a resolver "every resolver failed" would be true for every ISIN: say what is
         # wrong instead of recording empty errors.
         raise ValueError("no ISIN resolvers configured (QT_ISIN_RESOLVERS is empty)")
@@ -111,7 +111,12 @@ def map_isins(
         is_coin = held.asset_class == "crypto"
         pool: Sequence[IsinResolver] | Sequence[CryptoResolver] = crypto if is_coin else resolvers
         if not pool:
-            continue  # coin prices are switched off: leave the position to the statement
+            if not is_coin:
+                # Shares need a resolver; coins only need CoinGecko to be among the price providers.
+                result.errors[held.isin] = (
+                    "no ISIN resolvers configured (QT_ISIN_RESOLVERS is empty)"
+                )
+            continue  # coin prices are off: the statement prices the coin
         known = existing.get(held.isin)
         if known is not None:
             if known.mapping_source != NO_TICKER:

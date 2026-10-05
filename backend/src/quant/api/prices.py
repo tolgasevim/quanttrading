@@ -39,8 +39,8 @@ class PriceItem(BaseModel):
     asset_class: str | None
     # priced | stale (the last price is too old to use) | no_rate (no ECB rate for its currency) |
     # inactive (switched off) | waiting (mapped, no price yet) | unmapped (no ticker found) |
-    # not_checked (the mapping has not run yet) | unsupported (no ticker expected: crypto, bonds,
-    # funds without one)
+    # not_checked (the mapping has not run yet) | unsupported (no ticker expected: bonds and the
+    # like, or a coin while CoinGecko is off)
     status: str
     symbol: str | None
     mapping_source: str | None
@@ -98,8 +98,8 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
     for p in positions:
         inst = instruments.get(p.isin)
         last = newest.get(inst.id) if inst else None
-        if inst is None and (
-            p.asset_class not in PRICEABLE or (p.asset_class == "CRYPTO" and coins_off)
+        if (inst is None and p.asset_class not in PRICEABLE) or (
+            p.asset_class == "CRYPTO" and coins_off
         ):
             state = "unsupported"
         elif inst is None:

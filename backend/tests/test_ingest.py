@@ -154,6 +154,7 @@ def test_an_empty_resolver_list_is_a_clear_failed_run(
     with pytest.raises(ValueError, match="no ISIN resolvers"):
         map_isins(db, [], datetime.now(UTC), isins=[])
     monkeypatch.setenv("QT_ISIN_RESOLVERS", "")
+    monkeypatch.setenv("QT_PRICE_PROVIDERS", "yahoo")  # no coins to map either
     empty = Settings()
     assert empty.isin_resolvers == []  # the comma-list parser turns "" into an empty list
     monkeypatch.setattr(worker, "get_settings", lambda: empty)

@@ -361,3 +361,14 @@ def test_the_price_job_stores_euro_prices_for_a_mapped_coin(
         "EUR",
         "coingecko",
     )
+
+
+def test_with_no_share_resolvers_coins_are_still_mapped_and_each_share_says_why(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    coins = FakeCoins({"Bitcoin": "bitcoin"})
+    result = map_isins(db, [], NOW, isins=held, crypto=[coins])
+    assert db.scalar(select(Instrument).where(Instrument.isin == BTC)) is not None
+    assert set(result.errors) == {A, GAMMA, SPIN, FUND}
+    assert all("QT_ISIN_RESOLVERS is empty" in e for e in result.errors.values())
+    assert db.scalar(select(Instrument).where(Instrument.isin == A)) is None  # nothing guessed

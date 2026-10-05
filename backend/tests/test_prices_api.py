@@ -550,3 +550,24 @@ def test_a_row_without_a_yahoo_ticker_keeps_prices_in_the_same_currency_and_drop
     db.refresh(other)
     rows = db.query(PriceEOD).filter_by(instrument_id=other.id).all()
     assert {r.currency for r in rows} == {"USD"} and other.symbols == {"yahoo": "SPN"}
+
+
+def test_a_mapped_coin_is_unsupported_on_both_pages_once_coingecko_is_off(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.api import holdings, prices
+    from quant.config import Settings
+
+    inst = add_instrument(db, BTC)
+    inst.asset_class, inst.symbols, inst.mapping_source = (
+        "crypto",
+        {"coingecko": "bitcoin"},
+        "coingecko",
+    )
+    db.commit()
+    assert statuses(owner)[BTC] == "waiting"  # mapped, no price yet
+    off = lambda: Settings(price_providers=["yahoo", "stooq"])  # noqa: E731
+    monkeypatch.setattr(prices, "get_settings", off)
+    monkeypatch.setattr(holdings, "get_settings", off)
+    assert statuses(owner)[BTC] == "unsupported"
+    assert owner.get("/api/holdings").json()["review"]["unpriced"] == 2  # Alpha and Spin Co only

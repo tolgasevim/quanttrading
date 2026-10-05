@@ -45,7 +45,10 @@ def run_mapping() -> None:
                 MAP_JOB,
                 lambda s: map_isins(
                     s,
-                    isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key),
+                    # An empty list is allowed when coins are priced: shares then get an error each.
+                    isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key)
+                    if settings.isin_resolvers
+                    else [],
                     datetime.now(UTC),
                     settings.isin_retry_days,
                     crypto=crypto_resolvers(
