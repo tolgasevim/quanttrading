@@ -162,3 +162,11 @@ def test_the_total_may_sit_on_the_line_before_the_count() -> None:
         "SUMME KURSWERTE: 3.767,5 €\nANZAHL DER POSITIONEN: 3\n",
     )
     assert d.parse_text(text).footer_total == Decimal("3767.5")
+
+
+def test_a_summe_line_near_the_footer_does_not_replace_the_total_on_the_count_line() -> None:
+    text = LAYOUT_TEXT.replace(
+        "                    Lagerland: Deutschland\n",
+        "                    Lagerland: Deutschland\nSumme Gebühren: 1,00\n",
+    )
+    assert d.parse_text(text).footer_total == Decimal("3767.5")

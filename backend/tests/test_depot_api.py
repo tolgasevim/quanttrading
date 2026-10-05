@@ -187,3 +187,12 @@ def test_an_unknown_pdf_gets_a_plain_error_not_a_crypto_one(owner: TestClient, d
         "neither" in error.json()["detail"] and "crypto statement (Crypto" in error.json()["detail"]
     )
     assert "positions" not in error.json()["detail"]
+
+
+def test_the_crypto_statement_is_found_whatever_the_case_or_the_umlaut() -> None:
+    from quant.importers.tr_crypto_pdf import is_crypto_text
+
+    assert is_crypto_text("Crypto-Übersicht zum 27.09.2026")
+    assert is_crypto_text("CRYPTO-ÜBERSICHT")  # a decomposed umlaut
+    assert is_crypto_text("CRYPTO-UEBERSICHT")
+    assert not is_crypto_text("DEPOTAUSZUG")

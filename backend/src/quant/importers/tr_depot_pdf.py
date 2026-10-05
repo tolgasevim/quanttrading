@@ -126,9 +126,16 @@ def parse_text(text: str) -> DepotStatement:
         raise StatementFormatError("this doesn't look like a Trade Republic securities statement")
 
     count = FOOTER_COUNT.search(lines[end])
-    # The total is on the count line or next to it, before or after.
-    footer = " ".join(lines[max(end - 2, first_header) : end + 3])
-    total = FOOTER_TOTAL.search(footer)
+    # The total is on the count line, else on the lines after it, else on those before it.
+    total = None
+    for chunk in (
+        lines[end],
+        " ".join(lines[end + 1 : end + 3]),
+        " ".join(lines[max(end - 2, first_header) : end]),
+    ):
+        total = FOOTER_TOTAL.search(chunk)
+        if total:
+            break
     # The date after the title is the statement's; another date above it (a letter date) is not.
     title = next((i for i, line in enumerate(lines[:first_header]) if TITLE.search(line)), 0)
     when = AS_OF.search(" ".join(lines[title:first_header])) or AS_OF.search(
