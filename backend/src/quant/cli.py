@@ -134,6 +134,8 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None, depot_pdf: Path | No
     )
     ok = ok and agree and gaps == 0
 
+    # A statement that fails to read is a FAIL, and the other statement is still checked.
+    statement = None
     if crypto_pdf is not None:
         try:
             statement = tr_crypto_pdf.parse_text(
@@ -141,7 +143,8 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None, depot_pdf: Path | No
             )
         except tr_crypto_pdf.StatementFormatError as exc:
             print(f"FAIL crypto statement: {exc}")
-            return 1
+            ok = False
+    if statement is not None:
         lines = [StatementLine(name=ln.name, quantity=ln.quantity) for ln in statement.lines]
         # Compare with the history up to the statement's own date, not up to today.
         until = statement.as_of.isoformat()
@@ -180,6 +183,7 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None, depot_pdf: Path | No
         print(f"{'PASS' if cost_ok else 'FAIL'} crypto cost basis matches the statement")
         ok = ok and cost_ok
 
+    depot = None
     if depot_pdf is not None:
         from quant.importers.statement_pdf import StatementFormatError, extract_text
 
@@ -187,7 +191,8 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None, depot_pdf: Path | No
             depot = tr_depot_pdf.parse_text(extract_text(depot_pdf.read_bytes()))
         except StatementFormatError as exc:
             print(f"FAIL securities statement: {exc}")
-            return 1
+            ok = False
+    if depot is not None:
         statement_lines = merge_lines(
             [StatementLine(ln.name, ln.quantity, ln.isin, ln.value_eur) for ln in depot.lines]
         )

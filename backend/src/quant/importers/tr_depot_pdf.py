@@ -35,7 +35,9 @@ ROW = re.compile(
     rf"^(?P<qty>[\d.]+(?:,\d+)?)\s+(?:Stk\.\s+)?(?P<name>.+?)\s+(?P<price>{NUMBER})\s+(?P<value>{NUMBER})$"
 )
 ISIN = r"[A-Z]{2}[A-Z0-9]{9}\d"
-ISIN_TOKEN = re.compile(rf"\b({ISIN})\b")
+# An ISIN counts under a row when it is labelled, or when it is the only thing on its line (a
+# "Stk." that wrapped may come before it). A stray 12-character token in a longer line does not.
+ISIN_TOKEN = re.compile(rf"\bISIN:?\s*({ISIN})\b|^(?:Stk\.\s+)?({ISIN})$")
 CUSTODY = re.compile(r"\b(?:Lagerland|Verwahrland|Lagerstelle):?\s*(?P<country>[^\d:]+?)\s*$")
 
 # The price is rounded by the broker, so quantity x price can differ from the value by a little.
@@ -126,7 +128,11 @@ def parse_text(text: str) -> DepotStatement:
     count = FOOTER_COUNT.search(lines[end])
     footer = " ".join(lines[end : end + 2])
     total = FOOTER_TOTAL.search(footer)
-    when = AS_OF.search(" ".join(lines[:first_header]))
+    # The date after the title is the statement's; another date above it (a letter date) is not.
+    title = next((i for i, line in enumerate(lines[:first_header]) if TITLE.search(line)), 0)
+    when = AS_OF.search(" ".join(lines[title:first_header])) or AS_OF.search(
+        " ".join(lines[:first_header])
+    )
     if not (count and total and when):
         raise StatementFormatError("the statement's date or footer could not be read")
     try:
@@ -148,7 +154,7 @@ def parse_text(text: str) -> DepotStatement:
             continue
         isin = ISIN_TOKEN.search(line)
         if isin and current.isin is None:
-            current.isin = isin.group(1)
+            current.isin = isin.group(1) or isin.group(2)
         custody = CUSTODY.search(line)
         if custody and current.custody is None:
             current.custody = custody["country"].strip()

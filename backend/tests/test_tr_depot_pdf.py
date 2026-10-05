@@ -136,3 +136,21 @@ def test_a_real_pdf_goes_end_to_end() -> None:
     dumped = str(statement)
     for secret in PII:
         assert secret not in dumped, secret
+
+
+def test_the_date_after_the_title_is_the_statements_not_an_earlier_one() -> None:
+    text = LAYOUT_TEXT.replace(
+        "TRADE REPUBLIC BANK GMBH           BRUNNENSTRASSE 19-21           10119 BERLIN",
+        "Erstellt zum 05.10.2026",
+        1,
+    )
+    assert d.parse_text(text).as_of == date(2026, 9, 27)
+
+
+def test_a_stray_isin_shaped_word_in_a_longer_line_is_not_the_rows_isin() -> None:
+    text = LAYOUT_TEXT.replace(
+        "                    ISIN: US67066G1040\n",
+        "                    Hinweis AB1234567890 siehe unten\n",
+    )
+    with pytest.raises(StatementFormatError, match="no ISIN"):
+        d.parse_text(text)

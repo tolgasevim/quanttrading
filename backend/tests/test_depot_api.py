@@ -158,3 +158,18 @@ def test_a_holding_split_over_two_lines_is_one_position(owner: TestClient) -> No
     ]
     r = recon(post(owner, "/depot", depot(rows, "960")), "tr_depot_statement")
     assert r["review"] == [] and r["counts"]["match"] == 2
+
+
+def test_the_cli_still_checks_the_depot_when_the_crypto_file_is_unreadable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    csv = tmp_path / "tx.csv"
+    bad = tmp_path / "crypto.pdf"
+    pdf = tmp_path / "depot.pdf"
+    csv.write_text(history())
+    bad.write_bytes(b"not a pdf")
+    pdf.write_bytes(depot())
+    assert check_holdings(csv, bad, pdf) == 1
+    out = capsys.readouterr().out
+    assert "FAIL crypto statement" in out
+    assert "PASS securities quantities match the statement" in out
