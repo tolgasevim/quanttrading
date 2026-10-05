@@ -7,7 +7,7 @@ relevant FR-x before building anything, and cite it in the PR description.
 - `backend/`: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, APScheduler. Package `quant` in `backend/src/quant`.
   - `providers/`: market-data providers behind `PriceProvider` / `FxProvider` (PRD §8). A new source is a new class plus a registry entry.
   - `ingest/`: scheduled jobs (prices, FX, ISIN→ticker `mapping.py`). Every run is recorded in `job_runs`.
-  - `importers/`: broker file parsers (pure functions) and the preview/commit workflow.
+  - `importers/`: broker file parsers (pure functions; statements: `tr_crypto_pdf`, `tr_depot_pdf`) and the preview/commit workflow.
   - `portfolio/`: position engine (`positions.py`), FIFO lots, cost basis and realised P&L (`lots.py`), statement reconciliation (`reconcile.py`), the German tax estimate (`tax.py`) and the holdings read model (`service.py`).
   - `api/`: HTTP routers. `worker.py`: the scheduler. `cli.py`: admin commands.
 - `frontend/`: Next.js (App Router). The browser only talks to Next, which proxies `/api/*` to FastAPI.

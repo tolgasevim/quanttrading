@@ -8,36 +8,33 @@ Only the table between the column header and the footer is ever read, so none of
 parsed result, the database or the logs. The uploaded file is not stored.
 """
 
-import io
 import re
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
-from pypdf import PdfReader
+from quant.importers.statement_pdf import (
+    MAX_PAGES,
+    NUMBER,
+    StatementFormatError,
+    extract_text,
+    german_decimal,
+)
+
+__all__ = ["MAX_PAGES", "StatementFormatError", "extract_text", "german_decimal"]
 
 SOURCE = "tr_crypto_statement"
 ASSET_CLASSES = frozenset({"CRYPTO"})
-
-# A holdings statement is one or two pages; a "PDF" with hundreds is not one.
-MAX_PAGES = 20
 
 HEADER_MARKER = "NOMINALE"
 FOOTER_COUNT = re.compile(r"ANZAHL DER POSITIONEN:\s*(\d+)")
 FOOTER_TOTAL = re.compile(r"SUMME KURSWERTE:\s*(-?[\d.]+(?:,\d+)?)")
 AS_OF = re.compile(r"CRYPTO-ÜBERSICHT\s+zum\s+(\d{2})\.(\d{2})\.(\d{4})")
 
-# The broker drops trailing zeros: 2012.90 prints as "2.012,9" and 2500 as "2.500", so the
-# decimal part is optional everywhere.
-NUMBER = r"-?[\d.]+(?:,\d+)?"
 ROW = re.compile(
     rf"^(?P<qty>[\d.]+(?:,\d+)?)\s+(?:Stk\.\s+)?(?P<name>.+?)\s+(?P<price>{NUMBER})\s+(?P<cost>{NUMBER})"
     rf"\s+(?P<pl>{NUMBER})\s+(?P<value>{NUMBER})$"
 )
-
-
-class StatementFormatError(ValueError):
-    """Not a Crypto-Übersicht we understand, or its totals don't add up. Nothing is imported."""
 
 
 @dataclass(frozen=True)
@@ -70,26 +67,6 @@ class CryptoStatement:
     @property
     def total_value(self) -> Decimal:
         return sum((line.value_eur for line in self.lines), Decimal(0))
-
-
-def german_decimal(text: str) -> Decimal:
-    """'12.423,854702' → Decimal('12423.854702'); '2.500' (no decimals) → Decimal('2500')."""
-    try:
-        return Decimal(text.replace(".", "").replace(",", "."))
-    except InvalidOperation as exc:
-        raise StatementFormatError(f"not a number: {text!r}") from exc
-
-
-def extract_text(data: bytes) -> str:
-    try:
-        reader = PdfReader(io.BytesIO(data))
-        if len(reader.pages) > MAX_PAGES:
-            raise StatementFormatError(f"this PDF has more than {MAX_PAGES} pages")
-        return "\n".join(page.extract_text(extraction_mode="layout") for page in reader.pages)
-    except StatementFormatError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - pypdf raises many types on malformed input
-        raise StatementFormatError("this file is not a readable PDF") from exc
 
 
 def parse_text(text: str) -> CryptoStatement:

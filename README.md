@@ -6,7 +6,7 @@ guidance for a Trade Republic portfolio. It never places trades. The full spec i
 
 **Status: Phase 1 in progress.** Sign-in, invites, daily end-of-day prices and ECB FX rates,
 import of the Trade Republic transaction export, and holdings rebuilt from it and checked against
-the crypto statement.
+the securities and crypto statements.
 
 ## Run it on the Mac mini
 
@@ -60,14 +60,18 @@ Turn on two-factor sign-in under Settings after the first login.
 
 Holdings are rebuilt from the transaction history. To compare them with a statement:
 
-1. Download the *Crypto-Übersicht* PDF from the TR app (Profile → Documents).
-2. In the app: Holdings → choose the PDF. Every difference is listed.
+1. Download the *Depotauszug* (shares and funds) and the *Crypto-Übersicht* PDFs from the TR app
+   (Profile → Documents).
+2. In the app: Holdings → choose a PDF. The app tells which statement it is. Every difference is
+   listed. The Depotauszug also gives the broker's price for each position.
 3. Optional dry run that stores nothing and prints only counts and pass/fail:
    ```sh
    docker compose cp ~/Downloads/transactions.csv api:/tmp/tx.csv
    docker compose cp ~/Downloads/crypto.pdf api:/tmp/crypto.pdf
-   docker compose exec api python -m quant.cli check-holdings /tmp/tx.csv --crypto-pdf /tmp/crypto.pdf
-   docker compose exec api rm /tmp/tx.csv /tmp/crypto.pdf
+   docker compose cp ~/Downloads/depot.pdf api:/tmp/depot.pdf
+   docker compose exec api python -m quant.cli check-holdings /tmp/tx.csv \
+     --crypto-pdf /tmp/crypto.pdf --depot-pdf /tmp/depot.pdf
+   docker compose exec api rm /tmp/tx.csv /tmp/crypto.pdf /tmp/depot.pdf
    ```
 
 ## Development
