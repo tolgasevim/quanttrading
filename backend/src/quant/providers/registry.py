@@ -2,6 +2,7 @@
 
 from quant.providers.base import Fetcher, FxProvider, PriceProvider
 from quant.providers.ecb import EcbProvider
+from quant.providers.resolvers import IsinResolver, OpenFigiResolver, YahooSearchResolver
 from quant.providers.stooq import StooqProvider
 from quant.providers.yahoo import YahooProvider
 
@@ -23,3 +24,21 @@ def fx_provider(name: str, fetcher: Fetcher) -> FxProvider:
     if name not in FX_PROVIDERS:
         raise ValueError(f"unknown FX provider: {name}")
     return FX_PROVIDERS[name](fetcher)
+
+
+RESOLVER_NAMES = ("yahoo", "openfigi")
+
+
+def isin_resolvers(
+    names: list[str], fetcher: Fetcher, openfigi_key: str | None
+) -> list[IsinResolver]:
+    if not names:
+        raise ValueError("no ISIN resolvers configured (QT_ISIN_RESOLVERS is empty)")
+    unknown = [n for n in names if n not in RESOLVER_NAMES]
+    if unknown:
+        raise ValueError(f"unknown ISIN resolver(s): {', '.join(unknown)}")
+    built: dict[str, IsinResolver] = {
+        "yahoo": YahooSearchResolver(fetcher),
+        "openfigi": OpenFigiResolver(fetcher, openfigi_key),
+    }
+    return [built[n] for n in names]

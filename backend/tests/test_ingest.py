@@ -1,13 +1,14 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from quant.ingest.fx import ingest_fx
 from quant.ingest.jobs import JobResult, run_job
 from quant.ingest.prices import ingest_prices
-from quant.models import FxRate, Instrument, JobStatus, PriceEOD
+from quant.models import FxRate, Instrument, JobRun, JobStatus, PriceEOD
 from quant.providers import ecb
 from quant.providers.base import Bar, FxObservation, PriceSeries, ProviderError
 from quant.seed import load_instruments, seed_instruments
@@ -122,3 +123,42 @@ def test_all_instruments_failing_marks_job_failed(db: Session) -> None:
     add_instrument(db, "A", "USD", yahoo="A")
     result = ingest_prices(db, [FakePriceProvider("yahoo", fail=True)], TODAY, backfill_days=5)
     assert result.status == JobStatus.FAILED
+
+
+def test_a_bad_provider_setting_is_a_failed_run_not_a_crash(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant import worker
+    from quant.config import Settings
+
+    bad = Settings(isin_resolvers=["yahoo", "openfigy"], price_providers=["yahu"], fx_provider="x")
+    monkeypatch.setattr(worker, "get_settings", lambda: bad)
+    worker.run_mapping()  # these used to raise ValueError before the job was recorded
+    worker.run_prices()
+    worker.run_fx()
+    runs = {r.job: r for r in db.query(JobRun).all()}
+    assert {worker.MAP_JOB, worker.PRICES_JOB, worker.FX_JOB} == set(runs)
+    for run in runs.values():
+        assert run.status == JobStatus.FAILED and "unknown" in str(run.details["error"])
+
+
+def test_an_empty_resolver_list_is_a_clear_failed_run(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from quant import worker
+    from quant.config import Settings
+    from quant.ingest.mapping import map_isins
+
+    with pytest.raises(ValueError, match="no ISIN resolvers"):
+        map_isins(db, [], datetime.now(UTC), isins=[])
+    monkeypatch.setenv("QT_ISIN_RESOLVERS", "")
+    empty = Settings()
+    assert empty.isin_resolvers == []  # the comma-list parser turns "" into an empty list
+    monkeypatch.setattr(worker, "get_settings", lambda: empty)
+    worker.run_mapping()
+    run = db.query(JobRun).filter_by(job=worker.MAP_JOB).one()
+    assert run.status == JobStatus.FAILED and "QT_ISIN_RESOLVERS is empty" in str(
+        run.details["error"]
+    )

@@ -202,7 +202,7 @@ export type Holdings = {
   verified: number;
   reconciliations: Reconciliation[];
   realised: Realised;
-  review: { cost_unknown: number; unattributed_cash: UnattributedCash[] };
+  review: { unpriced: number; cost_unknown: number; unattributed_cash: UnattributedCash[] };
 };
 
 export type CryptoTax = {
@@ -248,3 +248,17 @@ export type CostItem = {
 };
 
 export type Costs = { items: CostItem[] };
+
+export type PriceItem = {
+  isin: string;
+  name: string | null;
+  asset_class: string | null;
+  status: "priced" | "stale" | "no_rate" | "inactive" | "waiting" | "unmapped" | "not_checked" | "unsupported";
+  symbol: string | null;
+  mapping_source: string | null;
+  currency: string | null;
+  last_date: string | null;
+  last_close: string | null;
+};
+
+export type Prices = { items: PriceItem[] };

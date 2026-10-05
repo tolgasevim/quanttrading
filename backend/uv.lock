@@ -1125,7 +1125,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.8" },
-    { name = "pydantic-settings", specifier = ">=2.4" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
     { name = "pyotp", specifier = ">=2.9" },
     { name = "pypdf", specifier = ">=5.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },

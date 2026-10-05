@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from quant.api.deps import CurrentUser, UserDb
 from quant.config import get_settings
 from quant.importers import tr_crypto_pdf
+from quant.ingest.mapping import PRICEABLE
 from quant.models import Snapshot
 from quant.portfolio import service
 from quant.portfolio.lots import (
@@ -116,6 +117,7 @@ class UnattributedOut(BaseModel):
 
 
 class ReviewSummaryOut(BaseModel):
+    unpriced: int  # open shares and funds with no usable price (see the Prices page)
     cost_unknown: int  # open positions whose cost the broker does not give
     unattributed_cash: list[UnattributedOut]  # corporate-action cash that fits no action
 
@@ -181,7 +183,7 @@ def _position(p: Position, holdings: service.Holdings) -> PositionOut:
         total_cost=_money(cost.total_cost) if cost else None,
         average_cost=average.quantize(Decimal("0.0001")) if average is not None else None,
         cost_flags=sorted(cost.flags) if cost else [],
-        price=mark.price if mark else None,
+        price=_trim(mark.price) if mark else None,
         price_as_of=mark.as_of.isoformat() if mark else None,
         valued_quantity=_trim(mark.quantity) if mark else None,
         market_value=_money(value),
@@ -264,6 +266,12 @@ def _out(holdings: service.Holdings) -> HoldingsOut:
         ],
         realised=_realised(holdings),
         review=ReviewSummaryOut(
+            # Only shares and funds can get a ticker; crypto, bonds and the rest are not counted.
+            unpriced=sum(
+                1
+                for p in holdings.positions
+                if p.asset_class in PRICEABLE and p.isin not in holdings.marks
+            ),
             cost_unknown=sum(1 for c in holdings.costs.values() if FLAG_COST_UNKNOWN in c.flags),
             unattributed_cash=[
                 UnattributedOut(

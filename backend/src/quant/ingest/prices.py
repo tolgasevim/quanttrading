@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
+from quant.ingest.mapping import held_isins
 from quant.models import Instrument, PriceEOD
 from quant.providers.base import PriceProvider, PriceSeries, ProviderError, normalise_minor_units
 
@@ -39,6 +40,38 @@ def fetch_with_fallback(
     raise ProviderError("; ".join(failures))
 
 
+def store_bars(
+    session: Session, instrument_id: int, source: str, currency: str, series: PriceSeries
+) -> int:
+    """Insert or update the bars of one instrument. The caller commits."""
+    rows = [
+        {
+            "instrument_id": instrument_id,
+            "date": bar.date,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "adj_close": bar.adj_close,
+            "volume": bar.volume,
+            "currency": currency,
+            "source": source,
+        }
+        for bar in series.bars
+    ]
+    stmt = insert(PriceEOD).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_prices_eod_instr_date",
+        set_={
+            c: stmt.excluded[c]
+            for c in ("open", "high", "low", "close", "adj_close", "volume", "currency", "source")
+        }
+        | {"fetched_at": func.now()},
+    )
+    session.execute(stmt)
+    return len(rows)
+
+
 def ingest_prices(
     session: Session,
     providers: list[PriceProvider],
@@ -50,7 +83,12 @@ def ingest_prices(
     query = select(Instrument).where(Instrument.active.is_(True)).order_by(Instrument.code)
     if codes:
         query = query.where(Instrument.code.in_(codes))
-    instruments = session.scalars(query).all()
+    instruments = list(session.scalars(query).all())
+    if not codes:
+        # A share nobody holds any more needs no nightly price. Seeded instruments (the benchmark,
+        # indices) are not tied to a holding and are always fetched.
+        held = {h.isin for h in held_isins(session)}
+        instruments = [i for i in instruments if i.mapping_source is None or i.isin in held]
     last_dates = dict(
         session.execute(
             select(PriceEOD.instrument_id, func.max(PriceEOD.date)).group_by(PriceEOD.instrument_id)
@@ -70,45 +108,22 @@ def ingest_prices(
             log.warning("prices %s: %s", instrument.code, exc)
             continue
 
+        if series.currency is None and instrument.mapping_source is not None and last is None:
+            # The stored currency of a mapped instrument is only a placeholder until a price has
+            # reported the real one. Storing prices in a guessed currency would misvalue them.
+            result.errors[instrument.code] = f"{source} did not report a currency"
+            continue
         currency = series.currency or instrument.currency
         if currency != instrument.currency:
-            result.warnings[instrument.code] = (
-                f"{source} reports {currency}, instrument is set to {instrument.currency}"
-            )
-        rows = [
-            {
-                "instrument_id": instrument.id,
-                "date": bar.date,
-                "open": bar.open,
-                "high": bar.high,
-                "low": bar.low,
-                "close": bar.close,
-                "adj_close": bar.adj_close,
-                "volume": bar.volume,
-                "currency": currency,
-                "source": source,
-            }
-            for bar in series.bars
-        ]
-        stmt = insert(PriceEOD).values(rows)
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_prices_eod_instr_date",
-            set_={
-                c: stmt.excluded[c]
-                for c in (
-                    "open",
-                    "high",
-                    "low",
-                    "close",
-                    "adj_close",
-                    "volume",
-                    "currency",
-                    "source",
+            if instrument.mapping_source is not None:
+                # Mapped from an ISIN: the currency was a placeholder, the provider knows better.
+                instrument.currency = currency
+                session.add(instrument)
+            else:
+                result.warnings[instrument.code] = (
+                    f"{source} reports {currency}, instrument is set to {instrument.currency}"
                 )
-            }
-            | {"fetched_at": func.now()},
-        )
-        session.execute(stmt)
+        written = store_bars(session, instrument.id, source, currency, series)
         session.commit()
-        result.rows_written += len(rows)
+        result.rows_written += written
     return result

@@ -73,6 +73,10 @@ class Fetcher:
         self._backoff = backoff_seconds
         self._sleep = sleep
 
+    def close(self) -> None:
+        """Release the HTTP connections. Call it when the job or request is done."""
+        self._client.close()
+
     def get_text(self, provider: str, url: str, params: Mapping[str, str] | None = None) -> str:
         request_key = str(httpx.URL(url, params=params))[:300]
         last_error: Exception | None = None
@@ -90,6 +94,33 @@ class Fetcher:
                 return response.text
             last_error = ProviderError(f"{provider}: HTTP {response.status_code}")
             # Client errors other than rate limiting won't fix themselves on retry.
+            if 400 <= response.status_code < 500 and response.status_code != 429:
+                break
+        raise ProviderError(f"{provider}: request failed for {request_key}: {last_error}")
+
+    def post_json(
+        self, provider: str, url: str, body: object, headers: Mapping[str, str] | None = None
+    ) -> str:
+        """POST a JSON body, with the same retries and raw-response recording as `get_text`."""
+        request_key = f"POST {url}"
+        last_error: Exception | None = None
+        for attempt in range(self._retries):
+            if attempt:
+                self._sleep(self._backoff * 2 ** (attempt - 1))
+            try:
+                response = self._client.post(
+                    url,
+                    json=body,
+                    headers={"User-Agent": USER_AGENT, **(headers or {})},
+                )
+            except httpx.HTTPError as exc:
+                last_error = exc
+                continue
+            if self._recorder is not None:
+                self._recorder(provider, request_key, response.status_code, response.text)
+            if response.status_code == 200:
+                return response.text
+            last_error = ProviderError(f"{provider}: HTTP {response.status_code}")
             if 400 <= response.status_code < 500 and response.status_code != 429:
                 break
         raise ProviderError(f"{provider}: request failed for {request_key}: {last_error}")

@@ -107,6 +107,15 @@ export default function HoldingsPage() {
             <a href="/costs">Enter what a unit cost</a> and it is included everywhere.
           </p>
         )}
+        {data && data.review.unpriced > 0 && (
+          <p className="notice">
+            <strong>
+              {data.review.unpriced} {data.review.unpriced === 1 ? "share or fund has" : "shares and funds have"} no
+              market price.
+            </strong>{" "}
+            <a href="/prices">See which tickers are missing or have no recent price</a>.
+          </p>
+        )}
         {historyGap.length > 0 && (
           <p className="notice">
             <strong>
@@ -390,8 +399,8 @@ export default function HoldingsPage() {
               </table>
               <p className="muted">
                 Cost includes fees and transaction taxes. Value and unrealised profit appear where a
-                broker statement gives a price; prices for the rest follow once instruments are linked
-                to a price source.
+                price is known: a market price (see <a href="/prices">Prices</a>) or a broker
+                statement, whichever is newer.
               </p>
             </div>
           </>

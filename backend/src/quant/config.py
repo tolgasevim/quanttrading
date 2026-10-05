@@ -1,9 +1,11 @@
 """Runtime configuration, read from environment variables (see .env.example)."""
 
+import json
 from functools import lru_cache
+from typing import Annotated, Any
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
 
@@ -32,18 +34,39 @@ class Settings(BaseSettings):
     totp_issuer: str = "QuantTrading"
 
     # Data providers, tried in order (PRD §8). Swapping providers is a config change.
-    price_providers: list[str] = Field(default_factory=lambda: ["yahoo", "stooq"])
+    # A list setting takes either a comma list (yahoo,stooq) or JSON (["yahoo","stooq"]).
+    price_providers: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["yahoo", "stooq"]
+    )
     fx_provider: str = "ecb"
+    # ISIN -> ticker resolvers, tried in order (FR-12). OpenFIGI works without a key at a lower
+    # rate limit; a free key (QT_OPENFIGI_API_KEY) raises it.
+    isin_resolvers: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["yahoo", "openfigi"]
+    )
+    openfigi_api_key: str | None = None
+    isin_retry_days: int = 30  # how long to wait before asking again about an unknown ISIN
     http_timeout_seconds: float = 20.0
     http_retries: int = 3
 
     # Scheduler (Europe/Berlin): EOD prices after the US close, ECB FX after publication.
     timezone: str = "Europe/Berlin"
     prices_cron: str = "30 22 * * mon-fri"
+    mapping_cron: str = "0 22 * * mon-fri"  # before the price job, so new ISINs get prices at once
     fx_cron: str = "30 16 * * mon-fri"
     backfill_days: int = 400
 
     instruments_file: str = "seed/instruments.yaml"
+
+    @field_validator("price_providers", "isin_resolvers", mode="before")
+    @classmethod
+    def _list_from_env(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return [part.strip() for part in text.split(",") if part.strip()]
+        return value
 
     def db_url(self) -> URL:
         if self.database_url:
