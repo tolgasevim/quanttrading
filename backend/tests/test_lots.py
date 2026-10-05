@@ -6,11 +6,13 @@ import pytest
 
 from quant.portfolio.lots import (
     FLAG_CARRIED,
+    FLAG_COST_ENTERED,
     FLAG_COST_UNKNOWN,
     FLAG_INCOMPLETE_HISTORY,
     FLAG_PRICE_DERIVED,
     LotBook,
     build_lots,
+    missing_costs,
     position_costs,
     realised_by_isin,
     realised_by_year,
@@ -133,8 +135,8 @@ class Ledger:
         )
         return self
 
-    def book(self) -> LotBook:
-        return build_lots(self.rows)
+    def book(self, unit_costs: dict[str, D] | None = None) -> LotBook:
+        return build_lots(self.rows, unit_costs)
 
 
 def at(day: int, hour: int = 9, minute: int = 0) -> datetime:
@@ -465,7 +467,8 @@ def test_selling_more_than_was_bought_is_flagged_like_unknown_cost() -> None:
     book = Ledger().buy("A", "5", "50").sell("A", "8", "160").book()
     [d] = book.disposals
     assert FLAG_INCOMPLETE_HISTORY in d.flags and d.cost_unknown  # 3 units counted at no cost
-    assert realised_by_year(book.disposals)[0].cost_unknown_disposals == 1
+    year = realised_by_year(book.disposals)[0]
+    assert (year.cost_unknown_disposals, year.history_gap_disposals) == (0, 1)
 
 
 def test_a_swap_of_units_the_history_never_bought_keeps_the_gap_flag() -> None:
@@ -478,3 +481,89 @@ def test_a_swap_of_units_the_history_never_bought_keeps_the_gap_flag() -> None:
     new = position_costs(ledger.book())["NEW"]
     assert new.quantity == D(8) and new.cost == D(50)
     assert FLAG_INCOMPLETE_HISTORY in new.flags  # 3 of the 8 units have no cost
+
+
+def test_an_entered_cost_per_unit_replaces_the_missing_cost_of_a_spin_off() -> None:
+    ledger = Ledger().buy("PARENT", "30", "900").action("SPIN_OFF", "CHILD", "6")
+    child = position_costs(ledger.book({"CHILD": D("12.5")}))["CHILD"]
+    assert (child.quantity, child.cost, child.costs) == (D(6), D(75), D(0))
+    assert FLAG_COST_UNKNOWN not in child.flags and FLAG_COST_ENTERED in child.flags
+
+
+def test_an_entered_cost_reaches_sales_already_made() -> None:
+    ledger = Ledger().buy("PARENT", "30", "900").action("SPIN_OFF", "CHILD", "6")
+    ledger.sell("CHILD", "6", "60", fee="0")
+    assert ledger.book().disposals[0].realised_pnl == D(60)  # no cost: the whole proceeds
+    d = ledger.book({"CHILD": D("4")}).disposals[0]
+    assert d.realised_pnl == D(36) and not d.cost_unknown  # 60 - 6 x 4
+
+
+def test_an_entered_cost_leaves_units_the_history_never_bought_flagged() -> None:
+    ledger = Ledger().buy("A", "5", "50", fee="0").sell("A", "8", "160", fee="0")
+    d = ledger.book({"A": D("10")}).disposals[0]
+    assert FLAG_INCOMPLETE_HISTORY in d.flags and d.cost_unknown  # still a gap to fix by import
+    assert d.cost == D(50)  # only the 5 units that were bought
+    assert "A" not in missing_costs(ledger.book({"A": D("10")}))
+
+
+def test_an_entered_cost_never_overwrites_a_lot_that_already_has_a_cost() -> None:
+    from quant.portfolio.lots import Lot, _Engine
+
+    paid = Lot(
+        "A", date(2024, 1, 1), D(5), D(30), D(0), "corporate_action", frozenset({FLAG_COST_UNKNOWN})
+    )
+    assert _Engine({"A": D(10)})._entered(paid) is paid
+
+
+def test_an_entered_cost_never_overrides_a_known_cost() -> None:
+    ledger = Ledger().buy("A", "10", "100", fee="0")
+    assert position_costs(ledger.book({"A": D("99")}))["A"].cost == D(100)
+
+
+def test_missing_costs_lists_open_and_sold_units_and_whether_entered() -> None:
+    ledger = Ledger().buy("PARENT", "30", "900").action("SPIN_OFF", "CHILD", "6")
+    ledger.sell("CHILD", "2", "20", fee="0")
+    need = missing_costs(ledger.book())["CHILD"]
+    assert (need.open_units, need.sold_units, need.sales, need.entered) == (D(4), D(2), 1, False)
+    done = missing_costs(ledger.book({"CHILD": D(5)}))["CHILD"]
+    assert (done.open_units, done.sold_units, done.entered) == (D(4), D(2), True)
+    assert "PARENT" not in missing_costs(ledger.book())
+
+
+def test_an_entered_cost_carried_through_a_swap_is_plain_cost_afterwards() -> None:
+    ledger = (
+        Ledger()
+        .action("SPIN_OFF", "OLD", "10")
+        .action("MERGER", "OLD", "-10", at=at(10, 22, 4))
+        .action("MERGER", "NEW", "10", at=at(10, 22, 4))
+    )
+    new = position_costs(ledger.book({"OLD": D(3)}))["NEW"]
+    assert new.cost == D(30) and FLAG_COST_UNKNOWN not in new.flags
+    assert FLAG_COST_ENTERED not in new.flags and FLAG_CARRIED in new.flags
+
+
+def test_entering_a_cost_keeps_the_fee_paid_on_the_purchase() -> None:
+    # A buy with a fee but no amount or price: the cost is unknown, the fee is not.
+    ledger = Ledger()
+    ledger.rows.append(
+        Tx("A", "TRADING", "trade", "BUY", D(5), ledger._when(None), fee=D("-1.5"), tax=D("-0.5"))
+    )
+    open_lot = position_costs(ledger.book())["A"]
+    assert (open_lot.cost, open_lot.costs) == (D(0), D(2)) and FLAG_COST_UNKNOWN in open_lot.flags
+    entered = position_costs(ledger.book({"A": D(10)}))["A"]
+    assert (entered.cost, entered.costs) == (D(50), D(2))
+    assert FLAG_COST_UNKNOWN not in entered.flags
+
+
+def test_a_sale_is_either_without_a_cost_or_beyond_the_history() -> None:
+    spin = Ledger().buy("P", "30", "900").action("SPIN_OFF", "C", "6")
+    spin.sell("C", "6", "60", fee="0")
+    d = spin.book().disposals[0]
+    assert (d.no_cost_given, d.history_gap, d.cost_unknown) == (True, False, True)
+    over = Ledger().buy("A", "5", "50", fee="0").sell("A", "8", "160", fee="0")
+    d = over.book().disposals[0]
+    assert (d.no_cost_given, d.history_gap, d.cost_unknown) == (False, True, True)
+    [year] = realised_by_year(over.book().disposals)
+    assert (year.cost_unknown_disposals, year.history_gap_disposals) == (0, 1)
+    ok = Ledger().buy("A", "5", "50", fee="0").sell("A", "5", "80", fee="0")
+    assert not ok.book().disposals[0].cost_unknown

@@ -36,7 +36,8 @@ class YearTaxOut(BaseModel):
     withheld: Decimal  # what the broker took, net of its refunds
     to_settle: Decimal  # tax less withheld: positive is owed, negative is refundable
     fund_disposals: int
-    cost_unknown_sales: int  # sales of units with no known cost: the gain is overstated
+    cost_unknown_sales: int  # sales of units received with no cost: enter it on the Costs page
+    history_gap_sales: int  # sales of units the history never bought: an import is missing
     crypto: CryptoOut
 
 
@@ -64,6 +65,7 @@ def _year(y: YearEstimate) -> YearTaxOut:
         to_settle=y.to_settle,
         fund_disposals=y.fund_disposals,
         cost_unknown_sales=y.cost_unknown_sales,
+        history_gap_sales=y.history_gap_sales,
         crypto=CryptoOut(
             taxable_gain=y.crypto.taxable_gain,
             tax_free_gain=y.crypto.tax_free_gain,

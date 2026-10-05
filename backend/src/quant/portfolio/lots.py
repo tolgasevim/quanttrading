@@ -22,7 +22,7 @@ on quantities. What each row does to the lots:
 """
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -37,11 +37,13 @@ FLAG_PRICE_DERIVED = "price_derived"  # valued at price x units, not at an amoun
 FLAG_CARRIED = "carried"  # moved over from another ISIN by a corporate action
 FLAG_INCOMPLETE_HISTORY = "incomplete_history"  # sold more than the history shows was bought
 
-# One action's rows share a type and are written within minutes of each other.
+FLAG_COST_ENTERED = "cost_entered"  # the owner supplied the cost per unit
+
 # Flags that mean part of the cost is missing (counted as zero), so a gain or profit on it is
 # overstated: the broker gave no cost, or the history has fewer purchases than sales.
 COST_MISSING = frozenset({FLAG_COST_UNKNOWN, FLAG_INCOMPLETE_HISTORY})
 
+# One action's rows share a type and are written within minutes of each other.
 GROUP_GAP = timedelta(minutes=5)
 # Cash rows of a corporate action are booked up to a day away from the unit rows.
 CASH_WINDOW = timedelta(days=1)
@@ -144,10 +146,23 @@ class Disposal:
     def acquisition_costs(self) -> Decimal:
         return sum((s.costs for s in self.slices), ZERO)
 
+    def _has(self, flag: str) -> bool:
+        return flag in self.flags or any(flag in s.flags for s in self.slices)
+
+    @property
+    def no_cost_given(self) -> bool:
+        """Units sold were received with no cost: the owner can enter it (FR-20)."""
+        return self._has(FLAG_COST_UNKNOWN)
+
+    @property
+    def history_gap(self) -> bool:
+        """Units sold that the history never bought: an import is probably missing."""
+        return self._has(FLAG_INCOMPLETE_HISTORY)
+
     @property
     def cost_unknown(self) -> bool:
-        """Some units sold had no cost from the broker, so the gain is overstated."""
-        return bool(self.flags & COST_MISSING) or any(s.flags & COST_MISSING for s in self.slices)
+        """Either way part of the cost counts as zero, so the gain is overstated."""
+        return self.no_cost_given or self.history_gap
 
     @property
     def realised_pnl(self) -> Decimal:
@@ -257,12 +272,30 @@ def _pair_legs(
 
 
 class _Engine:
-    def __init__(self) -> None:
+    def __init__(self, unit_costs: Mapping[str, Decimal] | None = None) -> None:
         self.book = LotBook()
+        self.unit_costs = unit_costs or {}
 
     # -- lots ----------------------------------------------------------------------------
 
+    def _entered(self, lot: Lot) -> Lot:
+        """Give a lot received without a cost the per-unit cost the owner entered for its ISIN.
+
+        Only lots whose cost is exactly unknown (`cost_unknown`, nothing paid) are filled. A lot
+        that already has a cost keeps it, and units the history never bought
+        (`incomplete_history`) are left alone: a cost does not fix their acquisition date, and the
+        gap usually means an import is missing."""
+        unit = self.unit_costs.get(lot.isin)
+        if unit is None or FLAG_COST_UNKNOWN not in lot.flags or lot.cost != 0:
+            return lot
+        flags = (lot.flags - {FLAG_COST_UNKNOWN}) | {FLAG_COST_ENTERED}
+        # Fees and transaction taxes paid on the purchase are real costs the owner is not asked for.
+        return Lot(
+            lot.isin, lot.acquired, lot.quantity, lot.quantity * unit, lot.costs, lot.origin, flags
+        )
+
     def add(self, lot: Lot) -> None:
+        lot = self._entered(lot)
         lots = self.book.lots.setdefault(lot.isin, [])
         lots.append(lot)
         lots.sort(key=lambda existing: existing.acquired)  # stable: FIFO by acquisition date
@@ -400,7 +433,7 @@ class _Engine:
                 if piece.quantity <= DUST:
                     continue
                 part = piece.quantity / total_out * qty  # this piece's units, spread over targets
-                flags = set(piece.flags) | {FLAG_CARRIED}
+                flags = (set(piece.flags) | {FLAG_CARRIED}) - {FLAG_COST_ENTERED}
                 lot_cost = piece.cost * share
                 lot_costs = piece.costs * share
                 extra = paid * (piece.quantity / total_out) if paid else ZERO
@@ -463,9 +496,14 @@ class _Engine:
             lot.quantity *= factor  # the cost stays: it is now spread over more (or fewer) units
 
 
-def build_lots(transactions: Iterable[LotTx]) -> LotBook:
+def build_lots(
+    transactions: Iterable[LotTx], unit_costs: Mapping[str, Decimal] | None = None
+) -> LotBook:
+    """Replay the history into FIFO lots. `unit_costs` is what the owner entered per unit for
+    ISINs whose cost the broker does not give (FR-20); it applies to every lot flagged as
+    missing a cost, whether still held or already sold."""
     rows = sorted(transactions, key=lambda t: t.executed_at)
-    engine = _Engine()
+    engine = _Engine(unit_costs)
     groups = _groups(rows)
     events: list[tuple[datetime, int, _Group | LotTx]] = [
         (tx.executed_at, 0, tx)
@@ -542,7 +580,8 @@ class YearPnl:
     fees: Decimal
     tax_withheld: Decimal
     disposals: int
-    cost_unknown_disposals: int  # of which sold units whose cost the broker did not give
+    cost_unknown_disposals: int  # of which sold units received with no cost (enter it)
+    history_gap_disposals: int  # of which sold units the history never bought (import more)
 
     @property
     def net(self) -> Decimal:
@@ -565,7 +604,8 @@ def realised_by_year(disposals: Iterable[Disposal]) -> list[YearPnl]:
                 fees=sum((d.fees for d in items), ZERO),
                 tax_withheld=sum((d.tax_withheld for d in items), ZERO),
                 disposals=len(items),
-                cost_unknown_disposals=sum(1 for d in items if d.cost_unknown),
+                cost_unknown_disposals=sum(1 for d in items if d.no_cost_given),
+                history_gap_disposals=sum(1 for d in items if d.history_gap),
             )
         )
     return out
@@ -579,4 +619,47 @@ def realised_by_isin(disposals: Iterable[Disposal]) -> dict[str, Decimal]:
 
 
 def cost_unknown_isins(disposals: Iterable[Disposal]) -> set[str]:
-    return {d.isin for d in disposals if d.cost_unknown}
+    """Instruments with a sale of units received with no cost."""
+    return {d.isin for d in disposals if d.no_cost_given}
+
+
+def history_gap_isins(disposals: Iterable[Disposal]) -> set[str]:
+    """Instruments with a sale of units the history never bought."""
+    return {d.isin for d in disposals if d.history_gap}
+
+
+@dataclass(frozen=True)
+class MissingCost:
+    """Units of one instrument whose cost the broker did not give (or the owner has entered)."""
+
+    isin: str
+    open_units: Decimal  # still held
+    sold_units: Decimal  # already sold
+    sales: int  # disposals that include such units
+    entered: bool  # the owner has supplied a cost per unit
+
+
+def missing_costs(book: LotBook) -> dict[str, MissingCost]:
+    """Per ISIN, the units received without a cost that need one from the owner, or have one
+    entered. Units sold that the history never bought are not listed: a cost does not fix them."""
+    marks = frozenset({FLAG_COST_UNKNOWN, FLAG_COST_ENTERED})
+    open_units: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    sold_units: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    sales: dict[str, int] = defaultdict(int)
+    entered: set[str] = set()
+    for isin, lots in book.lots.items():
+        for lot in lots:
+            if lot.quantity > DUST and lot.flags & marks:
+                open_units[isin] += lot.quantity
+                if FLAG_COST_ENTERED in lot.flags:
+                    entered.add(isin)
+    for d in book.disposals:
+        hit = [s for s in d.slices if s.flags & marks]
+        if not hit:
+            continue
+        sales[d.isin] += 1
+        sold_units[d.isin] += sum((s.quantity for s in hit), ZERO)
+        if any(FLAG_COST_ENTERED in s.flags for s in hit):
+            entered.add(d.isin)
+    isins = set(open_units) | set(sold_units)
+    return {i: MissingCost(i, open_units[i], sold_units[i], sales[i], i in entered) for i in isins}

@@ -258,3 +258,23 @@ class Snapshot(Base):
     lines: Mapped[list[dict[str, str]]] = mapped_column(JSON)
     footer_count: Mapped[int] = mapped_column(Integer)
     footer_total: Mapped[Decimal] = mapped_column(Numeric(20, 2))
+
+
+class UnitCost(Base):
+    """A cost per unit the owner entered for an instrument whose cost the broker does not give
+    (spin-offs, rights, units transferred in; FR-20). It applies to every unit of that ISIN that
+    has no cost in the history, whether still held or already sold."""
+
+    __tablename__ = "unit_costs"
+    __table_args__ = (UniqueConstraint("user_id", "isin", name="uq_unit_costs_user_isin"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    isin: Mapped[str] = mapped_column(String(20))
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(28, 10))  # EUR per unit
+    note: Mapped[str | None] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

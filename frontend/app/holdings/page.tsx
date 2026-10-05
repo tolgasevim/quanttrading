@@ -28,6 +28,7 @@ const FLAG_TEXT: Record<Position["cost_flags"][number], string> = {
   price_derived: "valued at the price on receipt",
   carried: "carried over by a corporate action",
   incomplete_history: "history incomplete",
+  cost_entered: "cost entered by you",
 };
 
 // Display only: every figure is computed on the server as an exact decimal.
@@ -65,7 +66,8 @@ export default function HoldingsPage() {
     }
   };
 
-  const unknownCost = data?.positions.filter((p) => p.cost_flags.some((f) => f === "cost_unknown" || f === "incomplete_history")) ?? [];
+  const unknownCost = data?.positions.filter((p) => p.cost_flags.includes("cost_unknown")) ?? [];
+  const historyGap = data?.positions.filter((p) => p.cost_flags.includes("incomplete_history")) ?? [];
 
   return (
     <>
@@ -101,7 +103,20 @@ export default function HoldingsPage() {
             </strong>{" "}
             Trade Republic doesn&apos;t say what a spin-off, rights issue or free share cost, so profit
             on {unknownCost.length === 1 ? "it" : "them"} can&apos;t be worked out yet:{" "}
-            {unknownCost.map((p) => p.name ?? p.isin).join(", ")}.
+            {unknownCost.map((p) => p.name ?? p.isin).join(", ")}.{" "}
+            <a href="/costs">Enter what a unit cost</a> and it is included everywhere.
+          </p>
+        )}
+        {historyGap.length > 0 && (
+          <p className="notice">
+            <strong>
+              {historyGap.length} {historyGap.length === 1 ? "position includes" : "positions include"} units
+              your history never bought.
+            </strong>{" "}
+            That usually means an import is missing, so cost and profit on{" "}
+            {historyGap.length === 1 ? "it" : "them"} can&apos;t be worked out:{" "}
+            {historyGap.map((p) => p.name ?? p.isin).join(", ")}.{" "}
+            <a href="/import">Import more history</a>
           </p>
         )}
         {data && data.review.unattributed_cash.length > 0 && (
@@ -239,6 +254,12 @@ export default function HoldingsPage() {
                             a known cost: gain overstated
                           </div>
                         )}
+                        {y.history_gap_sales > 0 && (
+                          <div className="status-failed">
+                            {y.history_gap_sales} sale{y.history_gap_sales > 1 ? "s" : ""} of units your
+                            history never bought: an import is probably missing
+                          </div>
+                        )}
                       </td>
                       <td className="num">{eur(y.fees)}</td>
                       <td className="num">{eur(y.tax_withheld)}</td>
@@ -275,11 +296,13 @@ export default function HoldingsPage() {
                           <td>
                             {g ? (g.name ?? g.isin) : ""}
                             {g?.cost_unknown && <div className="status-failed">cost unknown</div>}
+                            {g?.history_gap && <div className="status-failed">history incomplete</div>}
                           </td>
                           <td className={`num ${tone(g?.realised_pnl ?? null)}`}>{g ? eur(g.realised_pnl) : ""}</td>
                           <td>
                             {l ? (l.name ?? l.isin) : ""}
                             {l?.cost_unknown && <div className="status-failed">cost unknown</div>}
+                            {l?.history_gap && <div className="status-failed">history incomplete</div>}
                           </td>
                           <td className={`num ${tone(l?.realised_pnl ?? null)}`}>{l ? eur(l.realised_pnl) : ""}</td>
                         </tr>

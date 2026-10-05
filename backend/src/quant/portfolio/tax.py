@@ -117,7 +117,8 @@ class YearEstimate:
     to_settle: Decimal  # tax less withheld: positive is still owed, negative is refundable
     crypto: CryptoYear
     fund_disposals: int  # sales that used the equity-fund assumption
-    cost_unknown_sales: int  # sales of units with no known cost: their gain is overstated
+    cost_unknown_sales: int  # sales of units received with no cost: the gain is overstated
+    history_gap_sales: int  # sales of units the history never bought: an import is missing
 
 
 @dataclass
@@ -132,6 +133,7 @@ class _Year:
     crypto_taxable: Decimal = ZERO
     crypto_free: Decimal = ZERO
     unknown: int = 0
+    gap: int = 0
 
 
 def _crypto_split(d: Disposal) -> tuple[Decimal, Decimal]:
@@ -162,7 +164,8 @@ def estimate(
         y = years[d.date.year]
         cls = classes.get(d.isin)
         y.withheld += d.tax_withheld
-        y.unknown += d.cost_unknown
+        y.unknown += d.no_cost_given
+        y.gap += d.history_gap
         if cls == CRYPTO:
             taxable, free = _crypto_split(d)
             y.crypto_taxable += taxable
@@ -228,6 +231,7 @@ def estimate(
                 ),
                 fund_disposals=y.funds,
                 cost_unknown_sales=y.unknown,
+                history_gap_sales=y.gap,
             )
         )
         stock_carry = stock_loss

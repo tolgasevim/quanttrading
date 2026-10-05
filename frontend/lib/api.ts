@@ -26,6 +26,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (response.status === 204 ? undefined : await response.json()) as T;
 }
 
+export const put = <T>(path: string, body: unknown) =>
+  api<T>(path, { method: "PUT", body: JSON.stringify(body) });
+
+export const del = (path: string) => api<void>(path, { method: "DELETE" });
+
 export const post = <T>(path: string, body?: unknown) =>
   api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
@@ -116,7 +121,13 @@ export type Position = {
   acquisition_costs: string | null;
   total_cost: string | null;
   average_cost: string | null;
-  cost_flags: ("cost_unknown" | "price_derived" | "carried" | "incomplete_history")[];
+  cost_flags: (
+    | "cost_unknown"
+    | "price_derived"
+    | "carried"
+    | "incomplete_history"
+    | "cost_entered"
+  )[];
   price: string | null;
   price_as_of: string | null;
   valued_quantity: string | null;
@@ -159,9 +170,16 @@ export type YearPnl = {
   tax_withheld: string;
   disposals: number;
   cost_unknown_sales: number;
+  history_gap_sales: number;
 };
 
-export type InstrumentPnl = { isin: string; name: string | null; realised_pnl: string; cost_unknown: boolean };
+export type InstrumentPnl = {
+  isin: string;
+  name: string | null;
+  realised_pnl: string;
+  cost_unknown: boolean;
+  history_gap: boolean;
+};
 
 export type Realised = {
   by_year: YearPnl[];
@@ -212,7 +230,21 @@ export type YearTax = {
   to_settle: string;
   fund_disposals: number;
   cost_unknown_sales: number;
+  history_gap_sales: number;
   crypto: CryptoTax;
 };
 
 export type TaxEstimate = { years: YearTax[]; assumptions: string[] };
+
+export type CostItem = {
+  isin: string;
+  name: string | null;
+  asset_class: string | null;
+  open_units: string;
+  sold_units: string;
+  sales: number;
+  unit_cost: string | null;
+  note: string | null;
+};
+
+export type Costs = { items: CostItem[] };
