@@ -8,37 +8,42 @@ import logging
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import httpx
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from quant.config import Settings, get_settings
+from quant import rls
+from quant.config import get_settings
 from quant.db import get_sessionmaker
 from quant.ingest.fx import ingest_fx
 from quant.ingest.jobs import run_job
+from quant.ingest.mapping import map_isins
 from quant.ingest.prices import ingest_prices
-from quant.models import JobRun, JobStatus, RawResponse
-from quant.providers.base import Fetcher
-from quant.providers.registry import fx_provider, price_providers
+from quant.ingest.runtime import make_fetcher, today_local
+from quant.models import JobRun, JobStatus
+from quant.providers.registry import fx_provider, isin_resolvers, price_providers
 
 log = logging.getLogger(__name__)
 
 PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
+MAP_JOB = "map_isins"
 
 
-def make_fetcher(session: Session, settings: Settings) -> Fetcher:
-    def record(provider: str, key: str, status: int, body: str) -> None:
-        session.add(RawResponse(provider=provider, request_key=key, status_code=status, body=body))
-
-    client = httpx.Client(timeout=settings.http_timeout_seconds, follow_redirects=True)
-    return Fetcher(client, recorder=record, retries=settings.http_retries)
-
-
-def today_local(settings: Settings) -> datetime:
-    return datetime.now(ZoneInfo(settings.timezone))
+def run_mapping() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Shared market data across users: read every user's transactions (FR-3 bypass).
+        rls.bypass(session)
+        resolvers = isin_resolvers(
+            settings.isin_resolvers, make_fetcher(session, settings), settings.openfigi_api_key
+        )
+        run_job(
+            session,
+            MAP_JOB,
+            lambda s: map_isins(s, resolvers, datetime.now(UTC), settings.isin_retry_days),
+        )
 
 
 def run_prices() -> None:
@@ -82,7 +87,7 @@ def main() -> None:
 
     with get_sessionmaker()() as session:
         now = datetime.now(UTC)
-        for job, fn in ((FX_JOB, run_fx), (PRICES_JOB, run_prices)):
+        for job, fn in ((FX_JOB, run_fx), (MAP_JOB, run_mapping), (PRICES_JOB, run_prices)):
             if needs_catch_up(session, job, now):
                 log.info("catching up on %s", job)
                 fn()
@@ -91,6 +96,12 @@ def main() -> None:
     common = {"misfire_grace_time": 3600, "coalesce": True, "max_instances": 1}
     scheduler.add_job(
         run_fx, CronTrigger.from_crontab(settings.fx_cron, timezone=tz), id=FX_JOB, **common
+    )
+    scheduler.add_job(
+        run_mapping,
+        CronTrigger.from_crontab(settings.mapping_cron, timezone=tz),
+        id=MAP_JOB,
+        **common,
     )
     scheduler.add_job(
         run_prices,

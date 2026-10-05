@@ -228,7 +228,7 @@ def test_other_users_see_none_of_it(owner: TestClient, db: Session) -> None:
         and body["realised"]["by_year"] == []
         and body["realised"]["net_total"] == "0.00"
     )
-    assert body["review"] == {"cost_unknown": 0, "unattributed_cash": []}
+    assert body["review"] == {"unpriced": 0, "cost_unknown": 0, "unattributed_cash": []}
 
 
 def test_money_is_serialised_as_exact_decimals(owner: TestClient) -> None:

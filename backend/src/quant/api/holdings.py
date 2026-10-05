@@ -116,6 +116,7 @@ class UnattributedOut(BaseModel):
 
 
 class ReviewSummaryOut(BaseModel):
+    unpriced: int  # open positions with no market price yet (see the Prices page)
     cost_unknown: int  # open positions whose cost the broker does not give
     unattributed_cash: list[UnattributedOut]  # corporate-action cash that fits no action
 
@@ -181,7 +182,7 @@ def _position(p: Position, holdings: service.Holdings) -> PositionOut:
         total_cost=_money(cost.total_cost) if cost else None,
         average_cost=average.quantize(Decimal("0.0001")) if average is not None else None,
         cost_flags=sorted(cost.flags) if cost else [],
-        price=mark.price if mark else None,
+        price=_trim(mark.price) if mark else None,
         price_as_of=mark.as_of.isoformat() if mark else None,
         valued_quantity=_trim(mark.quantity) if mark else None,
         market_value=_money(value),
@@ -264,6 +265,7 @@ def _out(holdings: service.Holdings) -> HoldingsOut:
         ],
         realised=_realised(holdings),
         review=ReviewSummaryOut(
+            unpriced=sum(1 for p in holdings.positions if p.isin not in holdings.marks),
             cost_unknown=sum(1 for c in holdings.costs.values() if FLAG_COST_UNKNOWN in c.flags),
             unattributed_cash=[
                 UnattributedOut(

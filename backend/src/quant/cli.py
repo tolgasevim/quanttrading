@@ -197,6 +197,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("csv")
     p.add_argument("--crypto-pdf", default=None)
 
+    sub.add_parser("map-isins", help="map held ISINs to tickers now (FR-12)")
     sub.add_parser("ingest-prices", help="run the EOD price job now")
     sub.add_parser("ingest-fx", help="run the ECB FX job now")
     sub.add_parser("worker", help="run the scheduler")
@@ -213,12 +214,15 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(check_holdings(Path(args.csv), crypto))
     elif args.command == "check-tr-csv":
         sys.exit(check_tr_csv(Path(args.path)))
-    elif args.command in ("ingest-prices", "ingest-fx", "worker"):
+    elif args.command in ("map-isins", "ingest-prices", "ingest-fx", "worker"):
         from quant import worker
 
-        {"ingest-prices": worker.run_prices, "ingest-fx": worker.run_fx, "worker": worker.main}[
-            args.command
-        ]()
+        {
+            "map-isins": worker.run_mapping,
+            "ingest-prices": worker.run_prices,
+            "ingest-fx": worker.run_fx,
+            "worker": worker.main,
+        }[args.command]()
 
 
 if __name__ == "__main__":

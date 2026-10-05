@@ -25,10 +25,16 @@ the crypto statement.
    docker compose exec api python -m quant.cli create-admin --email you@example.com --name Tolga
    docker compose exec api python -m quant.cli seed-instruments
    docker compose exec api python -m quant.cli ingest-fx
+   ```
+   Once you have imported your transactions in the app (step 5), look up the tickers and fetch the prices:
+   ```sh
+   docker compose exec api python -m quant.cli map-isins
    docker compose exec api python -m quant.cli ingest-prices
    ```
-   After this the worker fetches data by itself: FX at 16:30 and prices at 22:30 (Europe/Berlin,
-   weekdays). It also catches up after the Mac mini was off.
+   The worker then does this by itself: FX at 16:30, ticker lookup at 22:00 and prices at 22:30
+   (Europe/Berlin, weekdays). It also catches up after the Mac mini was off. A holding without a
+   ticker is listed on the Prices page, where you can enter it by hand. An optional free OpenFIGI
+   key (`QT_OPENFIGI_API_KEY`) raises the lookup rate limit.
 5. Open the app:
    - On the Mac mini itself: http://localhost:3000. Set `QT_COOKIE_SECURE=false` in `.env` for
      plain http and run `docker compose up -d` again.

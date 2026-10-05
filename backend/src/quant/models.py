@@ -103,6 +103,10 @@ class Instrument(Base):
     # Provider-specific symbols, e.g. {"yahoo": "SXRV.DE", "stooq": "sxrv.de"}.
     symbols: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # How the symbols were found: NULL for the seed list, else "yahoo", "openfigi", "manual", or
+    # "none" when no resolver knew the ISIN (the row is inactive until a symbol is entered, FR-12).
+    mapping_source: Mapped[str | None] = mapped_column(String(20))
+    mapped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PriceEOD(Base):

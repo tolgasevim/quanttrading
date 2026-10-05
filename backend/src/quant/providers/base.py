@@ -94,6 +94,33 @@ class Fetcher:
                 break
         raise ProviderError(f"{provider}: request failed for {request_key}: {last_error}")
 
+    def post_json(
+        self, provider: str, url: str, body: object, headers: Mapping[str, str] | None = None
+    ) -> str:
+        """POST a JSON body, with the same retries and raw-response recording as `get_text`."""
+        request_key = f"POST {url}"
+        last_error: Exception | None = None
+        for attempt in range(self._retries):
+            if attempt:
+                self._sleep(self._backoff * 2 ** (attempt - 1))
+            try:
+                response = self._client.post(
+                    url,
+                    json=body,
+                    headers={"User-Agent": USER_AGENT, **(headers or {})},
+                )
+            except httpx.HTTPError as exc:
+                last_error = exc
+                continue
+            if self._recorder is not None:
+                self._recorder(provider, request_key, response.status_code, response.text)
+            if response.status_code == 200:
+                return response.text
+            last_error = ProviderError(f"{provider}: HTTP {response.status_code}")
+            if 400 <= response.status_code < 500 and response.status_code != 429:
+                break
+        raise ProviderError(f"{provider}: request failed for {request_key}: {last_error}")
+
 
 # Quotes in minor units (e.g. London prices in pence) are normalised to the major currency.
 MINOR_UNITS: dict[str, tuple[str, Decimal]] = {

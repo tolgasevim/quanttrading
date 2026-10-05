@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from quant.importers import tr_crypto_pdf
-from quant.models import Snapshot, Transaction, UnitCost
+from quant.models import FxRate, Instrument, PriceEOD, Snapshot, Transaction, UnitCost
 from quant.portfolio.lots import (
     FLAG_PRICE_DERIVED,
     LotBook,
@@ -200,6 +200,50 @@ def marks_from_snapshot(
     return marks
 
 
+def price_marks(
+    session: Session, positions: list[Position], costs: dict[str, PositionCost]
+) -> dict[str, Mark]:
+    """The latest stored price of each open position, in euros (FR-20).
+
+    A price in another currency is converted at the ECB rate of its own day (or the latest rate
+    before it). No rate means no mark: better a blank than a wrong value."""
+    isins = [p.isin for p in positions]
+    if not isins:
+        return {}
+    newest = (
+        select(PriceEOD.instrument_id, func.max(PriceEOD.date).label("d"))
+        .group_by(PriceEOD.instrument_id)
+        .subquery()
+    )
+    rows = session.execute(
+        select(Instrument.isin, PriceEOD.close, PriceEOD.currency, PriceEOD.date, PriceEOD.source)
+        .join(PriceEOD, PriceEOD.instrument_id == Instrument.id)
+        .join(
+            newest,
+            (newest.c.instrument_id == PriceEOD.instrument_id) & (newest.c.d == PriceEOD.date),
+        )
+        .where(Instrument.isin.in_(isins), Instrument.active.is_(True))
+    ).all()
+    quantities = {p.isin: p.quantity for p in positions}
+    marks: dict[str, Mark] = {}
+    for isin, close, currency, day, source in rows:
+        if close is None or not isin:
+            continue
+        price = close
+        if currency and currency != "EUR":
+            rate = session.scalar(
+                select(FxRate.rate)
+                .where(FxRate.quote == currency, FxRate.date <= day)
+                .order_by(FxRate.date.desc())
+                .limit(1)
+            )
+            if not rate:
+                continue
+            price = close / rate
+        marks[isin] = Mark(price, day, source, quantities[isin], costs.get(isin))
+    return marks
+
+
 def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
     movements = load_movements(session, user_id)
     everything = compute_positions(movements)
@@ -238,6 +282,11 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
                     holdings.verified.add(f.isin)
             elif f.status in (Status.QUANTITY_MISMATCH, Status.NOT_ON_STATEMENT):
                 holdings.differs.add(f.isin)
+    # Stored market prices fill in what no statement priced; the newer of two prices wins.
+    for isin, mark in price_marks(session, current, holdings.costs).items():
+        known = holdings.marks.get(isin)
+        if known is None or mark.as_of > known.as_of:
+            holdings.marks[isin] = mark
     return holdings
 
 

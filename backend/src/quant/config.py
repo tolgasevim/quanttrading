@@ -34,12 +34,18 @@ class Settings(BaseSettings):
     # Data providers, tried in order (PRD §8). Swapping providers is a config change.
     price_providers: list[str] = Field(default_factory=lambda: ["yahoo", "stooq"])
     fx_provider: str = "ecb"
+    # ISIN -> ticker resolvers, tried in order (FR-12). OpenFIGI works without a key at a lower
+    # rate limit; a free key (QT_OPENFIGI_API_KEY) raises it.
+    isin_resolvers: list[str] = Field(default_factory=lambda: ["yahoo", "openfigi"])
+    openfigi_api_key: str | None = None
+    isin_retry_days: int = 30  # how long to wait before asking again about an unknown ISIN
     http_timeout_seconds: float = 20.0
     http_retries: int = 3
 
     # Scheduler (Europe/Berlin): EOD prices after the US close, ECB FX after publication.
     timezone: str = "Europe/Berlin"
     prices_cron: str = "30 22 * * mon-fri"
+    mapping_cron: str = "0 22 * * mon-fri"  # before the price job, so new ISINs get prices at once
     fx_cron: str = "30 16 * * mon-fri"
     backfill_days: int = 400
 

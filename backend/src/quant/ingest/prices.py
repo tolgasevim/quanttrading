@@ -72,9 +72,14 @@ def ingest_prices(
 
         currency = series.currency or instrument.currency
         if currency != instrument.currency:
-            result.warnings[instrument.code] = (
-                f"{source} reports {currency}, instrument is set to {instrument.currency}"
-            )
+            if instrument.mapping_source is not None:
+                # Mapped from an ISIN: the currency was a placeholder, the provider knows better.
+                instrument.currency = currency
+                session.add(instrument)
+            else:
+                result.warnings[instrument.code] = (
+                    f"{source} reports {currency}, instrument is set to {instrument.currency}"
+                )
         rows = [
             {
                 "instrument_id": instrument.id,
