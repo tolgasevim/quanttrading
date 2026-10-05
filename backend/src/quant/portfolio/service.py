@@ -204,6 +204,9 @@ def marks_from_snapshot(
 # updating (delisted, renamed) or a price job that stopped then shows as unpriced instead of
 # passing an old price off as the current value.
 MAX_PRICE_AGE_DAYS = 10
+# An ECB rate counts for a price only when it is at most this many days older than the price day.
+# It covers weekends and holidays. A currency the ECB stopped publishing gives no value.
+MAX_FX_AGE_DAYS = 7
 
 
 def today() -> date:
@@ -250,7 +253,11 @@ def price_marks(
         if currency and currency != "EUR":
             rate = session.scalar(
                 select(FxRate.rate)
-                .where(FxRate.quote == currency, FxRate.date <= day)
+                .where(
+                    FxRate.quote == currency,
+                    FxRate.date <= day,
+                    FxRate.date >= day - timedelta(days=MAX_FX_AGE_DAYS),
+                )
                 .order_by(FxRate.date.desc())
                 .limit(1)
             )

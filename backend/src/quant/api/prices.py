@@ -151,6 +151,11 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
     if isin not in held:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such open position in your history")
     position = held[isin]
+    if position.asset_class not in PRICEABLE:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "tickers are for shares and funds; crypto and the rest are priced elsewhere",
+        )
     inst = db.scalar(select(Instrument).where(Instrument.isin == isin))
     if inst is None:
         inst = Instrument(code=isin, isin=isin, currency="EUR")
@@ -160,7 +165,8 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
         # currency), so drop them and fetch the whole history again.
         db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
     inst.name = inst.name if inst.name and inst.name != isin else (position.name or isin)
-    inst.asset_class = PRICEABLE.get(position.asset_class or "", "stock")
+    if inst.asset_class is None:  # a new row; an existing one keeps its class
+        inst.asset_class = PRICEABLE[position.asset_class or "STOCK"]
     if changed:
         inst.symbols = {"yahoo": symbol}  # the other providers' symbols belong to the old ticker
     else:

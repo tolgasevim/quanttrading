@@ -312,3 +312,37 @@ def test_the_prices_page_never_says_priced_when_holdings_shows_no_value(
     db.commit()
     assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["market_value"] is None
     assert statuses(owner)[A] == "inactive"
+
+
+def test_a_rate_that_is_far_older_than_the_price_is_not_used(
+    owner: TestClient, db: Session
+) -> None:
+    add_price(db, add_instrument(db, A, "RUB"), date(2026, 10, 2), "9000", "RUB")
+    add_fx(db, "RUB", date(2022, 2, 28), "100")  # the last rate the ECB ever published
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["market_value"] is None
+    assert statuses(owner)[A] == "no_rate"
+    add_fx(db, "RUB", date(2026, 9, 25), "90")  # seven days before the price day: still usable
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "100"  # 9000 / 90
+
+
+def test_tickers_are_only_for_shares_and_funds_and_keep_the_class_of_the_row(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_provider(monkeypatch, FakeProvider(None, fail=True))
+    seeded = Instrument(code="BTC", isin=BTC, name="Bitcoin", asset_class="crypto", currency="EUR",
+                        symbols={"yahoo": "BTC-EUR"})  # fmt: skip
+    db.add(seeded)
+    db.commit()
+    assert owner.put(f"/api/prices/{BTC}", json={"symbol": "X"}).status_code == 422
+    db.refresh(seeded)
+    assert (seeded.asset_class, seeded.symbols, seeded.mapping_source) == (
+        "crypto",
+        {"yahoo": "BTC-EUR"},
+        None,
+    )  # untouched
+    etf = add_instrument(db, A)
+    etf.asset_class = "etf"
+    db.commit()
+    owner.put(f"/api/prices/{A}", json={"symbol": "SYM"})  # the position is a STOCK
+    db.refresh(etf)
+    assert etf.asset_class == "etf"  # a fund row stays a fund row

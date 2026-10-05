@@ -37,7 +37,8 @@ function Row({
   const [symbol, setSymbol] = useState(item.symbol ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const editable = admin && item.status !== "unsupported";
+  // Tickers are for shares and funds only; crypto and the rest are priced elsewhere.
+  const editable = admin && (item.asset_class === "STOCK" || item.asset_class === "FUND");
   const unchanged = symbol.trim() === (item.symbol ?? "");
   // A saved ticker with no price yet can be fetched again without changing it.
   const retry = unchanged && item.status === "waiting";
@@ -169,7 +170,7 @@ export default function PricesPage() {
               <tbody>
                 {items.map((item) => (
                   <Row
-                    key={`${item.isin}:${item.symbol}:${item.status}`}
+                    key={item.isin}
                     item={item}
                     admin={admin}
                     onChange={setItems}
