@@ -222,7 +222,10 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
         as_of_positions = open_positions(compute_positions(as_of_rows))
         result = reconcile_snapshot(as_of_positions, snapshot)
         as_of_book = build_lots(as_of_rows, unit_costs)
-        result.cost_checks = cost_checks(snapshot, as_of_positions, as_of_book)
+        # The check validates the engine against the broker's own figure, so it must not see the
+        # costs the owner entered; profit and loss and the marks below do.
+        broker_book = build_lots(as_of_rows) if unit_costs else as_of_book
+        result.cost_checks = cost_checks(snapshot, as_of_positions, broker_book)
         holdings.reconciliations.append(result)
         holdings.marks.update(marks_from_snapshot(snapshot, as_of_positions, as_of_book))
         for f in result.findings:

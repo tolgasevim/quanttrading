@@ -129,3 +129,27 @@ def test_a_second_save_that_races_the_first_updates_instead_of_failing(
     assert response.status_code == 200
     entry = {i["isin"]: i for i in response.json()["items"]}[SPIN]
     assert (entry["unit_cost"], entry["note"]) == ("20", "second")
+
+
+def test_an_entered_cost_does_not_change_the_statement_cost_check(
+    client: TestClient, admin: User
+) -> None:
+    from .test_holdings_pnl_api import STATEMENT_ROWS, upload
+
+    login(client, admin.email)
+    gift = row(
+        9, "2025-01-05", "DELIVERY", "FREE_RECEIPT", "CRYPTO", "Cardano", "XF000ADA0010",
+        shares="100",
+    )  # fmt: skip
+    import_history(client, history([gift]))
+    rows = [*STATEMENT_ROWS, ("100", "Cardano", "1", "0", "100", "100")]
+
+    def checks() -> dict[str, bool]:
+        recon = upload(client, rows, total="10.100")["reconciliations"][0]
+        return {c["name"]: c["ok"] for c in recon["cost_checks"]}
+
+    assert checks()["Cardano"] is True  # the statement and the history both have no cost
+    client.put("/api/costs/XF000ADA0010", json={"unit_cost": "5"})
+    cardano = by_name(client.get("/api/holdings").json())["Cardano"]
+    assert cardano["purchase_value"] == "500.00"  # the entered cost is in the cost basis
+    assert checks()["Cardano"] is True  # but the check still compares the broker's figures

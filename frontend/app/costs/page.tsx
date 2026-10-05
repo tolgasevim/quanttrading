@@ -80,7 +80,9 @@ function Row({ item, onChange }: { item: CostItem; onChange: (items: CostItem[])
           style={{ width: 110 }}
         />
         {valid && Number(item.open_units) > 0 && (
-          <div className="muted">{eur(parsed * Number(item.open_units))} for the units you hold</div>
+          <div className="muted">
+            about {eur(parsed * Number(item.open_units))} for the {qty(item.open_units)} units you hold
+          </div>
         )}
       </td>
       <td>
@@ -130,7 +132,7 @@ export default function CostsPage() {
         <h1>Missing costs</h1>
         <p>
           Trade Republic doesn&apos;t say what a spin-off, a rights issue or units transferred in
-          cost. Enter what <strong>one unit</strong> cost you, in euros. It is used for every such
+          cost. Enter what <strong>one unit</strong> cost you, in euros, as it was when you received it (if the instrument has split since, use the cost per unit before the split). It is used for every such
           unit of that instrument, whether you still hold it or have sold it, and flows into your cost
           basis, profit and loss, and the tax estimate. Leave it empty if you don&apos;t know:
           the figures are then flagged as overstated rather than guessed.
