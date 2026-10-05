@@ -160,6 +160,11 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
     inst = db.scalar(select(Instrument).where(Instrument.isin == isin))
     old_symbol = inst.symbols.get("yahoo") if inst is not None and inst.symbols else None
     settings = get_settings()
+    if "yahoo" not in settings.price_providers:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Tickers are Yahoo symbols, but QT_PRICE_PROVIDERS does not include yahoo",
+        )
     fetcher = make_fetcher(db, settings)
     try:
         providers = price_providers(settings.price_providers, fetcher)

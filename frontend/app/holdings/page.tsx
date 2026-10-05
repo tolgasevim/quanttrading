@@ -110,11 +110,10 @@ export default function HoldingsPage() {
         {data && data.review.unpriced > 0 && (
           <p className="notice">
             <strong>
-              {data.review.unpriced} open {data.review.unpriced === 1 ? "position has" : "positions have"} no
+              {data.review.unpriced} {data.review.unpriced === 1 ? "share or fund has" : "shares and funds have"} no
               market price.
             </strong>{" "}
-            Crypto is priced from your statement; for shares and funds, <a href="/prices">see which
-            tickers are missing</a>.
+            <a href="/prices">See which tickers are missing or have no recent price</a>.
           </p>
         )}
         {historyGap.length > 0 && (

@@ -68,8 +68,8 @@ def test_a_stored_euro_price_values_the_position(owner: TestClient, db: Session)
         "720.00",
         "119.40",
     )  # 6 x 120 - 600.60
-    # Alpha is priced; Spin Co and the two coins are not.
-    assert body["review"]["unpriced"] == 3
+    # Alpha is priced; Spin Co is not. The coins are not counted: they have no ticker.
+    assert body["review"]["unpriced"] == 1
 
 
 def test_a_foreign_price_is_converted_at_the_rate_of_its_own_day(
@@ -303,7 +303,7 @@ def test_a_price_far_older_than_the_newest_one_is_not_used(owner: TestClient, db
     body = owner.get("/api/holdings").json()
     assert by_name(body)["Alpha Corp"]["market_value"] is None  # a month old
     assert by_name(body)["Spin Co"]["market_value"] == "30.00"
-    assert body["review"]["unpriced"] == 3  # Alpha, Bitcoin, Ethereum
+    assert body["review"]["unpriced"] == 1  # Alpha; the coins are not counted
     assert statuses(owner)[A] == "stale" and statuses(owner)[SPIN] == "priced"
     add_price(db, stale, date(2026, 9, 28), "110")  # within ten days of the newest
     assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "110"
@@ -371,3 +371,21 @@ def test_tickers_are_only_for_shares_and_funds_and_keep_the_class_of_the_row(
     owner.put(f"/api/prices/{A}", json={"symbol": "SYM"})  # the position is a STOCK
     db.refresh(etf)
     assert etf.asset_class == "etf"  # a fund row stays a fund row
+
+
+def test_the_unpriced_count_ignores_positions_that_cannot_get_a_ticker(owner: TestClient) -> None:
+    body = owner.get("/api/holdings").json()
+    # Alpha and Spin Co are shares without a price. The two coins are not counted.
+    assert body["review"]["unpriced"] == 2
+
+
+def test_a_manual_ticker_needs_yahoo_among_the_price_providers(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.api import prices
+    from quant.config import Settings
+
+    monkeypatch.setattr(prices, "get_settings", lambda: Settings(price_providers=["stooq"]))
+    response = owner.put(f"/api/prices/{A}", json={"symbol": "ALPH"})
+    assert response.status_code == 409 and "QT_PRICE_PROVIDERS" in response.json()["detail"]
+    assert statuses(owner)[A] == "not_checked"  # nothing was changed
