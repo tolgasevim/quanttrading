@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from quant.api.deps import CurrentUser, UserDb
 from quant.models import UnitCost
@@ -84,12 +85,21 @@ def set_cost(isin: str, body: CostIn, user: CurrentUser, db: UserDb) -> CostsOut
     if entry is None:
         if isin not in service.known_isins(db, user.id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "no such instrument in your history")
-        entry = UnitCost(user_id=user.id, isin=isin, unit_cost=body.unit_cost)
-        db.add(entry)
-    entry.unit_cost = body.unit_cost
-    entry.note = body.note
-    entry.updated_at = datetime.now(UTC)
-    db.commit()
+        db.add(UnitCost(user_id=user.id, isin=isin, unit_cost=body.unit_cost, note=body.note))
+        try:
+            db.commit()
+        except IntegrityError:
+            # A second save of the same new instrument got there first (a double click, two
+            # tabs): change that entry instead.
+            db.rollback()
+            entry = _entry(db, user.id, isin)
+            if entry is None:
+                raise
+    if entry is not None:
+        entry.unit_cost = body.unit_cost
+        entry.note = body.note
+        entry.updated_at = datetime.now(UTC)
+        db.commit()
     return _out(service.build_cost_items(db, user.id))
 
 

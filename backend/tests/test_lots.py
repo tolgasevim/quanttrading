@@ -529,3 +529,16 @@ def test_an_entered_cost_carried_through_a_swap_is_plain_cost_afterwards() -> No
     new = position_costs(ledger.book({"OLD": D(3)}))["NEW"]
     assert new.cost == D(30) and FLAG_COST_UNKNOWN not in new.flags
     assert FLAG_COST_ENTERED not in new.flags and FLAG_CARRIED in new.flags
+
+
+def test_entering_a_cost_keeps_the_fee_paid_on_the_purchase() -> None:
+    # A buy with a fee but no amount or price: the cost is unknown, the fee is not.
+    ledger = Ledger()
+    ledger.rows.append(
+        Tx("A", "TRADING", "trade", "BUY", D(5), ledger._when(None), fee=D("-1.5"), tax=D("-0.5"))
+    )
+    open_lot = position_costs(ledger.book())["A"]
+    assert (open_lot.cost, open_lot.costs) == (D(0), D(2)) and FLAG_COST_UNKNOWN in open_lot.flags
+    entered = position_costs(ledger.book({"A": D(10)}))["A"]
+    assert (entered.cost, entered.costs) == (D(50), D(2))
+    assert FLAG_COST_UNKNOWN not in entered.flags

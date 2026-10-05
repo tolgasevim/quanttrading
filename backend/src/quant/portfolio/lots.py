@@ -271,8 +271,9 @@ class _Engine:
         if unit is None or not lot.flags & COST_MISSING:
             return lot
         flags = (lot.flags - COST_MISSING) | {FLAG_COST_ENTERED}
+        # Fees and transaction taxes paid on the purchase are real costs the owner is not asked for.
         return Lot(
-            lot.isin, lot.acquired, lot.quantity, lot.quantity * unit, ZERO, lot.origin, flags
+            lot.isin, lot.acquired, lot.quantity, lot.quantity * unit, lot.costs, lot.origin, flags
         )
 
     def add(self, lot: Lot) -> None:

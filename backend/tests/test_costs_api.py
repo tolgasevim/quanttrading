@@ -107,3 +107,25 @@ def test_costs_need_a_login(client: TestClient) -> None:
     assert client.get("/api/costs").status_code == 401
     assert client.put(f"/api/costs/{SPIN}", json={"unit_cost": "1"}).status_code == 401
     assert client.delete(f"/api/costs/{SPIN}").status_code == 401
+
+
+def test_a_second_save_that_races_the_first_updates_instead_of_failing(
+    owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.api import costs
+
+    assert owner.put(f"/api/costs/{SPIN}", json={"unit_cost": "10"}).status_code == 200
+    real = costs._entry
+    calls = {"n": 0}
+
+    def stale_first(db, user_id, isin):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return (
+            None if calls["n"] == 1 else real(db, user_id, isin)
+        )  # the other save's row is unseen
+
+    monkeypatch.setattr(costs, "_entry", stale_first)
+    response = owner.put(f"/api/costs/{SPIN}", json={"unit_cost": "20", "note": "second"})
+    assert response.status_code == 200
+    entry = {i["isin"]: i for i in response.json()["items"]}[SPIN]
+    assert (entry["unit_cost"], entry["note"]) == ("20", "second")
