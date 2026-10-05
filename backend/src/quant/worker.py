@@ -51,6 +51,8 @@ def run_mapping() -> None:
 def run_prices() -> None:
     settings = get_settings()
     with get_sessionmaker()() as session:
+        # Which instruments to fetch depends on what every user holds (FR-3 bypass).
+        rls.bypass(session)
         fetcher = make_fetcher(session, settings)
         try:
             providers = price_providers(settings.price_providers, fetcher)

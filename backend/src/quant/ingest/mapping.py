@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 # have no usable ticker.
 PRICEABLE = {"STOCK": "stock", "FUND": "etf"}
 NO_TICKER = "none"
+# After a partial answer (one resolver errored) an ISIN is asked about again after this long.
+PARTIAL_RETRY_DAYS = 1
 MANUAL = "manual"
 
 
@@ -39,7 +41,7 @@ class HeldIsin:
 
 def held_isins(session: Session) -> list[HeldIsin]:
     """Every priceable ISIN that at least one user still holds. A fully sold position needs no
-    price, so it gets no ticker lookup and no nightly price fetch.
+    price, so it gets no ticker lookup, and the price job skips it too (see `ingest_prices`).
 
     "Still held" is worked out like the position engine does it: all quantity rows of the ISIN
     count, whatever class the row itself carries (some rows have none), and a non-zero net is
@@ -101,9 +103,8 @@ def map_isins(
                 continue  # asked recently, still unknown
         result.attempted += 1
         listing, errors = _resolve(resolvers, held.isin)
-        if listing is None and errors:
-            # A resolver could not answer (network, rate limit), so "not found" from the others
-            # proves nothing. Remember nothing and ask again at the next run.
+        if listing is None and len(errors) == len(resolvers):
+            # Nobody could be asked (network, rate limit): remember nothing, ask again next run.
             result.errors[held.isin] = "; ".join(errors)
             continue
         # The lookup can take a while: read the row again, so a ticker an admin saved meanwhile
@@ -128,6 +129,11 @@ def map_isins(
             instrument.mapping_source = NO_TICKER
             instrument.active = False
             result.warnings[held.isin] = "no ticker found"
+            if errors:
+                # Only some resolvers could answer. Say "no ticker found" now, so the Prices page
+                # shows it and an admin can enter one, but ask again after a day, not a month.
+                instrument.mapped_at = now - timedelta(days=retry_days - PARTIAL_RETRY_DAYS)
+                result.warnings[held.isin] = f"no ticker found; {'; '.join(errors)}"
         session.add(instrument)
         try:
             session.commit()

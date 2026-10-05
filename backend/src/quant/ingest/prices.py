@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
+from quant.ingest.mapping import held_isins
 from quant.models import Instrument, PriceEOD
 from quant.providers.base import PriceProvider, PriceSeries, ProviderError, normalise_minor_units
 
@@ -82,7 +83,12 @@ def ingest_prices(
     query = select(Instrument).where(Instrument.active.is_(True)).order_by(Instrument.code)
     if codes:
         query = query.where(Instrument.code.in_(codes))
-    instruments = session.scalars(query).all()
+    instruments = list(session.scalars(query).all())
+    if not codes:
+        # A share nobody holds any more needs no nightly price. Seeded instruments (the benchmark,
+        # indices) are not tied to a holding and are always fetched.
+        held = {h.isin for h in held_isins(session)}
+        instruments = [i for i in instruments if i.mapping_source is None or i.isin in held]
     last_dates = dict(
         session.execute(
             select(PriceEOD.instrument_id, func.max(PriceEOD.date)).group_by(PriceEOD.instrument_id)

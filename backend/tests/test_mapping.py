@@ -120,19 +120,28 @@ def test_the_next_resolver_is_tried_when_one_fails(db: Session, held: list[HeldI
     assert A not in result.errors  # a fallback answered, nothing to report
 
 
-def test_not_found_counts_only_when_every_resolver_could_answer(
+def test_a_partial_answer_shows_no_ticker_now_and_is_asked_again_after_a_day(
     db: Session, held: list[HeldIsin]
 ) -> None:
     down = FakeResolver("yahoo", {}, fail=True)
     figi = FakeResolver("openfigi", {A: listing("ALPH", "openfigi")})
     result = map_isins(db, [down, figi], NOW, isins=held)
-    # OpenFIGI said "not found" for GAMMA, but Yahoo could not be asked: that proves nothing.
-    assert GAMMA in result.errors
-    assert db.scalar(select(Instrument).where(Instrument.isin == GAMMA)) is None
-    # With both able to answer, "not found" is remembered.
-    answered = map_isins(db, [FakeResolver("yahoo", {}), figi], NOW, isins=held)
+    # OpenFIGI said "not found" for GAMMA and Yahoo could not be asked: say "no ticker found" so
+    # the Prices page shows it, but remember that the answer was incomplete.
+    assert GAMMA not in result.errors and "yahoo: down" in result.warnings[GAMMA]
     other = db.scalar(select(Instrument).where(Instrument.isin == GAMMA))
-    assert other is not None and other.mapping_source == "none" and GAMMA in answered.warnings
+    assert other is not None and other.mapping_source == "none" and not other.active
+    figi.asked.clear()
+    map_isins(db, [down, figi], NOW + timedelta(hours=12), isins=held)
+    assert figi.asked == []  # not yet: half a day
+    map_isins(db, [FakeResolver("yahoo", {}), figi], NOW + timedelta(days=2), isins=held)
+    assert GAMMA in figi.asked  # a day on: asked again, not after 30 days
+    # A complete "not found" waits the full 30 days.
+    full = FakeResolver("yahoo", {})
+    map_isins(db, [full, figi], NOW + timedelta(days=2), isins=held)
+    full.asked.clear()
+    map_isins(db, [full, figi], NOW + timedelta(days=5), isins=held)
+    assert full.asked == []
 
 
 def test_when_nobody_can_be_asked_nothing_is_remembered(db: Session, held: list[HeldIsin]) -> None:
@@ -164,7 +173,9 @@ class OnePrice:
         return PriceSeries(self.currency, [Bar(date=end, close=D("12.5"))])
 
 
-def test_a_mapped_instrument_takes_the_currency_the_provider_reports(db: Session) -> None:
+def test_a_mapped_instrument_takes_the_currency_the_provider_reports(
+    db: Session, held: list[HeldIsin]
+) -> None:
     mapped = Instrument(code=A, isin=A, name="Alpha", asset_class="stock", currency="EUR",
                         symbols={"yahoo": "ALPH"}, mapping_source="yahoo")  # fmt: skip
     seeded = Instrument(code="SEEDED", isin=B, name="Seeded", asset_class="stock", currency="EUR",
@@ -208,7 +219,7 @@ def test_a_ticker_saved_during_a_lookup_is_not_overwritten(
 
 
 def test_a_mapped_instrument_without_a_reported_currency_is_not_priced_blindly(
-    db: Session,
+    db: Session, held: list[HeldIsin]
 ) -> None:
     mapped = Instrument(code=A, isin=A, name="Alpha", asset_class="stock", currency="EUR",
                         symbols={"yahoo": "ALPH"}, mapping_source="yahoo")  # fmt: skip
@@ -243,3 +254,31 @@ def test_held_isins_follow_the_position_engine_when_a_row_has_no_class(
     isins = {h.isin: h for h in held_isins(db)}
     assert delta not in isins  # nothing left to price
     assert echo in isins and isins[echo].asset_class == "stock"
+
+
+class Recording:
+    name = "yahoo"
+
+    def __init__(self) -> None:
+        self.symbols: list[str] = []
+
+    def fetch_eod(self, symbol: str, start: date, end: date) -> PriceSeries:
+        self.symbols.append(symbol)
+        return PriceSeries("EUR", [Bar(date=end, close=D("1"))])
+
+
+def test_the_price_job_skips_instruments_nobody_holds_any_more(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    for isin, symbol in ((A, "ALPH"), (B, "BETA")):  # B was sold in full
+        db.add(Instrument(code=isin, isin=isin, name=isin, asset_class="stock", currency="EUR",
+                          symbols={"yahoo": symbol}, mapping_source="yahoo"))  # fmt: skip
+    db.add(Instrument(code="NDX", name="Index", asset_class="index", currency="USD",
+                      symbols={"yahoo": "^NDX"}))  # fmt: skip
+    db.commit()
+    provider = Recording()
+    ingest_prices(db, [provider], date(2026, 10, 6), 30)
+    assert sorted(provider.symbols) == ["ALPH", "^NDX"]  # a seeded one is always fetched
+    only_b = Recording()
+    ingest_prices(db, [only_b], date(2026, 10, 6), 30, codes=[B])
+    assert only_b.symbols == ["BETA"]  # asked for by name: fetched
