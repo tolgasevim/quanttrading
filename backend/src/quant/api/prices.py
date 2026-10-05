@@ -210,10 +210,16 @@ def _change_ticker(
         if inst is None:
             inst = Instrument(code=isin, isin=isin, currency=series.currency, symbols={})
             db.add(inst)
-        if old_symbol is not None:
-            # The stored prices belong to the old ticker (maybe in another currency).
+        currency_changed = inst.currency != series.currency
+        if old_symbol is not None or currency_changed:
+            # The stored prices belong to the old ticker, or are in another currency: they would
+            # mix with the new ones. The other providers' symbols belonged to the old ticker.
             db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
-        inst.symbols = {"yahoo": symbol}  # the other providers' symbols belonged to the old one
+            inst.symbols = {"yahoo": symbol}
+        else:
+            # A row that had no Yahoo ticker (for example a seeded Stooq-only one) in the same
+            # currency: its prices and symbols still fit, so keep them.
+            inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
         inst.currency = series.currency
         _fill(inst, position, symbol)
         db.flush()

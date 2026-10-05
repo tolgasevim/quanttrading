@@ -467,3 +467,32 @@ def test_a_new_ticker_without_a_currency_changes_nothing(
     db.refresh(inst)
     assert inst.symbols == {"yahoo": "OLD"} and inst.currency == "USD"
     assert db.query(PriceEOD).filter_by(instrument_id=inst.id).one().close == D("150")
+
+
+def test_a_row_without_a_yahoo_ticker_keeps_prices_in_the_same_currency_and_drops_other_currencies(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = Instrument(code=A, isin=A, name="Alpha", asset_class="stock", currency="EUR",
+                      symbols={"stooq": "a.de"})  # fmt: skip
+    db.add(inst)
+    db.commit()
+    add_price(db, inst, date(2025, 1, 2), "90")  # EUR, before the new history starts
+    series = PriceSeries("EUR", [Bar(date=date(2026, 10, 2), close=D("120"))])
+    use_provider(monkeypatch, FakeProvider(series))
+    assert owner.put(f"/api/prices/{A}", json={"symbol": "ALPH.DE"}).status_code == 200
+    db.refresh(inst)
+    assert inst.symbols == {"stooq": "a.de", "yahoo": "ALPH.DE"}  # the same security: kept
+    assert db.query(PriceEOD).filter_by(instrument_id=inst.id).count() == 2
+
+    other = Instrument(code="OTHER", isin=SPIN, name="Spin", asset_class="stock", currency="EUR",
+                       symbols={"stooq": "s.us"})  # fmt: skip
+    db.add(other)
+    db.commit()
+    add_price(db, other, date(2025, 1, 2), "5")  # EUR history of an instrument now quoted in USD
+    use_provider(monkeypatch, FakeProvider(PriceSeries("USD", [Bar(date(2026, 10, 2), D("7"))])))
+    add_fx(db, "USD", date(2026, 10, 1), "1.25")
+    # The EUR rows must not survive a switch to USD.
+    owner.put(f"/api/prices/{SPIN}", json={"symbol": "SPN"})
+    db.refresh(other)
+    rows = db.query(PriceEOD).filter_by(instrument_id=other.id).all()
+    assert {r.currency for r in rows} == {"USD"} and other.symbols == {"yahoo": "SPN"}

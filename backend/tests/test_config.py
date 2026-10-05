@@ -23,3 +23,15 @@ def test_full_url_still_supported() -> None:
         5433,
         "x",
     )
+
+
+def test_list_settings_take_a_comma_list_or_json(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("QT_ISIN_RESOLVERS", "yahoo,openfigi")
+    monkeypatch.setenv("QT_PRICE_PROVIDERS", '["yahoo", "stooq"]')
+    settings = Settings()
+    assert settings.isin_resolvers == ["yahoo", "openfigi"]  # the form .env.example documents
+    assert settings.price_providers == ["yahoo", "stooq"]  # the older JSON form still works
+    monkeypatch.setenv("QT_ISIN_RESOLVERS", " openfigi , ")
+    assert Settings().isin_resolvers == ["openfigi"]
+    monkeypatch.delenv("QT_ISIN_RESOLVERS")
+    assert Settings().isin_resolvers == ["yahoo", "openfigi"]  # the default
