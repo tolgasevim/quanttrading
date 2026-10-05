@@ -68,8 +68,8 @@ def test_a_stored_euro_price_values_the_position(owner: TestClient, db: Session)
         "720.00",
         "119.40",
     )  # 6 x 120 - 600.60
-    # Alpha is priced; Spin Co is not. The coins are not counted: they have no ticker.
-    assert body["review"]["unpriced"] == 1
+    # Alpha is priced; Spin Co and the two coins are not.
+    assert body["review"]["unpriced"] == 3
 
 
 def test_a_foreign_price_is_converted_at_the_rate_of_its_own_day(
@@ -127,7 +127,7 @@ def statuses(client: TestClient) -> dict[str, str]:
 
 def test_each_open_position_has_a_price_status(owner: TestClient, db: Session) -> None:
     assert statuses(owner)[A] == "not_checked" and statuses(owner)[SPIN] == "not_checked"
-    assert statuses(owner)[BTC] == "unsupported"  # crypto is priced from the statement
+    assert statuses(owner)[BTC] == "not_checked"  # a coin is looked up like a share
     add_instrument(db, SPIN, source="none", active=False, symbol=None)
     assert statuses(owner)[SPIN] == "unmapped"
     add_instrument(db, A)
@@ -145,9 +145,8 @@ def test_each_open_position_has_a_price_status(owner: TestClient, db: Session) -
 
 
 class FakeProvider:
-    name = "yahoo"
-
-    def __init__(self, series: PriceSeries | None, fail: bool = False) -> None:
+    def __init__(self, series: PriceSeries | None, fail: bool = False, name: str = "yahoo") -> None:
+        self.name = name
         self.series = series
         self.fail = fail
 
@@ -170,7 +169,7 @@ def use_provider(monkeypatch: pytest.MonkeyPatch, provider: FakeProvider) -> Non
     from quant.api import prices
 
     monkeypatch.setattr(prices, "make_fetcher", lambda db, settings: Closable())
-    monkeypatch.setattr(prices, "price_providers", lambda names, fetcher: [provider])
+    monkeypatch.setattr(prices, "price_providers", lambda names, fetcher, key=None: [provider])
 
 
 def test_an_admin_can_enter_a_symbol_and_gets_prices_at_once(
@@ -303,7 +302,7 @@ def test_a_price_far_older_than_the_newest_one_is_not_used(owner: TestClient, db
     body = owner.get("/api/holdings").json()
     assert by_name(body)["Alpha Corp"]["market_value"] is None  # a month old
     assert by_name(body)["Spin Co"]["market_value"] == "30.00"
-    assert body["review"]["unpriced"] == 1  # Alpha; the coins are not counted
+    assert body["review"]["unpriced"] == 3  # Alpha and the two coins
     assert statuses(owner)[A] == "stale" and statuses(owner)[SPIN] == "priced"
     add_price(db, stale, date(2026, 9, 28), "110")  # within ten days of the newest
     assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "110"
@@ -350,7 +349,7 @@ def test_a_rate_that_is_far_older_than_the_price_is_not_used(
     assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "100"  # 9000 / 90
 
 
-def test_tickers_are_only_for_shares_and_funds_and_keep_the_class_of_the_row(
+def test_a_fund_row_keeps_its_class_and_a_coin_row_keeps_its_symbols(
     owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     use_provider(monkeypatch, FakeProvider(None, fail=True))
@@ -358,7 +357,9 @@ def test_tickers_are_only_for_shares_and_funds_and_keep_the_class_of_the_row(
                         symbols={"yahoo": "BTC-EUR"})  # fmt: skip
     db.add(seeded)
     db.commit()
-    assert owner.put(f"/api/prices/{BTC}", json={"symbol": "X"}).status_code == 422
+    # A Yahoo-style ticker is not a coin id, and a failed fetch changes nothing.
+    assert owner.put(f"/api/prices/{BTC}", json={"symbol": "BTC-EUR"}).status_code == 422
+    assert owner.put(f"/api/prices/{BTC}", json={"symbol": "bitcoin"}).status_code == 502
     db.refresh(seeded)
     assert (seeded.asset_class, seeded.symbols, seeded.mapping_source) == (
         "crypto",
@@ -373,10 +374,63 @@ def test_tickers_are_only_for_shares_and_funds_and_keep_the_class_of_the_row(
     assert etf.asset_class == "etf"  # a fund row stays a fund row
 
 
-def test_the_unpriced_count_ignores_positions_that_cannot_get_a_ticker(owner: TestClient) -> None:
-    body = owner.get("/api/holdings").json()
-    # Alpha and Spin Co are shares without a price. The two coins are not counted.
-    assert body["review"]["unpriced"] == 2
+COIN_SERIES = PriceSeries("EUR", [Bar(date=date(2026, 10, 2), close=D("50000"))])
+
+
+def test_an_admin_can_enter_a_coingecko_id_for_a_coin(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_provider(monkeypatch, FakeProvider(COIN_SERIES, name="coingecko"))
+    response = owner.put(f"/api/prices/{BTC}", json={"symbol": "bitcoin"})
+    assert response.status_code == 200, response.text
+    item = {i["isin"]: i for i in response.json()["items"]}[BTC]
+    assert (item["status"], item["symbol"], item["mapping_source"], item["currency"]) == (
+        "priced",
+        "bitcoin",
+        "manual",
+        "EUR",
+    )
+    inst = db.query(Instrument).filter_by(isin=BTC).one()
+    assert inst.symbols == {"coingecko": "bitcoin"} and inst.asset_class == "crypto"
+    # 0.1 BTC at 50,000 EUR with no exchange rate involved; it cost 4,000.
+    bitcoin = by_name(owner.get("/api/holdings").json())["Bitcoin"]
+    assert (bitcoin["market_value"], bitcoin["unrealised_pnl"]) == ("5000.00", "1000.00")
+
+
+def test_a_coin_id_is_checked_before_anything_is_fetched(
+    owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_provider(monkeypatch, FakeProvider(COIN_SERIES, name="coingecko"))
+    for bad in ["Bitcoin", "bit coin", "../x", "BTC-EUR"]:
+        response = owner.put(f"/api/prices/{BTC}", json={"symbol": bad})
+        assert response.status_code == 422 and "coin id" in response.json()["detail"]
+    assert statuses(owner)[BTC] == "not_checked"
+
+
+def test_a_coin_ticker_needs_coingecko_among_the_price_providers(
+    owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.api import prices
+    from quant.config import Settings
+
+    monkeypatch.setattr(prices, "get_settings", lambda: Settings(price_providers=["yahoo"]))
+    response = owner.put(f"/api/prices/{BTC}", json={"symbol": "bitcoin"})
+    assert response.status_code == 409 and "coingecko" in response.json()["detail"]
+    assert statuses(owner)[BTC] == "unsupported"  # coins are off: the statement prices them
+
+
+def test_the_unpriced_count_covers_coins_only_while_coingecko_is_on(
+    owner: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.api import holdings
+    from quant.config import Settings
+
+    # Alpha and Spin Co are shares without a price; the two coins have none either.
+    assert owner.get("/api/holdings").json()["review"]["unpriced"] == 4
+    monkeypatch.setattr(
+        holdings, "get_settings", lambda: Settings(price_providers=["yahoo", "stooq"])
+    )
+    assert owner.get("/api/holdings").json()["review"]["unpriced"] == 2  # coins are off
 
 
 def test_a_manual_ticker_needs_yahoo_among_the_price_providers(

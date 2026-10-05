@@ -14,7 +14,7 @@ from quant.providers.base import Bar, PriceSeries, ProviderError
 from quant.providers.resolvers import Listing
 
 from .conftest import login
-from .test_holdings_pnl_api import SPIN, A, B, history, import_history, row
+from .test_holdings_pnl_api import BTC, ETH, SPIN, A, B, history, import_history, row
 
 NOW = datetime(2026, 10, 6, 12, 0, tzinfo=UTC)
 FUND = "IE0000000030"
@@ -57,10 +57,11 @@ def held(client: TestClient, admin, db: Session) -> list[HeldIsin]:  # type: ign
 
 def test_only_priceable_isins_that_are_still_held_are_listed(held: list[HeldIsin]) -> None:
     by_isin = {h.isin: h for h in held}
-    # Not the coins, not the cash-only ISIN, and not Beta, which was sold in full.
-    assert set(by_isin) == {A, GAMMA, SPIN, FUND}
+    # The two coins are held too, and priced; not the cash-only ISIN, and not Beta, sold in full.
+    assert set(by_isin) == {A, GAMMA, SPIN, FUND, BTC, ETH}
     assert B not in by_isin
     assert by_isin[A].asset_class == "stock" and by_isin[FUND].asset_class == "etf"
+    assert by_isin[BTC].asset_class == "crypto" and by_isin[BTC].name == "Bitcoin"
     assert by_isin[A].name == "Alpha Corp"
 
 
@@ -282,3 +283,81 @@ def test_the_price_job_skips_instruments_nobody_holds_any_more(
     only_b = Recording()
     ingest_prices(db, [only_b], date(2026, 10, 6), 30, codes=[B])
     assert only_b.symbols == ["BETA"]  # asked for by name: fetched
+
+
+class FakeCoins:
+    name = "coingecko"
+
+    def __init__(self, answers: dict[str, str], fail: bool = False) -> None:
+        self.answers = answers
+        self.fail = fail
+        self.asked: list[tuple[str, str | None]] = []
+
+    def resolve(self, isin: str, name: str | None) -> Listing | None:
+        self.asked.append((isin, name))
+        if self.fail:
+            raise ProviderError("coingecko: down")
+        coin = self.answers.get(name or "")
+        if coin is None:
+            return None
+        return Listing(coin, name, None, "coingecko", provider="coingecko")
+
+
+def test_a_coin_is_looked_up_by_name_and_priced_from_coingecko(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    shares = FakeResolver("yahoo", {A: listing("ALPH", "yahoo")})
+    coins = FakeCoins({"Bitcoin": "bitcoin"})
+    result = map_isins(db, [shares], NOW, isins=held, crypto=[coins])
+    btc = db.scalar(select(Instrument).where(Instrument.isin == BTC))
+    assert btc is not None
+    assert (btc.symbols, btc.asset_class, btc.currency, btc.mapping_source, btc.active) == (
+        {"coingecko": "bitcoin"},
+        "crypto",
+        "EUR",
+        "coingecko",
+        True,
+    )
+    assert coins.asked == [(BTC, "Bitcoin"), (ETH, "Ethereum")]  # coins only, by name
+    assert BTC not in shares.asked and ETH not in shares.asked  # a coin is not an ISIN lookup
+    assert set(result.warnings) >= {ETH}  # Ethereum was not found
+    eth = db.scalar(select(Instrument).where(Instrument.isin == ETH))
+    assert eth is not None and (eth.active, eth.mapping_source) == (False, "none")
+
+
+def test_coins_are_left_alone_when_coin_prices_are_off(db: Session, held: list[HeldIsin]) -> None:
+    shares = FakeResolver("yahoo", {})
+    result = map_isins(db, [shares], NOW, isins=held)  # no coin resolvers
+    assert db.scalar(select(Instrument).where(Instrument.isin == BTC)) is None
+    assert result.attempted == 4  # the shares and the fund only
+
+
+def test_a_coin_lookup_that_fails_is_remembered_nowhere(db: Session, held: list[HeldIsin]) -> None:
+    coins = FakeCoins({}, fail=True)
+    result = map_isins(db, [FakeResolver("yahoo", {})], NOW, isins=held, crypto=[coins])
+    assert db.scalar(select(Instrument).where(Instrument.isin == BTC)) is None
+    assert "coingecko: down" in result.errors[BTC]
+
+
+def test_the_price_job_stores_euro_prices_for_a_mapped_coin(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    map_isins(
+        db, [FakeResolver("yahoo", {})], NOW, isins=held, crypto=[FakeCoins({"Bitcoin": "bitcoin"})]
+    )
+
+    class Gecko:
+        name = "coingecko"
+
+        def fetch_eod(self, symbol: str, start: date, end: date) -> PriceSeries:
+            assert symbol == "bitcoin"
+            return PriceSeries("EUR", [Bar(date=date(2026, 10, 5), close=D("55000.5"))])
+
+    result = ingest_prices(db, [Gecko()], date(2026, 10, 5), 400, codes=[BTC])
+    assert result.errors == {} and result.rows_written == 1
+    price = db.scalar(select(PriceEOD))
+    assert price is not None and (price.close, price.currency, price.source) == (
+        D("55000.5"),
+        "EUR",
+        "coingecko",
+    )

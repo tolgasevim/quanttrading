@@ -36,9 +36,11 @@ class Settings(BaseSettings):
     # Data providers, tried in order (PRD §8). Swapping providers is a config change.
     # A list setting takes either a comma list (yahoo,stooq) or JSON (["yahoo","stooq"]).
     price_providers: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["yahoo", "stooq"]
+        default_factory=lambda: ["yahoo", "stooq", "coingecko"]
     )
     fx_provider: str = "ecb"
+    # CoinGecko prices crypto in euros. It works without a key; a free demo key raises the limit.
+    coingecko_api_key: str | None = None
     # ISIN -> ticker resolvers, tried in order (FR-12). OpenFIGI works without a key at a lower
     # rate limit; a free key (QT_OPENFIGI_API_KEY) raises it.
     isin_resolvers: Annotated[list[str], NoDecode] = Field(

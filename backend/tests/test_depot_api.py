@@ -70,7 +70,7 @@ def test_the_statement_price_becomes_the_market_value(owner: TestClient) -> None
         "900.00",
         "299.40",
     )
-    assert body["review"]["unpriced"] == 0
+    assert body["review"]["unpriced"] == 2  # the two coins: the depot statement has none
 
 
 def test_mismatch_ghost_and_unknown_position_go_to_the_review_queue(owner: TestClient) -> None:

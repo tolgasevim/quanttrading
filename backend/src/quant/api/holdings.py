@@ -238,6 +238,7 @@ def _realised(holdings: service.Holdings) -> RealisedOut:
 
 
 def _out(holdings: service.Holdings) -> HoldingsOut:
+    coins_priced = "coingecko" in get_settings().price_providers
     by_class: dict[str, int] = {}
     for p in holdings.positions:
         key = p.asset_class or "UNKNOWN"
@@ -267,11 +268,14 @@ def _out(holdings: service.Holdings) -> HoldingsOut:
         ],
         realised=_realised(holdings),
         review=ReviewSummaryOut(
-            # Only shares and funds can get a ticker; crypto, bonds and the rest are not counted.
+            # Shares, funds and coins can get a market price; bonds and the rest are not counted.
+            # A coin counts only while CoinGecko is among the price providers.
             unpriced=sum(
                 1
                 for p in holdings.positions
-                if p.asset_class in PRICEABLE and p.isin not in holdings.marks
+                if p.asset_class in PRICEABLE
+                and (p.asset_class != "CRYPTO" or coins_priced)
+                and p.isin not in holdings.marks
             ),
             cost_unknown=sum(1 for c in holdings.costs.values() if FLAG_COST_UNKNOWN in c.flags),
             unattributed_cash=[

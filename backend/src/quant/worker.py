@@ -22,7 +22,7 @@ from quant.ingest.mapping import map_isins
 from quant.ingest.prices import ingest_prices
 from quant.ingest.runtime import make_fetcher, today_local
 from quant.models import JobRun, JobStatus
-from quant.providers.registry import fx_provider, isin_resolvers, price_providers
+from quant.providers.registry import crypto_resolvers, fx_provider, isin_resolvers, price_providers
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,9 @@ def run_mapping() -> None:
                     isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key),
                     datetime.now(UTC),
                     settings.isin_retry_days,
+                    crypto=crypto_resolvers(
+                        settings.price_providers, fetcher, settings.coingecko_api_key
+                    ),
                 ),
             )
         finally:
@@ -66,7 +69,7 @@ def run_prices() -> None:
                 PRICES_JOB,
                 lambda s: ingest_prices(
                     s,
-                    price_providers(settings.price_providers, fetcher),
+                    price_providers(settings.price_providers, fetcher, settings.coingecko_api_key),
                     today_local(settings).date(),
                     settings.backfill_days,
                 ),

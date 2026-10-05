@@ -113,7 +113,7 @@ export default function HoldingsPage() {
         {data && data.review.unpriced > 0 && (
           <p className="notice">
             <strong>
-              {data.review.unpriced} {data.review.unpriced === 1 ? "share or fund has" : "shares and funds have"} no
+              {data.review.unpriced} {data.review.unpriced === 1 ? "position has" : "positions have"} no
               market price.
             </strong>{" "}
             <a href="/prices">See which tickers are missing or have no recent price</a>.

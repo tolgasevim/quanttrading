@@ -7,8 +7,10 @@ marked `none`, shown on the Prices page, where an admin can enter the symbol by 
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import cast
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
@@ -18,14 +20,14 @@ from quant.ingest.jobs import JobResult
 from quant.models import Instrument, Transaction
 from quant.portfolio.positions import DUST, QUANTITY_CATEGORIES
 from quant.providers.base import ProviderError
-from quant.providers.resolvers import IsinResolver, Listing
+from quant.providers.resolvers import CryptoResolver, IsinResolver, Listing
 
 log = logging.getLogger(__name__)
 
-# TR's asset classes that have a listed price, and the instrument class they become. Crypto is
-# priced from the broker statement (and later CoinGecko); bonds, private funds and knock-outs
-# have no usable ticker.
-PRICEABLE = {"STOCK": "stock", "FUND": "etf"}
+# TR's asset classes that have a market price, and the instrument class they become. Shares and
+# funds get a Yahoo ticker from their ISIN; a coin gets a CoinGecko id from its name. Bonds,
+# private funds and knock-outs have no usable ticker.
+PRICEABLE = {"STOCK": "stock", "FUND": "etf", "CRYPTO": "crypto"}
 NO_TICKER = "none"
 # After a partial answer (one resolver errored) an ISIN is asked about again after this long.
 PARTIAL_RETRY_DAYS = 1
@@ -36,7 +38,7 @@ MANUAL = "manual"
 class HeldIsin:
     isin: str
     name: str | None
-    asset_class: str  # the instrument class: "stock" or "etf"
+    asset_class: str  # the instrument class: "stock", "etf" or "crypto"
 
 
 def held_isins(session: Session) -> list[HeldIsin]:
@@ -70,13 +72,19 @@ def held_isins(session: Session) -> list[HeldIsin]:
     ]
 
 
-def _resolve(resolvers: list[IsinResolver], isin: str) -> tuple[Listing | None, list[str]]:
+def _resolve(
+    resolvers: Sequence[IsinResolver] | Sequence[CryptoResolver], held: HeldIsin
+) -> tuple[Listing | None, list[str]]:
     """The first listing any resolver finds, plus the errors of resolvers that failed. Without a
-    listing, an empty error list means every resolver answered "not found"."""
+    listing, an empty error list means every resolver answered "not found". A coin is looked up
+    by the name the broker gives it."""
     errors: list[str] = []
     for resolver in resolvers:
         try:
-            listing = resolver.resolve(isin)
+            if held.asset_class == "crypto":
+                listing = cast(CryptoResolver, resolver).resolve(held.isin, held.name)
+            else:
+                listing = cast(IsinResolver, resolver).resolve(held.isin)
         except ProviderError as exc:
             errors.append(str(exc))
             continue
@@ -91,6 +99,7 @@ def map_isins(
     now: datetime,
     retry_days: int = 30,
     isins: list[HeldIsin] | None = None,
+    crypto: Sequence[CryptoResolver] = (),
 ) -> JobResult:
     if not resolvers:
         # Without a resolver "every resolver failed" would be true for every ISIN: say what is
@@ -99,6 +108,10 @@ def map_isins(
     result = JobResult()
     existing = {i.isin: i for i in session.scalars(select(Instrument)) if i.isin}
     for held in isins if isins is not None else held_isins(session):
+        is_coin = held.asset_class == "crypto"
+        pool: Sequence[IsinResolver] | Sequence[CryptoResolver] = crypto if is_coin else resolvers
+        if not pool:
+            continue  # coin prices are switched off: leave the position to the statement
         known = existing.get(held.isin)
         if known is not None:
             if known.mapping_source != NO_TICKER:
@@ -106,8 +119,8 @@ def map_isins(
             if known.mapped_at and known.mapped_at > now - timedelta(days=retry_days):
                 continue  # asked recently, still unknown
         result.attempted += 1
-        listing, errors = _resolve(resolvers, held.isin)
-        if listing is None and len(errors) == len(resolvers):
+        listing, errors = _resolve(pool, held)
+        if listing is None and len(errors) == len(pool):
             # Nobody could be asked (network, rate limit): remember nothing, ask again next run.
             result.errors[held.isin] = "; ".join(errors)
             continue
@@ -125,7 +138,7 @@ def map_isins(
         instrument.asset_class = held.asset_class
         instrument.mapped_at = now
         if listing is not None:
-            instrument.symbols = {"yahoo": listing.symbol}
+            instrument.symbols = {listing.provider: listing.symbol}
             instrument.mapping_source = listing.source
             instrument.active = True
         else:
