@@ -21,7 +21,10 @@ const STATUS_TEXT: Record<Finding["status"], string> = {
   not_on_statement: "In your history, not on the statement",
 };
 
-const SOURCE_TEXT: Record<string, string> = { tr_crypto_statement: "Crypto statement" };
+const SOURCE_TEXT: Record<string, string> = {
+  tr_crypto_statement: "Crypto statement",
+  tr_depot_statement: "Securities statement",
+};
 
 const FLAG_TEXT: Record<Position["cost_flags"][number], string> = {
   cost_unknown: "cost not given by the broker",
@@ -58,7 +61,7 @@ export default function HoldingsPage() {
     setBusy(true);
     setError("");
     try {
-      setData(await uploadFile<Holdings>("/api/holdings/statements/crypto", file));
+      setData(await uploadFile<Holdings>("/api/holdings/statements", file));
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "Upload failed.");
     } finally {
@@ -144,15 +147,16 @@ export default function HoldingsPage() {
         <h2>Check against a statement</h2>
         <div className="card">
           <p>
-            Upload the <em>Crypto-Übersicht</em> PDF from Trade Republic (Profile → Documents). The
-            app compares it with the holdings below, checks the purchase value it prints against the
-            cost rebuilt from your history, and lists every difference. The file is read and
+            Upload the <em>Depotauszug</em> (securities) or the <em>Crypto-Übersicht</em> (crypto) PDF
+            from Trade Republic (Profile → Documents). The app tells which one it is, compares it
+            with the holdings below, and lists every difference. The crypto statement also gives a
+            purchase value, which the app checks against the cost rebuilt from your history. The
+            securities statement gives the broker's price for each position. The file is read and
             discarded; your name and account number are never stored.
           </p>
           <input type="file" accept="application/pdf,.pdf" onChange={onFile} disabled={busy} />
           {busy && <p className="muted">Reading…</p>}
           {error && <p className="error">{error}</p>}
-          <p className="muted">The securities statement (Depotauszug) check follows in the next update.</p>
         </div>
 
         {data?.reconciliations.map((r) => {

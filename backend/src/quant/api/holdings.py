@@ -1,4 +1,4 @@
-"""Holdings and statement reconciliation (FR-10c, FR-11b, FR-19)."""
+"""Holdings and statement reconciliation (FR-10c, FR-11, FR-11b, FR-19)."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -8,7 +8,8 @@ from pydantic import BaseModel
 
 from quant.api.deps import CurrentUser, UserDb
 from quant.config import get_settings
-from quant.importers import tr_crypto_pdf
+from quant.importers import tr_crypto_pdf, tr_depot_pdf
+from quant.importers.statement_pdf import StatementFormatError, extract_text
 from quant.ingest.mapping import PRICEABLE
 from quant.models import Snapshot
 from quant.portfolio import service
@@ -292,31 +293,63 @@ def get_holdings(user: CurrentUser, db: UserDb) -> HoldingsOut:
     return _out(service.build_holdings(db, user.id))
 
 
-@router.post("/statements/crypto", response_model=HoldingsOut, status_code=status.HTTP_201_CREATED)
-def upload_crypto_statement(file: UploadFile, user: CurrentUser, db: UserDb) -> HoldingsOut:
-    # A plain `def`: FastAPI runs it in a worker thread, so parsing a PDF never blocks other
-    # requests.
+def _read_pdf(file: UploadFile) -> bytes:
     limit = get_settings().max_upload_mb * 1024 * 1024
     data = file.file.read(limit + 1)
     if len(data) > limit:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "file is too large")
     if not data.startswith(PDF_MAGIC):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "this file is not a PDF")
-    try:
-        statement = tr_crypto_pdf.parse_text(tr_crypto_pdf.extract_text(data))
-    except tr_crypto_pdf.StatementFormatError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    return data
 
-    db.add(
-        Snapshot(
-            user_id=user.id,
-            source=tr_crypto_pdf.SOURCE,
-            as_of=statement.as_of,
-            lines=[line.to_json() for line in statement.lines],
-            footer_count=statement.footer_count,
-            footer_total=statement.footer_total,
-            created_at=datetime.now(UTC),
-        )
+
+def _snapshot(
+    source: str, statement: tr_crypto_pdf.CryptoStatement | tr_depot_pdf.DepotStatement
+) -> Snapshot:
+    return Snapshot(
+        source=source,
+        as_of=statement.as_of,
+        lines=[line.to_json() for line in statement.lines],
+        footer_count=statement.footer_count,
+        footer_total=statement.footer_total,
+        created_at=datetime.now(UTC),
     )
+
+
+def _import_statement(
+    kind: str | None, file: UploadFile, user: CurrentUser, db: UserDb
+) -> HoldingsOut:
+    """Parse an uploaded statement and keep its table rows. `kind` None: tell from the text."""
+    data = _read_pdf(file)
+    try:
+        text = extract_text(data)
+        if kind is None:
+            kind = "depot" if tr_depot_pdf.is_depot_text(text) else "crypto"
+        if kind == "depot":
+            snapshot = _snapshot(tr_depot_pdf.SOURCE, tr_depot_pdf.parse_text(text))
+        else:
+            snapshot = _snapshot(tr_crypto_pdf.SOURCE, tr_crypto_pdf.parse_text(text))
+    except StatementFormatError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    snapshot.user_id = user.id
+    db.add(snapshot)
     db.commit()
     return _out(service.build_holdings(db, user.id))
+
+
+# Plain `def` handlers: FastAPI runs them in a worker thread, so parsing a PDF never blocks other
+# requests.
+@router.post("/statements", response_model=HoldingsOut, status_code=status.HTTP_201_CREATED)
+def upload_statement(file: UploadFile, user: CurrentUser, db: UserDb) -> HoldingsOut:
+    """A Depotauszug or a Crypto-Übersicht: the text says which."""
+    return _import_statement(None, file, user, db)
+
+
+@router.post("/statements/crypto", response_model=HoldingsOut, status_code=status.HTTP_201_CREATED)
+def upload_crypto_statement(file: UploadFile, user: CurrentUser, db: UserDb) -> HoldingsOut:
+    return _import_statement("crypto", file, user, db)
+
+
+@router.post("/statements/depot", response_model=HoldingsOut, status_code=status.HTTP_201_CREATED)
+def upload_depot_statement(file: UploadFile, user: CurrentUser, db: UserDb) -> HoldingsOut:
+    return _import_statement("depot", file, user, db)

@@ -5,6 +5,7 @@ becomes an item in the review queue.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -58,11 +59,51 @@ def find_by_name(positions: list[Position], name: str) -> Position | None:
     return matches[0] if len(matches) == 1 else None
 
 
+# Whether a statement speaks for an asset class (None: the class is not known).
+Scope = Callable[[str | None], bool]
+
+
+def classes(*names: str) -> Scope:
+    """A scope of the named asset classes only."""
+    wanted = frozenset(names)
+    return lambda asset_class: asset_class in wanted
+
+
+def all_but(*names: str) -> Scope:
+    """A scope of everything except the named classes, including positions of unknown class."""
+    unwanted = frozenset(names)
+    return lambda asset_class: asset_class not in unwanted
+
+
+def merge_lines(lines: list[StatementLine]) -> list[StatementLine]:
+    """Lines with the same ISIN (a holding split over two lots at the broker) are one position."""
+    merged: dict[str, StatementLine] = {}
+    out: list[StatementLine] = []
+    for line in lines:
+        if line.isin is None:
+            out.append(line)
+        elif line.isin not in merged:
+            merged[line.isin] = line
+            out.append(line)
+        else:
+            first = merged[line.isin]
+            combined = StatementLine(
+                first.name,
+                first.quantity + line.quantity,
+                first.isin,
+                None
+                if first.value_eur is None or line.value_eur is None
+                else first.value_eur + line.value_eur,
+            )
+            out[out.index(first)] = merged[line.isin] = combined
+    return out
+
+
 def reconcile(
-    positions: list[Position], lines: list[StatementLine], asset_classes: frozenset[str]
+    positions: list[Position], lines: list[StatementLine], in_scope: Scope
 ) -> list[Finding]:
     """Findings for the asset classes the statement covers. `positions` are the open ones."""
-    scoped = [p for p in positions if p.asset_class in asset_classes]
+    scoped = [p for p in positions if in_scope(p.asset_class)]
     by_isin = {p.isin: p for p in scoped}
     by_name: dict[str, list[Position]] = {}
     for p in scoped:

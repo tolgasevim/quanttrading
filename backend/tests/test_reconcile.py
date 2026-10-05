@@ -1,9 +1,17 @@
 from decimal import Decimal
 
 from quant.portfolio.positions import Position
-from quant.portfolio.reconcile import StatementLine, Status, normalise_name, reconcile, summarise
+from quant.portfolio.reconcile import (
+    StatementLine,
+    Status,
+    all_but,
+    classes,
+    normalise_name,
+    reconcile,
+    summarise,
+)
 
-CRYPTO = frozenset({"CRYPTO"})
+CRYPTO = classes("CRYPTO")
 
 
 def pos(isin: str, name: str, qty: str, cls: str = "CRYPTO") -> Position:
@@ -65,7 +73,7 @@ def test_isin_takes_priority_over_name() -> None:
     [finding] = reconcile(
         [pos("DE1", "Old Name", "5", cls="STOCK")],
         [line("New Name", "5", isin="DE1")],
-        frozenset({"STOCK"}),
+        classes("STOCK"),
     )
     assert finding.status == Status.MATCH
 
@@ -80,3 +88,36 @@ def test_ambiguous_names_are_not_guessed() -> None:
         "missing_in_history": 1,
         "not_on_statement": 2,
     }
+
+
+def test_a_depot_statement_covers_everything_but_crypto() -> None:
+    depot = all_but("CRYPTO")
+    findings = reconcile(
+        [
+            pos("US1", "Apple", "10", cls="STOCK"),
+            pos("DE9", "Mystery", "1", cls=None),  # type: ignore[arg-type]
+            pos("X1", "Bitcoin", "1"),
+        ],
+        [line("Apple Inc.", "10", isin="US1")],
+        depot,
+    )
+    assert {f.name: f.status for f in findings} == {
+        "Apple": Status.MATCH,
+        "Mystery": Status.NOT_ON_STATEMENT,  # a position of unknown class is checked too
+    }  # the coin is for the crypto statement
+
+
+def test_two_lines_with_the_same_isin_are_one_position() -> None:
+    from quant.portfolio.reconcile import merge_lines
+
+    merged = merge_lines(
+        [
+            StatementLine("Apple", Decimal("4"), "US1", Decimal("400")),
+            StatementLine("Apple", Decimal("6"), "US1", Decimal("600")),
+            StatementLine("Other", Decimal("1"), None, Decimal("1")),
+        ]
+    )
+    assert [(m.name, m.quantity, m.value_eur) for m in merged] == [
+        ("Apple", Decimal("10"), Decimal("1000")),
+        ("Other", Decimal("1"), Decimal("1")),
+    ]

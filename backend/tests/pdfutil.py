@@ -1,5 +1,7 @@
 """Build a tiny text-only PDF, so statement extraction is tested end to end without real files."""
 
+from collections.abc import Sequence
+
 
 def make_text_pdf(lines: list[tuple[float, float, str]]) -> bytes:
     """`lines` are (x, y, text) in points. Returns a one-page PDF with Helvetica 9 pt text."""
@@ -81,5 +83,47 @@ def crypto_statement_pdf(
         y -= 30
     footer = f"ANZAHL DER POSITIONEN: {len(rows) if count is None else count}"
     lines.append((130, y, footer))
+    lines.append((420, y, f"SUMME KURSWERTE: {total} €"))
+    return make_text_pdf(lines)
+
+
+DEPOT_COLUMNS = {"qty": 40, "name": 130, "price": 420, "value": 520}
+
+
+def depot_statement_pdf(
+    rows: Sequence[tuple[str, ...]],
+    count: int | None = None,
+    total: str = "0,00",
+) -> bytes:
+    """rows: (quantity, name, isin, custody country, price, value) as printed."""
+    y = 560.0
+    lines: list[tuple[float, float, str]] = [
+        (40, y, "TRADE REPUBLIC BANK GMBH   BRUNNENSTRASSE 19-21   10119 BERLIN"),
+        (40, y - 40, "MAX MUSTERMANN"),
+        (40, y - 52, "Musterweg 12"),
+        (300, y - 52, "Depot 0123456789"),
+        (520, y - 90, "DEPOTAUSZUG"),
+        (520, y - 102, "zum 27.09.2026"),
+    ]
+    y -= 140
+    header = {
+        "qty": "STK./NOMINALE",
+        "name": "BEZEICHNUNG",
+        "price": "KURS PRO STÜCK",
+        "value": "KURSWERT IN EUR",
+    }
+    lines += [(DEPOT_COLUMNS[k], y, v) for k, v in header.items()]
+    y -= 20
+    for qty, name, isin, custody, price, value in rows:
+        lines += [
+            (DEPOT_COLUMNS["qty"], y, f"{qty} Stk."),
+            (DEPOT_COLUMNS["name"], y, name),
+            (DEPOT_COLUMNS["price"], y, price),
+            (DEPOT_COLUMNS["value"], y, value),
+            (DEPOT_COLUMNS["name"], y - 10, f"ISIN: {isin}"),
+            (DEPOT_COLUMNS["name"], y - 20, f"Lagerland: {custody}"),
+        ]
+        y -= 36
+    lines.append((130, y, f"ANZAHL DER POSITIONEN: {len(rows) if count is None else count}"))
     lines.append((420, y, f"SUMME KURSWERTE: {total} €"))
     return make_text_pdf(lines)

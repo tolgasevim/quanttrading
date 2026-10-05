@@ -9,7 +9,7 @@ from decimal import Decimal
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from quant.importers import tr_crypto_pdf
+from quant.importers import tr_crypto_pdf, tr_depot_pdf
 from quant.models import FxRate, Instrument, PriceEOD, Snapshot, Transaction, UnitCost
 from quant.portfolio.lots import (
     FLAG_PRICE_DERIVED,
@@ -27,16 +27,24 @@ from quant.portfolio.positions import (
 )
 from quant.portfolio.reconcile import (
     Finding,
+    Scope,
     StatementLine,
     Status,
+    all_but,
+    classes,
     find_by_name,
+    merge_lines,
     reconcile,
     summarise,
 )
 from quant.portfolio.tax import Income, Refund, YearEstimate, estimate
 
-# Which asset classes each statement source speaks for.
-SOURCE_SCOPE = {tr_crypto_pdf.SOURCE: tr_crypto_pdf.ASSET_CLASSES}
+# Which asset classes each statement source speaks for. The Depotauszug lists everything the
+# broker keeps in custody; coins are on their own statement.
+SOURCE_SCOPE: dict[str, Scope] = {
+    tr_crypto_pdf.SOURCE: classes(*tr_crypto_pdf.ASSET_CLASSES),
+    tr_depot_pdf.SOURCE: all_but(*tr_crypto_pdf.ASSET_CLASSES),
+}
 
 # A statement prints each Kurswert/Kaufwert to the cent; derived lots (price x units) add up to
 # half a cent of rounding each.
@@ -126,14 +134,17 @@ def load_unit_costs(session: Session, user_id: uuid.UUID) -> dict[str, Decimal]:
 
 
 def statement_lines(snapshot: Snapshot) -> list[StatementLine]:
-    return [
-        StatementLine(
-            name=line["name"],
-            quantity=Decimal(line["quantity"]),
-            value_eur=Decimal(line["value_eur"]),
-        )
-        for line in snapshot.lines
-    ]
+    return merge_lines(
+        [
+            StatementLine(
+                name=line["name"],
+                quantity=Decimal(line["quantity"]),
+                isin=line.get("isin"),
+                value_eur=Decimal(line["value_eur"]),
+            )
+            for line in snapshot.lines
+        ]
+    )
 
 
 def latest_snapshots(session: Session, user_id: uuid.UUID) -> list[Snapshot]:
@@ -163,7 +174,7 @@ def cost_checks(
 ) -> list[tuple[CostCheck, bool]]:
     """Compare each statement line's purchase value with the lots as of the statement date."""
     costs = position_costs(book)
-    scoped = [p for p in as_of_positions if p.asset_class in SOURCE_SCOPE[snapshot.source]]
+    scoped = [p for p in as_of_positions if SOURCE_SCOPE[snapshot.source](p.asset_class)]
     results: list[tuple[CostCheck, bool]] = []
     for line in snapshot.lines:
         stated = line.get("cost_eur")
@@ -184,11 +195,12 @@ def marks_from_snapshot(
     snapshot: Snapshot, as_of_positions: list[Position], book: LotBook
 ) -> dict[str, Mark]:
     """Prices from a statement, with the quantity and cost the position had on that day."""
-    scoped = [p for p in as_of_positions if p.asset_class in SOURCE_SCOPE[snapshot.source]]
+    scoped = [p for p in as_of_positions if SOURCE_SCOPE[snapshot.source](p.asset_class)]
     costs = position_costs(book)
     marks: dict[str, Mark] = {}
+    by_isin = {p.isin: p for p in scoped}
     for line in snapshot.lines:
-        position = find_by_name(scoped, line["name"])
+        position = by_isin.get(line.get("isin", "")) or find_by_name(scoped, line["name"])
         if position is not None and "price_eur" in line:
             marks[position.isin] = Mark(
                 Decimal(line["price_eur"]),
