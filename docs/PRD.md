@@ -144,7 +144,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 | Export filename starts in 2017, but the data starts in 2021 | Use the actual row dates, never the filename, to determine coverage. |
 
 ### 6.3 Portfolio analytics
-- **FR-20 (P0)**: Holdings table showing quantity, average cost (FIFO, matching German tax rules), market value in EUR, unrealised and realised P&L, weight and asset class. *Status: cost basis and realised P&L implemented; market value and unrealised P&L from the newest of a stored market price (shares and funds, FR-12) and a broker statement price (crypto); a price in another currency is converted at the ECB rate of its own day, and no rate means no value rather than a wrong one; weight and sector follow.* Rules, from `quant.portfolio.lots`:
+- **FR-20 (P0)**: Holdings table showing quantity, average cost (FIFO, matching German tax rules), market value in EUR, unrealised and realised P&L, weight and asset class. *Status: cost basis and realised P&L implemented; market value and unrealised P&L from the newest of a stored market price (shares and funds from Yahoo, FR-12; coins from CoinGecko in euros, found by the name TR gives the coin, `providers/coingecko.py`) and a broker statement price; a price in another currency is converted at the ECB rate of its own day, and no rate means no value rather than a wrong one; weight and sector follow.* Rules, from `quant.portfolio.lots`:
   - **Purchase value and acquisition costs are kept apart.** Purchase value is the amount paid; fees and buy-side transaction taxes (e.g. a stamp duty) are *acquisition costs*. Broker statements quote the purchase value without them, German tax counts both. Average cost per unit and unrealised P&L include both.
   - **Sells consume the oldest lots first (FIFO).** Realised gain = proceeds − sell fees − purchase value − acquisition costs of the lots consumed, **before tax**. Tax the broker withheld is reported per year but is not deducted. Liquidations, knock-out expiries and worthless write-offs are disposals too, with the cash row of the same ISIN (within a day) as proceeds.
   - **Corporate actions move cost, they don't create it.** A swap (merger, exchange, reverse split, ISIN change: negative leg on one ISIN, positive on another in the same minute) carries the lots, their cost and their acquisition dates across, so holding periods survive. Units added to a holding (split) spread the cost over more units. A rights issue's cost is the cash paid for the new units.
@@ -325,7 +325,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 | Macro | FRED API | Free API key. |
 | Oil inventories | EIA API | Free API key. |
 | Commodity spot and futures prices | yfinance (GC=F, SI=F, CL=F, BZ=F) | Front-month futures used as a proxy for spot. |
-| Crypto prices (EUR) | CoinGecko free API | Fallback: yfinance (BTC-EUR, …). The TR statement price is kept as the broker mark (FR-19). |
+| Crypto prices (EUR) | CoinGecko free API | Implemented (`coingecko` price provider): daily euro prices from `market_chart/range`, one year of history at most, coin found by name (only ranked coins count). Optional demo key. Fallback: yfinance (BTC-EUR, …), entered by hand. The TR statement price is kept as the broker mark (FR-19). |
 | ISIN → ticker | OpenFIGI | Free, rate-limited. Cache permanently. |
 | ETF holdings | Issuer CSVs (iShares, Xtrackers, Vanguard) | Scraped weekly; fragile. |
 | News | RSS (company IR, Reuters/others), SEC 8-K | P1. |

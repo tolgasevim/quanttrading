@@ -30,6 +30,7 @@ router = APIRouter(prefix="/api/prices", tags=["prices"])
 
 ISIN = re.compile(r"^[A-Z0-9]{12}$")
 SYMBOL = re.compile(r"^[A-Za-z0-9^][A-Za-z0-9.\-=^]{0,29}$")
+COIN_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 
 
 class PriceItem(BaseModel):
@@ -38,8 +39,8 @@ class PriceItem(BaseModel):
     asset_class: str | None
     # priced | stale (the last price is too old to use) | no_rate (no ECB rate for its currency) |
     # inactive (switched off) | waiting (mapped, no price yet) | unmapped (no ticker found) |
-    # not_checked (the mapping has not run yet) | unsupported (no ticker expected: crypto, bonds,
-    # funds without one)
+    # not_checked (the mapping has not run yet) | unsupported (no ticker expected: bonds and the
+    # like, or a coin while CoinGecko is off)
     status: str
     symbol: str | None
     mapping_source: str | None
@@ -52,8 +53,13 @@ class PricesOut(BaseModel):
     items: list[PriceItem]
 
 
+def _provider(asset_class: str | None) -> str:
+    """The price provider whose symbol an instrument of this class carries."""
+    return "coingecko" if asset_class == "CRYPTO" else "yahoo"
+
+
 class SymbolIn(BaseModel):
-    symbol: Annotated[str, Field(min_length=1, max_length=30)]
+    symbol: Annotated[str, Field(min_length=1, max_length=100)]  # a coin id may be long
 
 
 def _trim(value: Decimal) -> Decimal:
@@ -87,11 +93,16 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
     # The same test the Holdings page applies, so "priced" here means a value there.
     usable = service.price_marks(db, positions, {})
     oldest_usable = service.today() - timedelta(days=service.MAX_PRICE_AGE_DAYS)
+    coins_off = "coingecko" not in get_settings().price_providers
     items = []
     for p in positions:
         inst = instruments.get(p.isin)
         last = newest.get(inst.id) if inst else None
-        if p.asset_class not in PRICEABLE and inst is None:
+        # A coin whose stored price is still usable stays "priced", like on the Holdings page;
+        # with CoinGecko off, no new price comes, so it turns "unsupported" once that has aged out.
+        if (inst is None and p.asset_class not in PRICEABLE) or (
+            p.asset_class == "CRYPTO" and coins_off and p.isin not in usable
+        ):
             state = "unsupported"
         elif inst is None:
             state = "not_checked"
@@ -113,7 +124,7 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
                 name=p.name,
                 asset_class=p.asset_class,
                 status=state,
-                symbol=(inst.symbols.get("yahoo") if inst else None),
+                symbol=(inst.symbols.get(_provider(p.asset_class)) if inst else None),
                 mapping_source=inst.mapping_source if inst else None,
                 currency=inst.currency if inst else None,
                 last_date=last[0].isoformat() if last else None,
@@ -160,10 +171,11 @@ def _retry_same_ticker(
     inst: Instrument | None,
     position: Position,
     symbol: str,
+    provider: str,
 ) -> None:
     """The ticker is already saved (it has no price yet): fetch again. Nothing is deleted."""
     assert inst is not None
-    inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
+    inst.symbols = {**(inst.symbols or {}), provider: symbol}
     _fill(inst, position, symbol)
     db.add(inst)
     db.commit()
@@ -186,12 +198,13 @@ def _change_ticker(
     isin: str,
     symbol: str,
     old_symbol: str | None,
+    provider: str,
 ) -> None:
     """A new ticker. Its whole price history is fetched first; only a good answer changes
     anything, and the old prices are swapped for the new ones in one transaction. A typo, a
     failed fetch or a ticker without a currency leaves the shared instrument as it was."""
     today = today_local(settings).date()
-    probe = Instrument(code=isin, isin=isin, currency="EUR", symbols={"yahoo": symbol})
+    probe = Instrument(code=isin, isin=isin, currency="EUR", symbols={provider: symbol})
     try:
         source, series = fetch_with_fallback(
             providers, probe, today - timedelta(days=settings.backfill_days), today
@@ -215,11 +228,11 @@ def _change_ticker(
             # The stored prices belong to the old ticker, or are in another currency: they would
             # mix with the new ones. The other providers' symbols belonged to the old ticker.
             db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
-            inst.symbols = {"yahoo": symbol}
+            inst.symbols = {provider: symbol}
         else:
-            # A row that had no Yahoo ticker (for example a seeded Stooq-only one) in the same
-            # currency: its prices and symbols still fit, so keep them.
-            inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
+            # A row that had no ticker from this provider (for example a seeded Stooq-only one) in
+            # the same currency: its prices and symbols still fit, so keep them.
+            inst.symbols = {**(inst.symbols or {}), provider: symbol}
         inst.currency = series.currency
         _fill(inst, position, symbol)
         db.flush()
@@ -232,13 +245,12 @@ def _change_ticker(
 
 @router.put("/{isin}", response_model=PricesOut)
 def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> PricesOut:
-    """Enter the Yahoo symbol of an instrument by hand, then fetch its prices at once."""
+    """Enter the ticker of an instrument by hand (a Yahoo symbol, or a CoinGecko coin id for
+    crypto), then fetch its prices at once."""
     isin = isin.upper()
     symbol = body.symbol.strip()
     if not ISIN.match(isin):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "not an ISIN")
-    if not SYMBOL.match(symbol):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "not a ticker symbol")
     held = {
         p.isin: p for p in open_positions(compute_positions(service.load_movements(db, user.id)))
     }
@@ -248,23 +260,32 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
     if position.asset_class not in PRICEABLE:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "tickers are for shares and funds; crypto and the rest are priced elsewhere",
+            "tickers are for shares, funds and crypto; the rest has no market price here",
+        )
+    provider = _provider(position.asset_class)
+    is_coin = provider == "coingecko"
+    if not (COIN_ID if is_coin else SYMBOL).match(symbol):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "not a CoinGecko coin id (for example bitcoin)" if is_coin else "not a ticker symbol",
         )
     inst = db.scalar(select(Instrument).where(Instrument.isin == isin))
-    old_symbol = inst.symbols.get("yahoo") if inst is not None and inst.symbols else None
+    old_symbol = inst.symbols.get(provider) if inst is not None and inst.symbols else None
     settings = get_settings()
-    if "yahoo" not in settings.price_providers:
+    if provider not in settings.price_providers:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "Tickers are Yahoo symbols, but QT_PRICE_PROVIDERS does not include yahoo",
+            f"This ticker is for {provider}, but QT_PRICE_PROVIDERS does not include {provider}",
         )
     fetcher = make_fetcher(db, settings)
     try:
-        providers = price_providers(settings.price_providers, fetcher)
+        providers = price_providers(settings.price_providers, fetcher, settings.coingecko_api_key)
         if old_symbol == symbol:
-            _retry_same_ticker(db, providers, settings, inst, position, symbol)
+            _retry_same_ticker(db, providers, settings, inst, position, symbol, provider)
         else:
-            _change_ticker(db, providers, settings, inst, position, isin, symbol, old_symbol)
+            _change_ticker(
+                db, providers, settings, inst, position, isin, symbol, old_symbol, provider
+            )
     finally:
         fetcher.close()
     return PricesOut(items=_items(db, user.id))

@@ -77,14 +77,22 @@ class Fetcher:
         """Release the HTTP connections. Call it when the job or request is done."""
         self._client.close()
 
-    def get_text(self, provider: str, url: str, params: Mapping[str, str] | None = None) -> str:
+    def get_text(
+        self,
+        provider: str,
+        url: str,
+        params: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> str:
         request_key = str(httpx.URL(url, params=params))[:300]
         last_error: Exception | None = None
         for attempt in range(self._retries):
             if attempt:
                 self._sleep(self._backoff * 2 ** (attempt - 1))
             try:
-                response = self._client.get(url, params=params, headers={"User-Agent": USER_AGENT})
+                response = self._client.get(
+                    url, params=params, headers={"User-Agent": USER_AGENT, **(headers or {})}
+                )
             except httpx.HTTPError as exc:
                 last_error = exc
                 continue

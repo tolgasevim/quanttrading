@@ -18,6 +18,7 @@ const STATUS_TEXT: Record<PriceItem["status"], string> = {
 
 const SOURCE_TEXT: Record<string, string> = {
   yahoo: "found by Yahoo search",
+  coingecko: "found by CoinGecko search",
   openfigi: "found by OpenFIGI",
   manual: "entered by hand",
 };
@@ -37,8 +38,10 @@ function Row({
   const [symbol, setSymbol] = useState(item.symbol ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  // Tickers are for shares and funds only; crypto and the rest are priced elsewhere.
-  const editable = admin && (item.asset_class === "STOCK" || item.asset_class === "FUND");
+  // Tickers are for shares, funds and coins; bonds and the rest have no market price here.
+  const isCoin = item.asset_class === "CRYPTO";
+  const editable =
+    admin && (item.asset_class === "STOCK" || item.asset_class === "FUND" || isCoin);
   const unchanged = symbol.trim() === (item.symbol ?? "");
   // A saved ticker with no price yet can be fetched again without changing it.
   const retry = unchanged && item.status === "waiting";
@@ -76,8 +79,8 @@ function Row({
       <td>
         {editable ? (
           <input
-            aria-label={`Ticker for ${item.name ?? item.isin}`}
-            placeholder="e.g. SAP.DE"
+            aria-label={`${isCoin ? "Coin id" : "Ticker"} for ${item.name ?? item.isin}`}
+            placeholder={isCoin ? "e.g. bitcoin" : "e.g. SAP.DE"}
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
             style={{ width: 120 }}
@@ -133,11 +136,12 @@ export default function PricesPage() {
       <main>
         <h1>Prices</h1>
         <p>
-          Each share and fund you hold needs a ticker so its price can be fetched every evening. The
-          app looks tickers up from the ISIN (Yahoo search, then OpenFIGI) once a day. Prices come from
-          Yahoo Finance in the currency of the listing and are converted to euros at the ECB rate of
-          the same day, so they can differ slightly from the price Trade Republic quotes.
-          Crypto is priced from your statement.
+          Each share, fund and coin you hold needs a ticker so its price can be fetched every
+          evening. The app looks tickers up once a day: from the ISIN for shares and funds (Yahoo
+          search, then OpenFIGI), and from the name for coins (CoinGecko). Share and fund prices come
+          from Yahoo Finance in the currency of the listing and are converted to euros at the ECB
+          rate of the same day, so they can differ slightly from the price Trade Republic quotes.
+          Coin prices come from CoinGecko in euros. Bonds and similar have no market price here.
         </p>
         {error && <p className="notice status-failed">{error}</p>}
         {items && items.length === 0 && (
@@ -151,7 +155,7 @@ export default function PricesPage() {
               {missing} {missing === 1 ? "holding has" : "holdings have"} no ticker.
             </strong>{" "}
             {admin
-              ? "Enter its Yahoo ticker below (for example SAP.DE for a Xetra listing) and the price is fetched at once."
+              ? "Enter its Yahoo ticker below (for example SAP.DE for a Xetra listing), or the CoinGecko coin id for a coin (for example bitcoin), and the price is fetched at once."
               : "Ask the owner to enter it."}
           </p>
         )}
@@ -180,6 +184,9 @@ export default function PricesPage() {
             </table>
           </div>
         )}
+        <p className="muted">
+          Coin prices: <a href="https://www.coingecko.com/">powered by CoinGecko API</a>.
+        </p>
       </main>
     </>
   );

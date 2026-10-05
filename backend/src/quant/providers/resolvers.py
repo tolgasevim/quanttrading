@@ -29,6 +29,15 @@ class Listing:
     name: str | None
     exchange: str | None
     source: str  # the resolver's name
+    provider: str = "yahoo"  # the price provider the symbol is for: the key in `Instrument.symbols`
+
+
+class CryptoResolver(Protocol):
+    """Finds a coin. A crypto ISIN says little, so the broker's name for the coin is used."""
+
+    name: str
+
+    def resolve(self, isin: str, name: str | None) -> Listing | None: ...
 
 
 class IsinResolver(Protocol):

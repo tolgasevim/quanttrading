@@ -34,7 +34,11 @@ the securities and crypto statements.
    The worker then does this by itself: FX at 16:30, ticker lookup at 22:00 and prices at 22:30
    (Europe/Berlin, weekdays). It also catches up after the Mac mini was off. A holding without a
    ticker is listed on the Prices page, where you can enter it by hand. An optional free OpenFIGI
-   key (`QT_OPENFIGI_API_KEY`) raises the lookup rate limit.
+   key (`QT_OPENFIGI_API_KEY`) raises the lookup rate limit. Coins are priced in euros from
+   CoinGecko: the app finds each coin by the name Trade Republic gives it (Prices page, "coin id"
+   for a hand entry). It works without a key; a free demo key (`QT_COINGECKO_API_KEY`) raises the
+   rate limit. If your `.env` sets `QT_PRICE_PROVIDERS`, add `coingecko` to it. The free API serves
+   one year of history, so older coin prices are not backfilled.
 5. Open the app:
    - On the Mac mini itself: http://localhost:3000. Set `QT_COOKIE_SECURE=false` in `.env` for
      plain http and run `docker compose up -d` again.
