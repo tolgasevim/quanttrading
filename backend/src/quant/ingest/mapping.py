@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
@@ -90,7 +91,16 @@ def map_isins(
             # proves nothing. Remember nothing and ask again at the next run.
             result.errors[held.isin] = "; ".join(errors)
             continue
-        instrument = known or Instrument(code=held.isin, isin=held.isin, currency="EUR")
+        # The lookup can take a while: read the row again, so a ticker an admin saved meanwhile
+        # is never overwritten with this older answer.
+        current = session.scalar(
+            select(Instrument)
+            .where(Instrument.isin == held.isin)
+            .execution_options(populate_existing=True)
+        )
+        if current is not None and current.mapping_source != NO_TICKER:
+            continue
+        instrument = current or Instrument(code=held.isin, isin=held.isin, currency="EUR")
         instrument.name = (listing.name if listing else None) or held.name or held.isin
         instrument.asset_class = held.asset_class
         instrument.mapped_at = now
@@ -104,6 +114,10 @@ def map_isins(
             instrument.active = False
             result.warnings[held.isin] = "no ticker found"
         session.add(instrument)
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()  # another writer created the row first: theirs wins
+            continue
         result.rows_written += 1
     return result

@@ -17,11 +17,12 @@ from sqlalchemy import delete, func, select
 from quant.api.deps import AdminUser, CurrentUser, UserDb
 from quant.config import get_settings
 from quant.ingest.mapping import MANUAL, NO_TICKER, PRICEABLE
-from quant.ingest.prices import ingest_prices
+from quant.ingest.prices import fetch_with_fallback, ingest_prices
 from quant.ingest.runtime import make_fetcher, today_local
 from quant.models import Instrument, PriceEOD
 from quant.portfolio import service
 from quant.portfolio.positions import Position, compute_positions, open_positions
+from quant.providers.base import ProviderError
 from quant.providers.registry import price_providers
 
 router = APIRouter(prefix="/api/prices", tags=["prices"])
@@ -157,36 +158,45 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
             "tickers are for shares and funds; crypto and the rest are priced elsewhere",
         )
     inst = db.scalar(select(Instrument).where(Instrument.isin == isin))
-    if inst is None:
-        inst = Instrument(code=isin, isin=isin, currency="EUR")
-    changed = inst.id is not None and inst.symbols.get("yahoo") not in (None, symbol)
-    if changed:
-        # A different ticker: the stored prices belong to the old one (maybe in another
-        # currency), so drop them and fetch the whole history again.
-        db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
-    inst.name = inst.name if inst.name and inst.name != isin else (position.name or isin)
-    if inst.asset_class is None:  # a new row; an existing one keeps its class
-        inst.asset_class = PRICEABLE[position.asset_class or "STOCK"]
-    if changed:
-        inst.symbols = {"yahoo": symbol}  # the other providers' symbols belong to the old ticker
-    else:
-        inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
-    inst.mapping_source = MANUAL
-    inst.mapped_at = datetime.now(UTC)
-    inst.active = True
-    db.add(inst)
-    db.commit()
+    old_symbol = inst.symbols.get("yahoo") if inst is not None and inst.symbols else None
     settings = get_settings()
     fetcher = make_fetcher(db, settings)
     try:
         providers = price_providers(settings.price_providers, fetcher)
-        result = ingest_prices(
-            db, providers, today_local(settings).date(), settings.backfill_days, codes=[inst.code]
-        )
+        today = today_local(settings).date()
+        if old_symbol != symbol:
+            # A new ticker must return prices before anything is changed or deleted, so a typo
+            # cannot wipe the shared history of a working ticker.
+            probe = Instrument(code=isin, isin=isin, currency="EUR", symbols={"yahoo": symbol})
+            try:
+                fetch_with_fallback(providers, probe, today - timedelta(days=10), today)
+            except ProviderError as exc:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    f"No price came back for {symbol}, so nothing was changed: {exc}",
+                ) from exc
+        if inst is None:
+            inst = Instrument(code=isin, isin=isin, currency="EUR")
+        if old_symbol is not None and old_symbol != symbol:
+            # The stored prices belong to the old ticker (maybe in another currency): drop them
+            # and fetch the whole history again. The other providers' symbols go too.
+            db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
+            inst.symbols = {"yahoo": symbol}
+        else:
+            inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
+        inst.name = inst.name if inst.name and inst.name != isin else (position.name or isin)
+        if inst.asset_class is None:  # a new row; an existing one keeps its class
+            inst.asset_class = PRICEABLE[position.asset_class or "STOCK"]
+        inst.mapping_source = MANUAL
+        inst.mapped_at = datetime.now(UTC)
+        inst.active = True
+        db.add(inst)
+        db.commit()
+        result = ingest_prices(db, providers, today, settings.backfill_days, codes=[inst.code])
     finally:
         fetcher.close()
     if result.errors:
-        # Keep the symbol (it may be right and the provider briefly down) and say what failed.
+        # The ticker returned prices a moment ago, so keep it and say what failed now.
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             f"Saved the symbol, but no price came back: {'; '.join(result.errors.values())}",

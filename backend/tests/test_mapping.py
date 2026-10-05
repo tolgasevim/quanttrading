@@ -169,3 +169,32 @@ def test_a_mapped_instrument_takes_the_currency_the_provider_reports(db: Session
     db.refresh(seeded)
     assert mapped.currency == "USD"  # the placeholder is replaced
     assert seeded.currency == "EUR" and "SEEDED" in result.warnings  # a seeded one is only warned
+
+
+def test_a_ticker_saved_during_a_lookup_is_not_overwritten(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    from quant.db import get_sessionmaker
+
+    map_isins(db, [FakeResolver("yahoo", {})], NOW, isins=held)  # every ISIN is now "none"
+
+    class SavesWhileAsking(FakeResolver):
+        def resolve(self, isin: str) -> Listing | None:
+            if isin == A:  # an admin enters the ticker by hand while the job is running
+                with get_sessionmaker()() as other:
+                    row = other.scalar(select(Instrument).where(Instrument.isin == A))
+                    assert row is not None
+                    row.symbols = {"yahoo": "HAND"}
+                    row.mapping_source = "manual"
+                    row.active = True
+                    other.commit()
+            return None
+
+    map_isins(db, [SavesWhileAsking("yahoo", {})], NOW + timedelta(days=40), isins=held)
+    alpha = db.scalar(select(Instrument).where(Instrument.isin == A))
+    assert alpha is not None
+    assert (alpha.symbols, alpha.mapping_source, alpha.active) == (
+        {"yahoo": "HAND"},
+        "manual",
+        True,
+    )

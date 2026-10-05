@@ -190,13 +190,36 @@ def test_an_admin_can_enter_a_symbol_and_gets_prices_at_once(
     )
 
 
-def test_a_symbol_is_kept_when_no_price_comes_back(
+def test_a_new_ticker_that_returns_no_price_changes_nothing(
     owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     use_provider(monkeypatch, FakeProvider(None, fail=True))
     response = owner.put(f"/api/prices/{A}", json={"symbol": "ALPH"})
-    assert response.status_code == 502 and "no price came back" in response.json()["detail"]
-    assert statuses(owner)[A] == "waiting"  # the symbol is saved, the price will follow
+    assert response.status_code == 502 and "nothing was changed" in response.json()["detail"]
+    assert statuses(owner)[A] == "not_checked"  # no row was saved
+
+
+def test_a_typo_cannot_wipe_the_prices_of_a_working_ticker(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = add_instrument(db, A, symbol="GOOD")
+    add_price(db, inst, date(2026, 10, 2), "120")
+    use_provider(monkeypatch, FakeProvider(PriceSeries(None, [])))  # the typo has no data
+    assert owner.put(f"/api/prices/{A}", json={"symbol": "GOOOD"}).status_code == 502
+    db.refresh(inst)
+    assert inst.symbols == {"yahoo": "GOOD"} and inst.mapping_source == "yahoo"
+    assert db.query(PriceEOD).filter_by(instrument_id=inst.id).count() == 1  # history intact
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "120"
+
+
+def test_the_same_ticker_can_be_fetched_again_when_it_has_no_price_yet(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_instrument(db, A, symbol="ALPH")  # a ticker was found, no price came yet
+    use_provider(monkeypatch, FakeProvider(None, fail=True))
+    response = owner.put(f"/api/prices/{A}", json={"symbol": "ALPH"})
+    assert response.status_code == 502 and "Saved the symbol" in response.json()["detail"]
+    assert statuses(owner)[A] == "waiting"
 
 
 def test_symbol_entry_is_for_admins_and_checks_its_input(
@@ -265,6 +288,8 @@ def test_a_new_ticker_drops_the_symbols_other_providers_had_for_the_old_one(
     owner.put(f"/api/prices/{A}", json={"symbol": "OLD"})  # same ticker: stooq stays
     db.refresh(inst)
     assert inst.symbols == {"yahoo": "OLD", "stooq": "old.us"}
+    series = PriceSeries("EUR", [Bar(date=date(2026, 10, 2), close=D("120"))])
+    use_provider(monkeypatch, FakeProvider(series))
     owner.put(f"/api/prices/{A}", json={"symbol": "NEW"})
     db.refresh(inst)
     assert inst.symbols == {"yahoo": "NEW"}  # the old security's stooq symbol is gone
