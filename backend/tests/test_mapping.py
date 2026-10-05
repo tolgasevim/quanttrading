@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.ingest.mapping import HeldIsin, held_isins, map_isins
 from quant.ingest.prices import ingest_prices
-from quant.models import Instrument
+from quant.models import Instrument, PriceEOD
 from quant.providers.base import Bar, PriceSeries, ProviderError
 from quant.providers.resolvers import Listing
 
@@ -18,6 +18,7 @@ from .test_holdings_pnl_api import SPIN, A, B, history, import_history, row
 
 NOW = datetime(2026, 10, 6, 12, 0, tzinfo=UTC)
 FUND = "IE0000000030"
+GAMMA = "US0000000040"
 
 
 class FakeResolver:
@@ -45,14 +46,20 @@ def held(client: TestClient, admin, db: Session) -> list[HeldIsin]:  # type: ign
         70, "2025-02-01", "TRADING", "BUY", "FUND", "World ETF", FUND,
         shares="3", price="80", amount="-240", fee="-1",
     )  # fmt: skip
-    import_history(client, history([fund_buy]))
+    gamma_buy = row(
+        71, "2025-02-02", "TRADING", "BUY", "STOCK", "Gamma Inc", GAMMA,
+        shares="2", price="50", amount="-100", fee="-1",
+    )  # fmt: skip
+    import_history(client, history([fund_buy, gamma_buy]))
     rls.bypass(db)
     return held_isins(db)
 
 
-def test_only_priceable_traded_isins_are_listed(held: list[HeldIsin]) -> None:
+def test_only_priceable_isins_that_are_still_held_are_listed(held: list[HeldIsin]) -> None:
     by_isin = {h.isin: h for h in held}
-    assert set(by_isin) == {A, B, SPIN, FUND}  # not the coins, not the cash-only ISIN
+    # Not the coins, not the cash-only ISIN, and not Beta, which was sold in full.
+    assert set(by_isin) == {A, GAMMA, SPIN, FUND}
+    assert B not in by_isin
     assert by_isin[A].asset_class == "stock" and by_isin[FUND].asset_class == "etf"
     assert by_isin[A].name == "Alpha Corp"
 
@@ -84,7 +91,7 @@ def test_unknown_isins_become_inactive_rows_that_are_not_asked_again_soon(
 ) -> None:
     resolver = FakeResolver("yahoo", {})
     result = map_isins(db, [resolver], NOW, isins=held)
-    assert set(result.warnings) == {A, B, SPIN, FUND}
+    assert set(result.warnings) == {A, GAMMA, SPIN, FUND}
     unknown = db.scalar(select(Instrument).where(Instrument.isin == SPIN))
     assert unknown is not None
     assert (unknown.active, unknown.mapping_source, unknown.symbols) == (False, "none", {})
@@ -92,7 +99,7 @@ def test_unknown_isins_become_inactive_rows_that_are_not_asked_again_soon(
     map_isins(db, [resolver], NOW + timedelta(days=5), isins=held)
     assert resolver.asked == []  # asked recently
     map_isins(db, [resolver], NOW + timedelta(days=31), isins=held)
-    assert sorted(resolver.asked) == sorted([A, B, SPIN, FUND])  # a month on, ask again
+    assert sorted(resolver.asked) == sorted([A, GAMMA, SPIN, FUND])  # a month on, ask again
 
 
 def test_a_later_answer_replaces_the_none_row(db: Session, held: list[HeldIsin]) -> None:
@@ -119,30 +126,30 @@ def test_not_found_counts_only_when_every_resolver_could_answer(
     down = FakeResolver("yahoo", {}, fail=True)
     figi = FakeResolver("openfigi", {A: listing("ALPH", "openfigi")})
     result = map_isins(db, [down, figi], NOW, isins=held)
-    # OpenFIGI said "not found" for B, but Yahoo could not be asked: that proves nothing.
-    assert B in result.errors
-    assert db.scalar(select(Instrument).where(Instrument.isin == B)) is None
+    # OpenFIGI said "not found" for GAMMA, but Yahoo could not be asked: that proves nothing.
+    assert GAMMA in result.errors
+    assert db.scalar(select(Instrument).where(Instrument.isin == GAMMA)) is None
     # With both able to answer, "not found" is remembered.
     answered = map_isins(db, [FakeResolver("yahoo", {}), figi], NOW, isins=held)
-    other = db.scalar(select(Instrument).where(Instrument.isin == B))
-    assert other is not None and other.mapping_source == "none" and B in answered.warnings
+    other = db.scalar(select(Instrument).where(Instrument.isin == GAMMA))
+    assert other is not None and other.mapping_source == "none" and GAMMA in answered.warnings
 
 
 def test_when_nobody_can_be_asked_nothing_is_remembered(db: Session, held: list[HeldIsin]) -> None:
     result = map_isins(db, [FakeResolver("yahoo", {}, fail=True)], NOW, isins=held)
-    assert set(result.errors) == {A, B, SPIN, FUND}
+    assert set(result.errors) == {A, GAMMA, SPIN, FUND}
     assert db.scalars(select(Instrument)).all() == []  # so the next run simply tries again
 
 
 def test_seeded_and_manual_instruments_are_left_alone(db: Session, held: list[HeldIsin]) -> None:
     db.add(Instrument(code="ALPHA", isin=A, name="Seeded", asset_class="stock", currency="EUR",
                       symbols={"yahoo": "A.DE"}))  # fmt: skip
-    db.add(Instrument(code=B, isin=B, name="Typed", asset_class="stock", currency="EUR",
-                      symbols={"yahoo": "B.DE"}, mapping_source="manual"))  # fmt: skip
+    db.add(Instrument(code=GAMMA, isin=GAMMA, name="Typed", asset_class="stock", currency="EUR",
+                      symbols={"yahoo": "GAMMA.DE"}, mapping_source="manual"))  # fmt: skip
     db.commit()
-    resolver = FakeResolver("yahoo", {A: listing("OTHER"), B: listing("OTHER")})
+    resolver = FakeResolver("yahoo", {A: listing("OTHER"), GAMMA: listing("OTHER")})
     map_isins(db, [resolver], NOW, isins=held)
-    assert A not in resolver.asked and B not in resolver.asked
+    assert A not in resolver.asked and GAMMA not in resolver.asked
     seeded = db.scalar(select(Instrument).where(Instrument.isin == A))
     assert seeded is not None and seeded.symbols == {"yahoo": "A.DE"}
 
@@ -198,3 +205,21 @@ def test_a_ticker_saved_during_a_lookup_is_not_overwritten(
         "manual",
         True,
     )
+
+
+def test_a_mapped_instrument_without_a_reported_currency_is_not_priced_blindly(
+    db: Session,
+) -> None:
+    mapped = Instrument(code=A, isin=A, name="Alpha", asset_class="stock", currency="EUR",
+                        symbols={"yahoo": "ALPH"}, mapping_source="yahoo")  # fmt: skip
+    db.add(mapped)
+    db.commit()
+    # First fetch: no currency in the answer, and the stored one is only a placeholder.
+    first = ingest_prices(db, [OnePrice(None)], date(2026, 10, 6), 30)
+    assert "did not report a currency" in first.errors[A]
+    assert db.query(PriceEOD).count() == 0  # nothing stored in a guessed currency
+    # Once a price has confirmed the currency, a later answer without one may rely on it.
+    ingest_prices(db, [OnePrice("USD")], date(2026, 10, 6), 30)
+    later = ingest_prices(db, [OnePrice(None)], date(2026, 10, 7), 30)
+    assert A not in later.errors
+    assert {r.currency for r in db.query(PriceEOD).all()} == {"USD"}

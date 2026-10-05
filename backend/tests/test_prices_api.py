@@ -389,3 +389,27 @@ def test_a_manual_ticker_needs_yahoo_among_the_price_providers(
     response = owner.put(f"/api/prices/{A}", json={"symbol": "ALPH"})
     assert response.status_code == 409 and "QT_PRICE_PROVIDERS" in response.json()["detail"]
     assert statuses(owner)[A] == "not_checked"  # nothing was changed
+
+
+def test_a_save_that_loses_a_race_with_the_mapping_job_gets_a_clear_conflict(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.api import prices
+    from quant.db import get_sessionmaker
+    from quant.ingest.prices import fetch_with_fallback
+
+    series = PriceSeries("EUR", [Bar(date=date(2026, 10, 2), close=D("120"))])
+    use_provider(monkeypatch, FakeProvider(series))
+    real = fetch_with_fallback
+
+    def probe_then_the_job_creates_the_row(*args, **kwargs):  # type: ignore[no-untyped-def]
+        result = real(*args, **kwargs)
+        with get_sessionmaker()() as other:  # the mapping job saves the same instrument now
+            other.add(Instrument(code=A, isin=A, name="Alpha", asset_class="stock",
+                                 currency="EUR", symbols={"yahoo": "JOB"}, mapping_source="yahoo"))  # fmt: skip
+            other.commit()
+        return result
+
+    monkeypatch.setattr(prices, "fetch_with_fallback", probe_then_the_job_creates_the_row)
+    response = owner.put(f"/api/prices/{A}", json={"symbol": "ALPH"})
+    assert response.status_code == 409 and "try again" in response.json()["detail"]

@@ -10,13 +10,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
 from quant.models import Instrument, Transaction
-from quant.portfolio.positions import QUANTITY_CATEGORIES
+from quant.portfolio.positions import DUST, QUANTITY_CATEGORIES
 from quant.providers.base import ProviderError
 from quant.providers.resolvers import IsinResolver, Listing
 
@@ -38,15 +38,23 @@ class HeldIsin:
 
 
 def held_isins(session: Session) -> list[HeldIsin]:
-    """Every priceable ISIN anyone has traded, whether or not it is still held."""
+    """Every priceable ISIN that at least one user still holds. A fully sold position needs no
+    price, so it gets no ticker lookup and no nightly price fetch."""
+    movement = and_(
+        Transaction.isin.is_not(None),
+        Transaction.shares.is_not(None),
+        Transaction.category.in_(QUANTITY_CATEGORIES),
+        Transaction.asset_class.in_(PRICEABLE),
+    )
+    still_held = (
+        select(Transaction.isin)
+        .where(movement)
+        .group_by(Transaction.user_id, Transaction.isin)
+        .having(func.sum(Transaction.shares) > DUST)
+    )
     rows = session.execute(
         select(Transaction.isin, func.max(Transaction.name), func.max(Transaction.asset_class))
-        .where(
-            Transaction.isin.is_not(None),
-            Transaction.shares.is_not(None),
-            Transaction.category.in_(QUANTITY_CATEGORIES),
-            Transaction.asset_class.in_(PRICEABLE),
-        )
+        .where(movement, Transaction.isin.in_(still_held))
         .group_by(Transaction.isin)
         .order_by(Transaction.isin)
     ).all()

@@ -70,6 +70,11 @@ def ingest_prices(
             log.warning("prices %s: %s", instrument.code, exc)
             continue
 
+        if series.currency is None and instrument.mapping_source is not None and last is None:
+            # The stored currency of a mapped instrument is only a placeholder until a price has
+            # reported the real one. Storing prices in a guessed currency would misvalue them.
+            result.errors[instrument.code] = f"{source} did not report a currency"
+            continue
         currency = series.currency or instrument.currency
         if currency != instrument.currency:
             if instrument.mapping_source is not None:

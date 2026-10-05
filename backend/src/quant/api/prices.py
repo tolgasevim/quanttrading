@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
 from quant.api.deps import AdminUser, CurrentUser, UserDb
 from quant.config import get_settings
@@ -196,7 +197,13 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
         inst.mapped_at = datetime.now(UTC)
         inst.active = True
         db.add(inst)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()  # the mapping job created the same row at the same moment
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Another update ran at the same time: try again"
+            ) from exc
         result = ingest_prices(db, providers, today, settings.backfill_days, codes=[inst.code])
     finally:
         fetcher.close()
