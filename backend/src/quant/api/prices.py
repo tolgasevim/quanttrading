@@ -59,7 +59,7 @@ def _provider(asset_class: str | None) -> str:
 
 
 class SymbolIn(BaseModel):
-    symbol: Annotated[str, Field(min_length=1, max_length=30)]
+    symbol: Annotated[str, Field(min_length=1, max_length=100)]  # a coin id may be long
 
 
 def _trim(value: Decimal) -> Decimal:
@@ -98,8 +98,10 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
     for p in positions:
         inst = instruments.get(p.isin)
         last = newest.get(inst.id) if inst else None
+        # A coin whose stored price is still usable stays "priced", like on the Holdings page;
+        # with CoinGecko off, no new price comes, so it turns "unsupported" once that has aged out.
         if (inst is None and p.asset_class not in PRICEABLE) or (
-            p.asset_class == "CRYPTO" and coins_off
+            p.asset_class == "CRYPTO" and coins_off and p.isin not in usable
         ):
             state = "unsupported"
         elif inst is None:

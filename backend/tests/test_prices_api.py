@@ -571,3 +571,32 @@ def test_a_mapped_coin_is_unsupported_on_both_pages_once_coingecko_is_off(
     monkeypatch.setattr(holdings, "get_settings", off)
     assert statuses(owner)[BTC] == "unsupported"
     assert owner.get("/api/holdings").json()["review"]["unpriced"] == 2  # Alpha and Spin Co only
+
+
+def test_a_coin_with_a_usable_stored_price_stays_priced_when_coingecko_goes_off(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.api import holdings, prices
+    from quant.config import Settings
+
+    inst = add_instrument(db, BTC)
+    inst.asset_class, inst.symbols = "crypto", {"coingecko": "bitcoin"}
+    db.commit()
+    add_price(db, inst, date(2026, 10, 3), "50000")
+    off = lambda: Settings(price_providers=["yahoo", "stooq"])  # noqa: E731
+    monkeypatch.setattr(prices, "get_settings", off)
+    monkeypatch.setattr(holdings, "get_settings", off)
+    assert statuses(owner)[BTC] == "priced"  # the value on Holdings is still there
+    assert by_name(owner.get("/api/holdings").json())["Bitcoin"]["market_value"] == "5000.00"
+    monkeypatch.setattr(
+        "quant.portfolio.service.today", lambda: date(2026, 11, 1)
+    )  # the price has aged out
+    assert statuses(owner)[BTC] == "unsupported"
+
+
+def test_a_long_coin_id_is_accepted(owner: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_provider(monkeypatch, FakeProvider(COIN_SERIES, name="coingecko"))
+    long_id = "a-" + "very-" * 12 + "long-coin"  # 69 characters, still a valid id
+    response = owner.put(f"/api/prices/{BTC}", json={"symbol": long_id})
+    assert response.status_code == 200, response.text
+    assert {i["isin"]: i for i in response.json()["items"]}[BTC]["symbol"] == long_id
