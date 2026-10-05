@@ -16,14 +16,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from quant.api.deps import AdminUser, CurrentUser, UserDb
-from quant.config import get_settings
+from quant.config import Settings, get_settings
 from quant.ingest.mapping import MANUAL, NO_TICKER, PRICEABLE
-from quant.ingest.prices import fetch_with_fallback, ingest_prices
+from quant.ingest.prices import fetch_with_fallback, ingest_prices, store_bars
 from quant.ingest.runtime import make_fetcher, today_local
 from quant.models import Instrument, PriceEOD
 from quant.portfolio import service
 from quant.portfolio.positions import Position, compute_positions, open_positions
-from quant.providers.base import ProviderError
+from quant.providers.base import PriceProvider, ProviderError
 from quant.providers.registry import price_providers
 
 router = APIRouter(prefix="/api/prices", tags=["prices"])
@@ -138,6 +138,92 @@ def list_prices(user: CurrentUser, db: UserDb) -> PricesOut:
     return PricesOut(items=_items(db, user.id))
 
 
+def _fill(inst: Instrument, position: Position, symbol: str) -> None:
+    """Set the fields a manual entry owns. An existing row keeps its name and class."""
+    if not inst.name or inst.name == inst.isin:
+        inst.name = position.name or inst.isin or ""
+    if inst.asset_class is None:  # a new row; an existing one keeps its class
+        inst.asset_class = PRICEABLE[position.asset_class or "STOCK"]
+    inst.mapping_source = MANUAL
+    inst.mapped_at = datetime.now(UTC)
+    inst.active = True
+
+
+def _conflict() -> HTTPException:
+    return HTTPException(status.HTTP_409_CONFLICT, "Another update ran at the same time: try again")
+
+
+def _retry_same_ticker(
+    db: UserDb,
+    providers: list[PriceProvider],
+    settings: Settings,
+    inst: Instrument | None,
+    position: Position,
+    symbol: str,
+) -> None:
+    """The ticker is already saved (it has no price yet): fetch again. Nothing is deleted."""
+    assert inst is not None
+    inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
+    _fill(inst, position, symbol)
+    db.add(inst)
+    db.commit()
+    result = ingest_prices(
+        db, providers, today_local(settings).date(), settings.backfill_days, codes=[inst.code]
+    )
+    if result.errors:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Saved the symbol, but no price came back: {'; '.join(result.errors.values())}",
+        )
+
+
+def _change_ticker(
+    db: UserDb,
+    providers: list[PriceProvider],
+    settings: Settings,
+    inst: Instrument | None,
+    position: Position,
+    isin: str,
+    symbol: str,
+    old_symbol: str | None,
+) -> None:
+    """A new ticker. Its whole price history is fetched first; only a good answer changes
+    anything, and the old prices are swapped for the new ones in one transaction. A typo, a
+    failed fetch or a ticker without a currency leaves the shared instrument as it was."""
+    today = today_local(settings).date()
+    probe = Instrument(code=isin, isin=isin, currency="EUR", symbols={"yahoo": symbol})
+    try:
+        source, series = fetch_with_fallback(
+            providers, probe, today - timedelta(days=settings.backfill_days), today
+        )
+    except ProviderError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"No price came back for {symbol}, so nothing was changed: {exc}",
+        ) from exc
+    if series.currency is None:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"{source} did not report a currency for {symbol}, so nothing was changed",
+        )
+    try:
+        if inst is None:
+            inst = Instrument(code=isin, isin=isin, currency=series.currency, symbols={})
+            db.add(inst)
+        if old_symbol is not None:
+            # The stored prices belong to the old ticker (maybe in another currency).
+            db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
+        inst.symbols = {"yahoo": symbol}  # the other providers' symbols belonged to the old one
+        inst.currency = series.currency
+        _fill(inst, position, symbol)
+        db.flush()
+        store_bars(db, inst.id, source, series.currency, series)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()  # the mapping job created the same row at the same moment
+        raise _conflict() from exc
+
+
 @router.put("/{isin}", response_model=PricesOut)
 def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> PricesOut:
     """Enter the Yahoo symbol of an instrument by hand, then fetch its prices at once."""
@@ -169,48 +255,10 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
     fetcher = make_fetcher(db, settings)
     try:
         providers = price_providers(settings.price_providers, fetcher)
-        today = today_local(settings).date()
-        if old_symbol != symbol:
-            # A new ticker must return prices before anything is changed or deleted, so a typo
-            # cannot wipe the shared history of a working ticker.
-            probe = Instrument(code=isin, isin=isin, currency="EUR", symbols={"yahoo": symbol})
-            try:
-                fetch_with_fallback(providers, probe, today - timedelta(days=10), today)
-            except ProviderError as exc:
-                raise HTTPException(
-                    status.HTTP_502_BAD_GATEWAY,
-                    f"No price came back for {symbol}, so nothing was changed: {exc}",
-                ) from exc
-        if inst is None:
-            inst = Instrument(code=isin, isin=isin, currency="EUR")
-        if old_symbol is not None and old_symbol != symbol:
-            # The stored prices belong to the old ticker (maybe in another currency): drop them
-            # and fetch the whole history again. The other providers' symbols go too.
-            db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
-            inst.symbols = {"yahoo": symbol}
+        if old_symbol == symbol:
+            _retry_same_ticker(db, providers, settings, inst, position, symbol)
         else:
-            inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
-        inst.name = inst.name if inst.name and inst.name != isin else (position.name or isin)
-        if inst.asset_class is None:  # a new row; an existing one keeps its class
-            inst.asset_class = PRICEABLE[position.asset_class or "STOCK"]
-        inst.mapping_source = MANUAL
-        inst.mapped_at = datetime.now(UTC)
-        inst.active = True
-        db.add(inst)
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()  # the mapping job created the same row at the same moment
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Another update ran at the same time: try again"
-            ) from exc
-        result = ingest_prices(db, providers, today, settings.backfill_days, codes=[inst.code])
+            _change_ticker(db, providers, settings, inst, position, isin, symbol, old_symbol)
     finally:
         fetcher.close()
-    if result.errors:
-        # The ticker returned prices a moment ago, so keep it and say what failed now.
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            f"Saved the symbol, but no price came back: {'; '.join(result.errors.values())}",
-        )
     return PricesOut(items=_items(db, user.id))

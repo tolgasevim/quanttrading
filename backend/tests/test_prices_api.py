@@ -413,3 +413,57 @@ def test_a_save_that_loses_a_race_with_the_mapping_job_gets_a_clear_conflict(
     monkeypatch.setattr(prices, "fetch_with_fallback", probe_then_the_job_creates_the_row)
     response = owner.put(f"/api/prices/{A}", json={"symbol": "ALPH"})
     assert response.status_code == 409 and "try again" in response.json()["detail"]
+
+
+class RecordingProvider(FakeProvider):
+    def __init__(self, series: PriceSeries) -> None:
+        super().__init__(series)
+        self.calls: list[tuple[str, date, date]] = []
+
+    def fetch_eod(self, symbol: str, start: date, end: date) -> PriceSeries:
+        self.calls.append((symbol, start, end))
+        return super().fetch_eod(symbol, start, end)
+
+
+def test_a_new_ticker_is_checked_against_its_whole_history_with_one_fetch(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = add_instrument(db, A, "USD", symbol="OLD")
+    add_price(db, inst, date(2026, 9, 1), "999", "USD")
+    # An illiquid fund: its last price is months old, which a 10-day probe would have refused.
+    series = PriceSeries(
+        "EUR",
+        [Bar(date=date(2026, 3, 2), close=D("50")), Bar(date=date(2026, 3, 3), close=D("51"))],
+    )
+    provider = RecordingProvider(series)
+    use_provider(monkeypatch, provider)
+    from quant.config import get_settings
+
+    assert owner.put(f"/api/prices/{A}", json={"symbol": "FUND.DE"}).status_code == 200
+    assert len(provider.calls) == 1  # one fetch: the old prices are swapped, not fetched again
+    symbol, start, end = provider.calls[0]
+    assert symbol == "FUND.DE" and (end - start).days == get_settings().backfill_days
+    rows = db.query(PriceEOD).filter_by(instrument_id=inst.id).order_by(PriceEOD.date).all()
+    assert [(r.date, r.close, r.currency) for r in rows] == [
+        (date(2026, 3, 2), D("50"), "EUR"),
+        (date(2026, 3, 3), D("51"), "EUR"),
+    ]
+    db.refresh(inst)
+    assert (inst.currency, inst.symbols, inst.mapping_source) == (
+        "EUR",
+        {"yahoo": "FUND.DE"},
+        "manual",
+    )
+
+
+def test_a_new_ticker_without_a_currency_changes_nothing(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = add_instrument(db, A, "USD", symbol="OLD")
+    add_price(db, inst, date(2026, 10, 2), "150", "USD")
+    use_provider(monkeypatch, FakeProvider(PriceSeries(None, [Bar(date(2026, 10, 2), D("9"))])))
+    response = owner.put(f"/api/prices/{A}", json={"symbol": "NEW"})
+    assert response.status_code == 502 and "did not report a currency" in response.json()["detail"]
+    db.refresh(inst)
+    assert inst.symbols == {"yahoo": "OLD"} and inst.currency == "USD"
+    assert db.query(PriceEOD).filter_by(instrument_id=inst.id).one().close == D("150")

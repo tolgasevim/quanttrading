@@ -39,6 +39,38 @@ def fetch_with_fallback(
     raise ProviderError("; ".join(failures))
 
 
+def store_bars(
+    session: Session, instrument_id: int, source: str, currency: str, series: PriceSeries
+) -> int:
+    """Insert or update the bars of one instrument. The caller commits."""
+    rows = [
+        {
+            "instrument_id": instrument_id,
+            "date": bar.date,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "adj_close": bar.adj_close,
+            "volume": bar.volume,
+            "currency": currency,
+            "source": source,
+        }
+        for bar in series.bars
+    ]
+    stmt = insert(PriceEOD).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_prices_eod_instr_date",
+        set_={
+            c: stmt.excluded[c]
+            for c in ("open", "high", "low", "close", "adj_close", "volume", "currency", "source")
+        }
+        | {"fetched_at": func.now()},
+    )
+    session.execute(stmt)
+    return len(rows)
+
+
 def ingest_prices(
     session: Session,
     providers: list[PriceProvider],
@@ -85,40 +117,7 @@ def ingest_prices(
                 result.warnings[instrument.code] = (
                     f"{source} reports {currency}, instrument is set to {instrument.currency}"
                 )
-        rows = [
-            {
-                "instrument_id": instrument.id,
-                "date": bar.date,
-                "open": bar.open,
-                "high": bar.high,
-                "low": bar.low,
-                "close": bar.close,
-                "adj_close": bar.adj_close,
-                "volume": bar.volume,
-                "currency": currency,
-                "source": source,
-            }
-            for bar in series.bars
-        ]
-        stmt = insert(PriceEOD).values(rows)
-        stmt = stmt.on_conflict_do_update(
-            constraint="uq_prices_eod_instr_date",
-            set_={
-                c: stmt.excluded[c]
-                for c in (
-                    "open",
-                    "high",
-                    "low",
-                    "close",
-                    "adj_close",
-                    "volume",
-                    "currency",
-                    "source",
-                )
-            }
-            | {"fetched_at": func.now()},
-        )
-        session.execute(stmt)
+        written = store_bars(session, instrument.id, source, currency, series)
         session.commit()
-        result.rows_written += len(rows)
+        result.rows_written += written
     return result
