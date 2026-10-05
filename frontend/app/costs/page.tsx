@@ -134,7 +134,7 @@ export default function CostsPage() {
           Trade Republic doesn&apos;t say what a spin-off, a rights issue or units transferred in
           cost. Enter what <strong>one unit</strong> cost you, in euros, as it was when you received it (if the instrument has split since, use the cost per unit before the split). It is used for every such
           unit of that instrument, whether you still hold it or have sold it, and flows into your cost
-          basis, profit and loss, and the tax estimate. Leave it empty if you don&apos;t know:
+          basis, profit and loss, and the tax estimate. Units you sold that your history never bought are not listed here: that usually means an import is missing. Leave it empty if you don&apos;t know:
           the figures are then flagged as overstated rather than guessed.
         </p>
         {error && <p className="notice status-failed">{error}</p>}

@@ -266,11 +266,16 @@ class _Engine:
     # -- lots ----------------------------------------------------------------------------
 
     def _entered(self, lot: Lot) -> Lot:
-        """Give a lot with no known cost the per-unit cost the owner entered for its ISIN."""
+        """Give a lot received without a cost the per-unit cost the owner entered for its ISIN.
+
+        Only lots whose cost is exactly unknown (`cost_unknown`, nothing paid) are filled. A lot
+        that already has a cost keeps it, and units the history never bought
+        (`incomplete_history`) are left alone: a cost does not fix their acquisition date, and the
+        gap usually means an import is missing."""
         unit = self.unit_costs.get(lot.isin)
-        if unit is None or not lot.flags & COST_MISSING:
+        if unit is None or FLAG_COST_UNKNOWN not in lot.flags or lot.cost != 0:
             return lot
-        flags = (lot.flags - COST_MISSING) | {FLAG_COST_ENTERED}
+        flags = (lot.flags - {FLAG_COST_UNKNOWN}) | {FLAG_COST_ENTERED}
         # Fees and transaction taxes paid on the purchase are real costs the owner is not asked for.
         return Lot(
             lot.isin, lot.acquired, lot.quantity, lot.quantity * unit, lot.costs, lot.origin, flags
@@ -297,12 +302,10 @@ class _Engine:
                 lots.pop(0)
         flags: frozenset[str] = frozenset()
         if remaining > DUST:
-            gap = Lot(
-                isin, when, remaining, ZERO, ZERO, "buy", frozenset({FLAG_INCOMPLETE_HISTORY})
+            taken.append(
+                Lot(isin, when, remaining, ZERO, ZERO, "buy", frozenset({FLAG_INCOMPLETE_HISTORY}))
             )
-            gap = self._entered(gap)
-            taken.append(gap)
-            flags = gap.flags & COST_MISSING
+            flags = frozenset({FLAG_INCOMPLETE_HISTORY})
         return taken, flags
 
     # -- rows ----------------------------------------------------------------------------
@@ -616,8 +619,9 @@ class MissingCost:
 
 
 def missing_costs(book: LotBook) -> dict[str, MissingCost]:
-    """Per ISIN, the units that need a cost from the owner, or have one entered."""
-    marks = COST_MISSING | {FLAG_COST_ENTERED}
+    """Per ISIN, the units received without a cost that need one from the owner, or have one
+    entered. Units sold that the history never bought are not listed: a cost does not fix them."""
+    marks = frozenset({FLAG_COST_UNKNOWN, FLAG_COST_ENTERED})
     open_units: dict[str, Decimal] = defaultdict(lambda: ZERO)
     sold_units: dict[str, Decimal] = defaultdict(lambda: ZERO)
     sales: dict[str, int] = defaultdict(int)

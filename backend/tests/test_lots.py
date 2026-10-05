@@ -497,11 +497,21 @@ def test_an_entered_cost_reaches_sales_already_made() -> None:
     assert d.realised_pnl == D(36) and not d.cost_unknown  # 60 - 6 x 4
 
 
-def test_an_entered_cost_covers_units_sold_that_the_history_never_bought() -> None:
+def test_an_entered_cost_leaves_units_the_history_never_bought_flagged() -> None:
     ledger = Ledger().buy("A", "5", "50", fee="0").sell("A", "8", "160", fee="0")
     d = ledger.book({"A": D("10")}).disposals[0]
-    assert FLAG_INCOMPLETE_HISTORY not in d.flags
-    assert d.cost == D(50) + D(30)  # 5 units bought at 10, 3 units entered at 10
+    assert FLAG_INCOMPLETE_HISTORY in d.flags and d.cost_unknown  # still a gap to fix by import
+    assert d.cost == D(50)  # only the 5 units that were bought
+    assert "A" not in missing_costs(ledger.book({"A": D("10")}))
+
+
+def test_an_entered_cost_never_overwrites_a_lot_that_already_has_a_cost() -> None:
+    from quant.portfolio.lots import Lot, _Engine
+
+    paid = Lot(
+        "A", date(2024, 1, 1), D(5), D(30), D(0), "corporate_action", frozenset({FLAG_COST_UNKNOWN})
+    )
+    assert _Engine({"A": D(10)})._entered(paid) is paid
 
 
 def test_an_entered_cost_never_overrides_a_known_cost() -> None:
