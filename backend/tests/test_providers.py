@@ -33,6 +33,20 @@ def test_yahoo_filters_to_requested_range() -> None:
     assert [b.date for b in series.bars] == [date(2026, 9, 24)]
 
 
+def test_yahoo_prices_are_rounded_to_4_decimals() -> None:
+    body = (
+        '{"chart":{"error":null,"result":[{"meta":{"currency":"USD","exchangeTimezoneName":"UTC"},'
+        '"timestamp":[1790899200],"indicators":{"quote":[{"close":[233.9499969482422],'
+        '"open":[1.00005],"high":[2.5],"low":[1.2],"volume":[10]}],'
+        '"adjclose":[{"adjclose":[233.94999694]}]}}]}}'
+    )
+    bar = yahoo.parse_chart(body, date(2026, 10, 1), date(2026, 10, 3)).bars[0]
+    assert bar.close == Decimal("233.9500")
+    assert bar.adj_close == Decimal("233.9500")
+    assert bar.open == Decimal("1.0000")  # ties round half-even
+    assert bar.volume == 10
+
+
 def test_yahoo_error_payload_raises() -> None:
     with pytest.raises(ProviderError, match="delisted"):
         yahoo.parse_chart((FIXTURES / "yahoo_chart_error.json").read_text(), *WEEK)
