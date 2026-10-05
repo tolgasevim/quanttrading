@@ -35,6 +35,9 @@ function Row({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const editable = admin && item.status !== "unsupported";
+  const unchanged = symbol.trim() === (item.symbol ?? "");
+  // A saved ticker with no price yet can be fetched again without changing it.
+  const retry = unchanged && item.status === "waiting";
 
   const save = async () => {
     setBusy(true);
@@ -43,6 +46,12 @@ function Row({
       onChange((await put<Prices>(`/api/prices/${item.isin}`, { symbol: symbol.trim() })).items);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "Could not save.");
+      // The ticker may be saved even when the price fetch failed: show the real state.
+      try {
+        onChange((await api<Prices>("/api/prices")).items);
+      } catch {
+        // keep the message above
+      }
     } finally {
       setBusy(false);
     }
@@ -87,9 +96,9 @@ function Row({
         {editable && (
           <button
             onClick={save}
-            disabled={busy || symbol.trim() === "" || symbol.trim() === (item.symbol ?? "")}
+            disabled={busy || symbol.trim() === "" || (unchanged && !retry)}
           >
-            Save
+            {retry ? "Fetch price again" : "Save"}
           </button>
         )}
         {error && <div className="status-failed">{error}</div>}

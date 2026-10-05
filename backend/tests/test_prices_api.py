@@ -200,3 +200,25 @@ def test_symbol_entry_is_for_admins_and_checks_its_input(
 def test_prices_need_a_login(client: TestClient) -> None:
     assert client.get("/api/prices").status_code == 401
     assert client.put(f"/api/prices/{A}", json={"symbol": "X"}).status_code == 401
+
+
+def test_a_new_ticker_replaces_the_stored_prices_of_the_old_one(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = add_instrument(db, A, "USD", symbol="OLD")
+    add_price(db, inst, date(2026, 9, 1), "999", "USD")  # a price of the old ticker
+    series = PriceSeries("EUR", [Bar(date=date(2026, 10, 2), close=D("120"))])
+    use_provider(monkeypatch, FakeProvider(series))
+    assert owner.put(f"/api/prices/{A}", json={"symbol": "NEW.DE"}).status_code == 200
+    rows = db.query(PriceEOD).filter_by(instrument_id=inst.id).all()
+    assert [(r.date, r.close, r.currency) for r in rows] == [(date(2026, 10, 2), D("120"), "EUR")]
+
+
+def test_the_same_ticker_keeps_its_prices_when_a_retry_fails(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = add_instrument(db, A, symbol="SAME")
+    add_price(db, inst, date(2026, 9, 1), "100")
+    use_provider(monkeypatch, FakeProvider(None, fail=True))
+    assert owner.put(f"/api/prices/{A}", json={"symbol": "SAME"}).status_code == 502
+    assert db.query(PriceEOD).filter_by(instrument_id=inst.id).count() == 1

@@ -12,7 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from quant.api.deps import AdminUser, CurrentUser, UserDb
 from quant.config import get_settings
@@ -134,6 +134,10 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
     inst = db.scalar(select(Instrument).where(Instrument.isin == isin))
     if inst is None:
         inst = Instrument(code=isin, isin=isin, currency="EUR")
+    if inst.id is not None and inst.symbols.get("yahoo") not in (None, symbol):
+        # A different ticker: the stored prices belong to the old one (maybe in another
+        # currency), so drop them and fetch the whole history again.
+        db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
     inst.name = inst.name if inst.name and inst.name != isin else (position.name or isin)
     inst.asset_class = PRICEABLE.get(position.asset_class or "", "stock")
     inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}

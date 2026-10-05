@@ -104,17 +104,28 @@ def test_a_later_answer_replaces_the_none_row(db: Session, held: list[HeldIsin])
     assert db.scalar(select(Instrument).where(Instrument.code == SPIN)) is spin  # no duplicate
 
 
-def test_the_next_resolver_is_tried_when_one_fails_or_does_not_know(
-    db: Session, held: list[HeldIsin]
-) -> None:
+def test_the_next_resolver_is_tried_when_one_fails(db: Session, held: list[HeldIsin]) -> None:
     down = FakeResolver("yahoo", {}, fail=True)
     figi = FakeResolver("openfigi", {A: listing("ALPH", "openfigi")})
     result = map_isins(db, [down, figi], NOW, isins=held)
     alpha = db.scalar(select(Instrument).where(Instrument.isin == A))
     assert alpha is not None and alpha.mapping_source == "openfigi"
-    assert not result.errors  # a fallback answered, nothing to report
+    assert A not in result.errors  # a fallback answered, nothing to report
+
+
+def test_not_found_counts_only_when_every_resolver_could_answer(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    down = FakeResolver("yahoo", {}, fail=True)
+    figi = FakeResolver("openfigi", {A: listing("ALPH", "openfigi")})
+    result = map_isins(db, [down, figi], NOW, isins=held)
+    # OpenFIGI said "not found" for B, but Yahoo could not be asked: that proves nothing.
+    assert B in result.errors
+    assert db.scalar(select(Instrument).where(Instrument.isin == B)) is None
+    # With both able to answer, "not found" is remembered.
+    answered = map_isins(db, [FakeResolver("yahoo", {}), figi], NOW, isins=held)
     other = db.scalar(select(Instrument).where(Instrument.isin == B))
-    assert other is not None and other.mapping_source == "none"  # the second resolver said no
+    assert other is not None and other.mapping_source == "none" and B in answered.warnings
 
 
 def test_when_nobody_can_be_asked_nothing_is_remembered(db: Session, held: list[HeldIsin]) -> None:

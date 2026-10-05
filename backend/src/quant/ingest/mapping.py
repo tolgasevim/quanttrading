@@ -53,7 +53,8 @@ def held_isins(session: Session) -> list[HeldIsin]:
 
 
 def _resolve(resolvers: list[IsinResolver], isin: str) -> tuple[Listing | None, list[str]]:
-    """The first listing any resolver finds, plus the errors of resolvers that failed."""
+    """The first listing any resolver finds, plus the errors of resolvers that failed. Without a
+    listing, an empty error list means every resolver answered "not found"."""
     errors: list[str] = []
     for resolver in resolvers:
         try:
@@ -84,8 +85,9 @@ def map_isins(
                 continue  # asked recently, still unknown
         result.attempted += 1
         listing, errors = _resolve(resolvers, held.isin)
-        if listing is None and len(errors) == len(resolvers):
-            # Nobody could be asked (network, rate limit): try again next run, remember nothing.
+        if listing is None and errors:
+            # A resolver could not answer (network, rate limit), so "not found" from the others
+            # proves nothing. Remember nothing and ask again at the next run.
             result.errors[held.isin] = "; ".join(errors)
             continue
         instrument = known or Instrument(code=held.isin, isin=held.isin, currency="EUR")
