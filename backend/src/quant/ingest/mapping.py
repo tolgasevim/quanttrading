@@ -39,18 +39,21 @@ class HeldIsin:
 
 def held_isins(session: Session) -> list[HeldIsin]:
     """Every priceable ISIN that at least one user still holds. A fully sold position needs no
-    price, so it gets no ticker lookup and no nightly price fetch."""
+    price, so it gets no ticker lookup and no nightly price fetch.
+
+    "Still held" is worked out like the position engine does it: all quantity rows of the ISIN
+    count, whatever class the row itself carries (some rows have none), and a non-zero net is
+    held. The class is the one any of the rows carries."""
     movement = and_(
         Transaction.isin.is_not(None),
         Transaction.shares.is_not(None),
         Transaction.category.in_(QUANTITY_CATEGORIES),
-        Transaction.asset_class.in_(PRICEABLE),
     )
     still_held = (
         select(Transaction.isin)
         .where(movement)
         .group_by(Transaction.user_id, Transaction.isin)
-        .having(func.sum(Transaction.shares) > DUST)
+        .having(func.abs(func.sum(Transaction.shares)) > DUST)
     )
     rows = session.execute(
         select(Transaction.isin, func.max(Transaction.name), func.max(Transaction.asset_class))
@@ -58,7 +61,11 @@ def held_isins(session: Session) -> list[HeldIsin]:
         .group_by(Transaction.isin)
         .order_by(Transaction.isin)
     ).all()
-    return [HeldIsin(isin, name, PRICEABLE[cls]) for isin, name, cls in rows if isin and cls]
+    return [
+        HeldIsin(isin, name, PRICEABLE[cls])
+        for isin, name, cls in rows
+        if isin and cls in PRICEABLE
+    ]
 
 
 def _resolve(resolvers: list[IsinResolver], isin: str) -> tuple[Listing | None, list[str]]:

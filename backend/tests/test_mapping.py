@@ -223,3 +223,25 @@ def test_a_mapped_instrument_without_a_reported_currency_is_not_priced_blindly(
     later = ingest_prices(db, [OnePrice(None)], date(2026, 10, 7), 30)
     assert A not in later.errors
     assert {r.currency for r in db.query(PriceEOD).all()} == {"USD"}
+
+
+def test_held_isins_follow_the_position_engine_when_a_row_has_no_class(
+    client: TestClient,
+    admin,
+    db: Session,  # type: ignore[no-untyped-def]
+) -> None:
+    login(client, admin.email)
+    delta, echo = "US0000000050", "US0000000051"
+    rows = [
+        # Delta: a share bought, then sold in full by a row that carries no class.
+        row(80, "2025-01-10", "TRADING", "BUY", "STOCK", "Delta Inc", delta, shares="4", price="10", amount="-40", fee="-1"),
+        row(81, "2025-02-10", "TRADING", "SELL", "", "Delta Inc", delta, shares="-4", price="12", amount="48", fee="-1"),
+        # Echo: bought by a row with no class, partly sold by a share row: 3 units are held.
+        row(82, "2025-01-11", "TRADING", "BUY", "", "Echo Inc", echo, shares="5", price="10", amount="-50", fee="-1"),
+        row(83, "2025-02-11", "TRADING", "SELL", "STOCK", "Echo Inc", echo, shares="-2", price="12", amount="24", fee="-1"),
+    ]  # fmt: skip
+    import_history(client, history(rows))
+    rls.bypass(db)
+    isins = {h.isin: h for h in held_isins(db)}
+    assert delta not in isins  # nothing left to price
+    assert echo in isins and isins[echo].asset_class == "stock"
