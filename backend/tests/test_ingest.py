@@ -140,3 +140,25 @@ def test_a_bad_provider_setting_is_a_failed_run_not_a_crash(
     assert {worker.MAP_JOB, worker.PRICES_JOB, worker.FX_JOB} == set(runs)
     for run in runs.values():
         assert run.status == JobStatus.FAILED and "unknown" in str(run.details["error"])
+
+
+def test_an_empty_resolver_list_is_a_clear_failed_run(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from quant import worker
+    from quant.config import Settings
+    from quant.ingest.mapping import map_isins
+
+    with pytest.raises(ValueError, match="no ISIN resolvers"):
+        map_isins(db, [], datetime.now(UTC), isins=[])
+    monkeypatch.setenv("QT_ISIN_RESOLVERS", "")
+    empty = Settings()
+    assert empty.isin_resolvers == []  # the comma-list parser turns "" into an empty list
+    monkeypatch.setattr(worker, "get_settings", lambda: empty)
+    worker.run_mapping()
+    run = db.query(JobRun).filter_by(job=worker.MAP_JOB).one()
+    assert run.status == JobStatus.FAILED and "QT_ISIN_RESOLVERS is empty" in str(
+        run.details["error"]
+    )

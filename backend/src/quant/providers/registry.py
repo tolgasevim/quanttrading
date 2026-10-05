@@ -32,6 +32,8 @@ RESOLVER_NAMES = ("yahoo", "openfigi")
 def isin_resolvers(
     names: list[str], fetcher: Fetcher, openfigi_key: str | None
 ) -> list[IsinResolver]:
+    if not names:
+        raise ValueError("no ISIN resolvers configured (QT_ISIN_RESOLVERS is empty)")
     unknown = [n for n in names if n not in RESOLVER_NAMES]
     if unknown:
         raise ValueError(f"unknown ISIN resolver(s): {', '.join(unknown)}")

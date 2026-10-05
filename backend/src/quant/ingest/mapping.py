@@ -92,6 +92,10 @@ def map_isins(
     retry_days: int = 30,
     isins: list[HeldIsin] | None = None,
 ) -> JobResult:
+    if not resolvers:
+        # Without a resolver "every resolver failed" would be true for every ISIN: say what is
+        # wrong instead of recording empty errors.
+        raise ValueError("no ISIN resolvers configured (QT_ISIN_RESOLVERS is empty)")
     result = JobResult()
     existing = {i.isin: i for i in session.scalars(select(Instrument)) if i.isin}
     for held in isins if isins is not None else held_isins(session):
