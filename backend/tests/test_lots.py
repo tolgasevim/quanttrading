@@ -6,11 +6,13 @@ import pytest
 
 from quant.portfolio.lots import (
     FLAG_CARRIED,
+    FLAG_COST_ENTERED,
     FLAG_COST_UNKNOWN,
     FLAG_INCOMPLETE_HISTORY,
     FLAG_PRICE_DERIVED,
     LotBook,
     build_lots,
+    missing_costs,
     position_costs,
     realised_by_isin,
     realised_by_year,
@@ -133,8 +135,8 @@ class Ledger:
         )
         return self
 
-    def book(self) -> LotBook:
-        return build_lots(self.rows)
+    def book(self, unit_costs: dict[str, D] | None = None) -> LotBook:
+        return build_lots(self.rows, unit_costs)
 
 
 def at(day: int, hour: int = 9, minute: int = 0) -> datetime:
@@ -478,3 +480,52 @@ def test_a_swap_of_units_the_history_never_bought_keeps_the_gap_flag() -> None:
     new = position_costs(ledger.book())["NEW"]
     assert new.quantity == D(8) and new.cost == D(50)
     assert FLAG_INCOMPLETE_HISTORY in new.flags  # 3 of the 8 units have no cost
+
+
+def test_an_entered_cost_per_unit_replaces_the_missing_cost_of_a_spin_off() -> None:
+    ledger = Ledger().buy("PARENT", "30", "900").action("SPIN_OFF", "CHILD", "6")
+    child = position_costs(ledger.book({"CHILD": D("12.5")}))["CHILD"]
+    assert (child.quantity, child.cost, child.costs) == (D(6), D(75), D(0))
+    assert FLAG_COST_UNKNOWN not in child.flags and FLAG_COST_ENTERED in child.flags
+
+
+def test_an_entered_cost_reaches_sales_already_made() -> None:
+    ledger = Ledger().buy("PARENT", "30", "900").action("SPIN_OFF", "CHILD", "6")
+    ledger.sell("CHILD", "6", "60", fee="0")
+    assert ledger.book().disposals[0].realised_pnl == D(60)  # no cost: the whole proceeds
+    d = ledger.book({"CHILD": D("4")}).disposals[0]
+    assert d.realised_pnl == D(36) and not d.cost_unknown  # 60 - 6 x 4
+
+
+def test_an_entered_cost_covers_units_sold_that_the_history_never_bought() -> None:
+    ledger = Ledger().buy("A", "5", "50", fee="0").sell("A", "8", "160", fee="0")
+    d = ledger.book({"A": D("10")}).disposals[0]
+    assert FLAG_INCOMPLETE_HISTORY not in d.flags
+    assert d.cost == D(50) + D(30)  # 5 units bought at 10, 3 units entered at 10
+
+
+def test_an_entered_cost_never_overrides_a_known_cost() -> None:
+    ledger = Ledger().buy("A", "10", "100", fee="0")
+    assert position_costs(ledger.book({"A": D("99")}))["A"].cost == D(100)
+
+
+def test_missing_costs_lists_open_and_sold_units_and_whether_entered() -> None:
+    ledger = Ledger().buy("PARENT", "30", "900").action("SPIN_OFF", "CHILD", "6")
+    ledger.sell("CHILD", "2", "20", fee="0")
+    need = missing_costs(ledger.book())["CHILD"]
+    assert (need.open_units, need.sold_units, need.sales, need.entered) == (D(4), D(2), 1, False)
+    done = missing_costs(ledger.book({"CHILD": D(5)}))["CHILD"]
+    assert (done.open_units, done.sold_units, done.entered) == (D(4), D(2), True)
+    assert "PARENT" not in missing_costs(ledger.book())
+
+
+def test_an_entered_cost_carried_through_a_swap_is_plain_cost_afterwards() -> None:
+    ledger = (
+        Ledger()
+        .action("SPIN_OFF", "OLD", "10")
+        .action("MERGER", "OLD", "-10", at=at(10, 22, 4))
+        .action("MERGER", "NEW", "10", at=at(10, 22, 4))
+    )
+    new = position_costs(ledger.book({"OLD": D(3)}))["NEW"]
+    assert new.cost == D(30) and FLAG_COST_UNKNOWN not in new.flags
+    assert FLAG_COST_ENTERED not in new.flags and FLAG_CARRIED in new.flags

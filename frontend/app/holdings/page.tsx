@@ -28,6 +28,7 @@ const FLAG_TEXT: Record<Position["cost_flags"][number], string> = {
   price_derived: "valued at the price on receipt",
   carried: "carried over by a corporate action",
   incomplete_history: "history incomplete",
+  cost_entered: "cost entered by you",
 };
 
 // Display only: every figure is computed on the server as an exact decimal.
@@ -101,7 +102,8 @@ export default function HoldingsPage() {
             </strong>{" "}
             Trade Republic doesn&apos;t say what a spin-off, rights issue or free share cost, so profit
             on {unknownCost.length === 1 ? "it" : "them"} can&apos;t be worked out yet:{" "}
-            {unknownCost.map((p) => p.name ?? p.isin).join(", ")}.
+            {unknownCost.map((p) => p.name ?? p.isin).join(", ")}.{" "}
+            <a href="/costs">Enter what a unit cost</a> and it is included everywhere.
           </p>
         )}
         {data && data.review.unattributed_cash.length > 0 && (

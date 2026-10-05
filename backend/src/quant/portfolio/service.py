@@ -10,12 +10,13 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from quant.importers import tr_crypto_pdf
-from quant.models import Snapshot, Transaction
+from quant.models import Snapshot, Transaction, UnitCost
 from quant.portfolio.lots import (
     FLAG_PRICE_DERIVED,
     LotBook,
     PositionCost,
     build_lots,
+    missing_costs,
     position_costs,
 )
 from quant.portfolio.positions import (
@@ -118,6 +119,12 @@ def load_movements(session: Session, user_id: uuid.UUID) -> list[Transaction]:
     )
 
 
+def load_unit_costs(session: Session, user_id: uuid.UUID) -> dict[str, Decimal]:
+    """The cost per unit the owner entered, by ISIN (FR-20)."""
+    rows = session.scalars(select(UnitCost).where(UnitCost.user_id == user_id))
+    return {row.isin: row.unit_cost for row in rows}
+
+
 def statement_lines(snapshot: Snapshot) -> list[StatementLine]:
     return [
         StatementLine(
@@ -197,7 +204,8 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
     movements = load_movements(session, user_id)
     everything = compute_positions(movements)
     current = open_positions(everything)
-    book = build_lots(movements)
+    unit_costs = load_unit_costs(session, user_id)
+    book = build_lots(movements, unit_costs)
     holdings = Holdings(
         positions=current,
         everything=everything,
@@ -213,7 +221,7 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
         as_of_rows = [m for m in movements if m.date <= snapshot.as_of]
         as_of_positions = open_positions(compute_positions(as_of_rows))
         result = reconcile_snapshot(as_of_positions, snapshot)
-        as_of_book = build_lots(as_of_rows)
+        as_of_book = build_lots(as_of_rows, unit_costs)
         result.cost_checks = cost_checks(snapshot, as_of_positions, as_of_book)
         holdings.reconciliations.append(result)
         holdings.marks.update(marks_from_snapshot(snapshot, as_of_positions, as_of_book))
@@ -233,7 +241,7 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
 def build_tax(session: Session, user_id: uuid.UUID) -> list[YearEstimate]:
     """The German tax estimate per year (FR-26) from the user's whole history."""
     movements = load_movements(session, user_id)
-    book = build_lots(movements)
+    book = build_lots(movements, load_unit_costs(session, user_id))
     classes = {p.isin: p.asset_class for p in compute_positions(movements).values()}
     rows = session.scalars(
         select(Transaction).where(
@@ -255,3 +263,52 @@ def build_tax(session: Session, user_id: uuid.UUID) -> list[YearEstimate]:
                 Income(tx.date, asset_class or tx.asset_class, tx.amount, -(tx.tax or Decimal(0)))
             )
     return estimate(book.disposals, classes, income, refunds)
+
+
+@dataclass(frozen=True)
+class CostItem:
+    isin: str
+    name: str | None
+    asset_class: str | None
+    open_units: Decimal
+    sold_units: Decimal
+    sales: int
+    unit_cost: Decimal | None  # what the owner entered, if anything
+    note: str | None
+
+
+def build_cost_items(session: Session, user_id: uuid.UUID) -> list[CostItem]:
+    """Instruments whose cost the broker did not give, with what the owner has entered. Entries
+    that no longer match any unit stay listed so they can be changed or removed."""
+    movements = load_movements(session, user_id)
+    entries = {
+        row.isin: row
+        for row in session.scalars(select(UnitCost).where(UnitCost.user_id == user_id))
+    }
+    book = build_lots(movements, {i: e.unit_cost for i, e in entries.items()})
+    everything = compute_positions(movements)
+    missing = missing_costs(book)
+    items = []
+    for isin in sorted(set(missing) | set(entries)):
+        gap = missing.get(isin)
+        known = everything.get(isin)
+        entry = entries.get(isin)
+        items.append(
+            CostItem(
+                isin=isin,
+                name=known.name if known else None,
+                asset_class=known.asset_class if known else None,
+                open_units=gap.open_units if gap else Decimal(0),
+                sold_units=gap.sold_units if gap else Decimal(0),
+                sales=gap.sales if gap else 0,
+                unit_cost=entry.unit_cost if entry else None,
+                note=entry.note if entry else None,
+            )
+        )
+    # Instruments that still need a cost come first.
+    return sorted(items, key=lambda i: (i.unit_cost is not None, i.name or i.isin))
+
+
+def known_isins(session: Session, user_id: uuid.UUID) -> set[str]:
+    """Every ISIN in the user's unit-moving history."""
+    return set(compute_positions(load_movements(session, user_id)))

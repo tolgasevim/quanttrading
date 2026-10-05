@@ -51,7 +51,8 @@ export default function TaxPage() {
             {y.cost_unknown_sales > 0 && (
               <p className="status-failed">
                 {y.cost_unknown_sales} sale{y.cost_unknown_sales > 1 ? "s" : ""} of units without a known
-                cost: the gain, and so the tax, is overstated.
+                cost: the gain, and so the tax, is overstated.{" "}
+                <a href="/costs">Enter the cost</a>
               </p>
             )}
             <table>
