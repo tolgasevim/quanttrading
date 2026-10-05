@@ -34,9 +34,10 @@ class PriceItem(BaseModel):
     isin: str
     name: str | None
     asset_class: str | None
-    # priced | stale (the last price is too old to use) | waiting (mapped, no price yet) |
-    # unmapped (no ticker found) | not_checked (the mapping has not run yet) | unsupported (no
-    # ticker expected: crypto, bonds, funds without one)
+    # priced | stale (the last price is too old to use) | no_rate (no ECB rate for its currency) |
+    # inactive (switched off) | waiting (mapped, no price yet) | unmapped (no ticker found) |
+    # not_checked (the mapping has not run yet) | unsupported (no ticker expected: crypto, bonds,
+    # funds without one)
     status: str
     symbol: str | None
     mapping_source: str | None
@@ -81,7 +82,9 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
             )
         ).all()
     }
-    newest_anywhere = db.scalar(select(func.max(PriceEOD.date)))
+    # The same test the Holdings page applies, so "priced" here means a value there.
+    usable = service.price_marks(db, positions, {})
+    oldest_usable = service.today() - timedelta(days=service.MAX_PRICE_AGE_DAYS)
     items = []
     for p in positions:
         inst = instruments.get(p.isin)
@@ -92,14 +95,16 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
             state = "not_checked"
         elif inst.mapping_source == NO_TICKER:
             state = "unmapped"
+        elif not inst.active:
+            state = "inactive"
         elif last is None:
             state = "waiting"
-        elif newest_anywhere is not None and last[0] < newest_anywhere - timedelta(
-            days=service.MAX_PRICE_AGE_DAYS
-        ):
+        elif p.isin in usable:
+            state = "priced"
+        elif last[0] < oldest_usable:
             state = "stale"
         else:
-            state = "priced"
+            state = "no_rate"
         items.append(
             PriceItem(
                 isin=p.isin,
@@ -116,6 +121,8 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
     order = {
         "unmapped": 0,
         "stale": 1,
+        "no_rate": 1,
+        "inactive": 1,
         "waiting": 2,
         "not_checked": 3,
         "priced": 4,

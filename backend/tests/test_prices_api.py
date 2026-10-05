@@ -12,6 +12,14 @@ from .conftest import login, make_user
 from .test_holdings_pnl_api import BTC, SPIN, A, by_name, history, import_history, upload
 
 
+@pytest.fixture(autouse=True)
+def fixed_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prices are dated in October 2026; the age test must not drift with the real date."""
+    from quant.portfolio import service
+
+    monkeypatch.setattr(service, "today", lambda: date(2026, 10, 5))
+
+
 @pytest.fixture
 def owner(client: TestClient, admin: User) -> TestClient:
     login(client, admin.email)
@@ -170,6 +178,7 @@ def test_an_admin_can_enter_a_symbol_and_gets_prices_at_once(
 ) -> None:
     series = PriceSeries("USD", [Bar(date=date(2026, 10, 2), close=D("150"))])
     use_provider(monkeypatch, FakeProvider(series))
+    add_fx(db, "USD", date(2026, 10, 1), "1.25")
     response = owner.put(f"/api/prices/{A}", json={"symbol": "ALPH"})
     assert response.status_code == 200
     item = {i["isin"]: i for i in response.json()["items"]}[A]
@@ -267,10 +276,39 @@ def test_a_price_far_older_than_the_newest_one_is_not_used(owner: TestClient, db
     fresh = add_instrument(db, SPIN, symbol="OTHER")
     add_price(db, fresh, date(2026, 10, 2), "5")
     body = owner.get("/api/holdings").json()
-    assert by_name(body)["Alpha Corp"]["market_value"] is None  # a month behind everything else
+    assert by_name(body)["Alpha Corp"]["market_value"] is None  # a month old
     assert by_name(body)["Spin Co"]["market_value"] == "30.00"
     assert body["review"]["unpriced"] == 3  # Alpha, Bitcoin, Ethereum
     assert statuses(owner)[A] == "stale" and statuses(owner)[SPIN] == "priced"
     add_price(db, stale, date(2026, 9, 28), "110")  # within ten days of the newest
     assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "110"
     assert statuses(owner)[A] == "priced"
+
+
+def test_when_the_price_job_stops_every_price_ages_out(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.portfolio import service
+
+    add_price(db, add_instrument(db, A), date(2026, 10, 2), "120")
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "120"
+    monkeypatch.setattr(service, "today", lambda: date(2026, 11, 30))  # weeks without a new price
+    body = owner.get("/api/holdings").json()
+    assert by_name(body)["Alpha Corp"]["market_value"] is None
+    assert statuses(owner)[A] == "stale"
+
+
+def test_the_prices_page_never_says_priced_when_holdings_shows_no_value(
+    owner: TestClient, db: Session
+) -> None:
+    usd = add_instrument(db, A, "USD")
+    add_price(db, usd, date(2026, 10, 2), "150", "USD")  # no ECB rate for USD stored
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["market_value"] is None
+    assert statuses(owner)[A] == "no_rate"
+    add_fx(db, "USD", date(2026, 10, 1), "1.25")
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["market_value"] == "720.00"
+    assert statuses(owner)[A] == "priced"
+    usd.active = False
+    db.commit()
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["market_value"] is None
+    assert statuses(owner)[A] == "inactive"

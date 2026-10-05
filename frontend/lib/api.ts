@@ -253,7 +253,7 @@ export type PriceItem = {
   isin: string;
   name: string | null;
   asset_class: string | null;
-  status: "priced" | "stale" | "waiting" | "unmapped" | "not_checked" | "unsupported";
+  status: "priced" | "stale" | "no_rate" | "inactive" | "waiting" | "unmapped" | "not_checked" | "unsupported";
   symbol: string | null;
   mapping_source: string | null;
   currency: string | null;

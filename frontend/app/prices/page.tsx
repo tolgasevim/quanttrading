@@ -8,6 +8,8 @@ import { useUser } from "../useUser";
 const STATUS_TEXT: Record<PriceItem["status"], string> = {
   priced: "Priced",
   stale: "Last price is too old: the ticker may be wrong or delisted",
+  no_rate: "No euro exchange rate for the currency of this price",
+  inactive: "Switched off",
   waiting: "Ticker found, waiting for the first price",
   unmapped: "No ticker found",
   not_checked: "Not looked up yet",
@@ -64,7 +66,7 @@ function Row({
         {item.name ?? "—"}
         <div className="mono muted">{item.isin}</div>
       </td>
-      <td className={item.status === "unmapped" || item.status === "stale" ? "status-failed" : ""}>
+      <td className={["unmapped", "stale", "no_rate"].includes(item.status) ? "status-failed" : ""}>
         {STATUS_TEXT[item.status]}
         {item.mapping_source && item.mapping_source !== "none" && (
           <div className="muted">{SOURCE_TEXT[item.mapping_source] ?? item.mapping_source}</div>
