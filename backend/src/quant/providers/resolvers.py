@@ -60,6 +60,8 @@ def parse_yahoo_search(body: str) -> Listing | None:
     except (ValueError, AttributeError, TypeError) as exc:
         raise ProviderError(f"yahoo_search: unreadable response: {exc}") from exc
     for quote in quotes:
+        if not isinstance(quote, dict):
+            continue  # a malformed entry must not stop the lookup of the others
         if quote.get("quoteType") in YAHOO_TYPES and quote.get("symbol"):
             return Listing(
                 symbol=str(quote["symbol"]),
@@ -117,26 +119,42 @@ class OpenFigiResolver:
         return parse_openfigi(body)
 
 
+def _figi_symbol(ticker: str, exchange: str) -> str:
+    symbol = ticker.replace("/", "-").replace(" ", "-")
+    suffix = FIGI_SUFFIX[exchange]
+    if suffix == ".HK" and symbol.isdigit():
+        symbol = symbol.zfill(4)  # Yahoo writes Hong Kong tickers with four digits: 0700.HK
+    return symbol + suffix
+
+
 def parse_openfigi(body: str) -> Listing | None:
     try:
         results: Any = json.loads(body)
         if not isinstance(results, list):
             raise TypeError(f"expected a list, got {type(results).__name__}")
-        data = results[0].get("data", []) if results else []
-    except (ValueError, AttributeError, TypeError) as exc:
+        first = results[0] if results else {}
+        if not isinstance(first, dict):
+            raise TypeError("the first result is not an object")
+        data = first.get("data", [])
+        if not isinstance(data, list):
+            raise TypeError("data is not a list")
+    except (ValueError, TypeError) as exc:
         raise ProviderError(f"openfigi: unreadable response: {exc}") from exc
     order = list(FIGI_SUFFIX)
     candidates = [
         d
         for d in data
-        if d.get("ticker")
+        if isinstance(d, dict)  # skip malformed entries instead of failing the whole lookup
+        and d.get("ticker")
         and d.get("exchCode") in FIGI_SUFFIX
         and d.get("marketSector") in FIGI_SECTORS
     ]
     if not candidates:
         return None
     best = min(candidates, key=lambda d: order.index(d["exchCode"]))
-    symbol = str(best["ticker"]).replace("/", "-").replace(" ", "-") + FIGI_SUFFIX[best["exchCode"]]
     return Listing(
-        symbol=symbol, name=best.get("name"), exchange=best.get("exchCode"), source="openfigi"
+        symbol=_figi_symbol(str(best["ticker"]), best["exchCode"]),
+        name=best.get("name"),
+        exchange=best.get("exchCode"),
+        source="openfigi",
     )

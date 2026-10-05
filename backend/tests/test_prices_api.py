@@ -149,10 +149,19 @@ class FakeProvider:
         return self.series or PriceSeries(None, [])
 
 
+class Closable:
+    """Stands in for the HTTP fetcher; remembers whether the request released it."""
+
+    closed = 0
+
+    def close(self) -> None:
+        Closable.closed += 1
+
+
 def use_provider(monkeypatch: pytest.MonkeyPatch, provider: FakeProvider) -> None:
     from quant.api import prices
 
-    monkeypatch.setattr(prices, "make_fetcher", lambda db, settings: None)
+    monkeypatch.setattr(prices, "make_fetcher", lambda db, settings: Closable())
     monkeypatch.setattr(prices, "price_providers", lambda names, fetcher: [provider])
 
 
@@ -222,3 +231,46 @@ def test_the_same_ticker_keeps_its_prices_when_a_retry_fails(
     use_provider(monkeypatch, FakeProvider(None, fail=True))
     assert owner.put(f"/api/prices/{A}", json={"symbol": "SAME"}).status_code == 502
     assert db.query(PriceEOD).filter_by(instrument_id=inst.id).count() == 1
+
+
+def test_the_request_releases_its_http_connections(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add_instrument(db, A)
+    Closable.closed = 0
+    use_provider(monkeypatch, FakeProvider(PriceSeries("EUR", [Bar(date(2026, 10, 2), D("1"))])))
+    owner.put(f"/api/prices/{A}", json={"symbol": "SYM"})
+    use_provider(monkeypatch, FakeProvider(None, fail=True))
+    owner.put(f"/api/prices/{A}", json={"symbol": "SYM"})  # a failed fetch releases it too
+    assert Closable.closed == 2
+
+
+def test_a_new_ticker_drops_the_symbols_other_providers_had_for_the_old_one(
+    owner: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inst = Instrument(code=A, isin=A, name="Alpha", asset_class="stock", currency="EUR",
+                      symbols={"yahoo": "OLD", "stooq": "old.us"})  # fmt: skip
+    db.add(inst)
+    db.commit()
+    use_provider(monkeypatch, FakeProvider(None, fail=True))
+    owner.put(f"/api/prices/{A}", json={"symbol": "OLD"})  # same ticker: stooq stays
+    db.refresh(inst)
+    assert inst.symbols == {"yahoo": "OLD", "stooq": "old.us"}
+    owner.put(f"/api/prices/{A}", json={"symbol": "NEW"})
+    db.refresh(inst)
+    assert inst.symbols == {"yahoo": "NEW"}  # the old security's stooq symbol is gone
+
+
+def test_a_price_far_older_than_the_newest_one_is_not_used(owner: TestClient, db: Session) -> None:
+    stale = add_instrument(db, A)
+    add_price(db, stale, date(2026, 9, 1), "100")
+    fresh = add_instrument(db, SPIN, symbol="OTHER")
+    add_price(db, fresh, date(2026, 10, 2), "5")
+    body = owner.get("/api/holdings").json()
+    assert by_name(body)["Alpha Corp"]["market_value"] is None  # a month behind everything else
+    assert by_name(body)["Spin Co"]["market_value"] == "30.00"
+    assert body["review"]["unpriced"] == 3  # Alpha, Bitcoin, Ethereum
+    assert statuses(owner)[A] == "stale" and statuses(owner)[SPIN] == "priced"
+    add_price(db, stale, date(2026, 9, 28), "110")  # within ten days of the newest
+    assert by_name(owner.get("/api/holdings").json())["Alpha Corp"]["price"] == "110"
+    assert statuses(owner)[A] == "priced"

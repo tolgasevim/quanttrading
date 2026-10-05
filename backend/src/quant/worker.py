@@ -36,38 +36,50 @@ def run_mapping() -> None:
     with get_sessionmaker()() as session:
         # Shared market data across users: read every user's transactions (FR-3 bypass).
         rls.bypass(session)
-        resolvers = isin_resolvers(
-            settings.isin_resolvers, make_fetcher(session, settings), settings.openfigi_api_key
-        )
-        run_job(
-            session,
-            MAP_JOB,
-            lambda s: map_isins(s, resolvers, datetime.now(UTC), settings.isin_retry_days),
-        )
+        fetcher = make_fetcher(session, settings)
+        try:
+            resolvers = isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key)
+            run_job(
+                session,
+                MAP_JOB,
+                lambda s: map_isins(s, resolvers, datetime.now(UTC), settings.isin_retry_days),
+            )
+        finally:
+            fetcher.close()
 
 
 def run_prices() -> None:
     settings = get_settings()
     with get_sessionmaker()() as session:
-        providers = price_providers(settings.price_providers, make_fetcher(session, settings))
-        run_job(
-            session,
-            PRICES_JOB,
-            lambda s: ingest_prices(
-                s, providers, today_local(settings).date(), settings.backfill_days
-            ),
-        )
+        fetcher = make_fetcher(session, settings)
+        try:
+            providers = price_providers(settings.price_providers, fetcher)
+            run_job(
+                session,
+                PRICES_JOB,
+                lambda s: ingest_prices(
+                    s, providers, today_local(settings).date(), settings.backfill_days
+                ),
+            )
+        finally:
+            fetcher.close()
 
 
 def run_fx() -> None:
     settings = get_settings()
     with get_sessionmaker()() as session:
-        provider = fx_provider(settings.fx_provider, make_fetcher(session, settings))
-        run_job(
-            session,
-            FX_JOB,
-            lambda s: ingest_fx(s, provider, today_local(settings).date(), settings.backfill_days),
-        )
+        fetcher = make_fetcher(session, settings)
+        try:
+            provider = fx_provider(settings.fx_provider, fetcher)
+            run_job(
+                session,
+                FX_JOB,
+                lambda s: ingest_fx(
+                    s, provider, today_local(settings).date(), settings.backfill_days
+                ),
+            )
+        finally:
+            fetcher.close()
 
 
 def needs_catch_up(session: Session, job: str, now: datetime) -> bool:

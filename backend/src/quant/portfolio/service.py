@@ -3,7 +3,7 @@ with cost basis and profit and loss from the FIFO lot engine."""
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import and_, func, or_, select
@@ -200,6 +200,12 @@ def marks_from_snapshot(
     return marks
 
 
+# A stored price counts only while it is no more than this many days older than the newest price
+# of any instrument. A ticker that stopped updating (delisted, renamed) then shows as unpriced
+# instead of passing an old price off as the current value.
+MAX_PRICE_AGE_DAYS = 10
+
+
 def price_marks(
     session: Session, positions: list[Position], costs: dict[str, PositionCost]
 ) -> dict[str, Mark]:
@@ -225,9 +231,14 @@ def price_marks(
         .where(Instrument.isin.in_(isins), Instrument.active.is_(True))
     ).all()
     quantities = {p.isin: p.quantity for p in positions}
+    newest_anywhere = session.scalar(select(func.max(PriceEOD.date)))
     marks: dict[str, Mark] = {}
     for isin, close, currency, day, source in rows:
         if close is None or not isin:
+            continue
+        if newest_anywhere is not None and day < newest_anywhere - timedelta(
+            days=MAX_PRICE_AGE_DAYS
+        ):
             continue
         price = close
         if currency and currency != "EUR":

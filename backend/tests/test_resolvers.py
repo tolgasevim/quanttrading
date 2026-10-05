@@ -174,3 +174,41 @@ def test_post_retries_rate_limits_but_not_client_errors() -> None:
     with pytest.raises(ProviderError):
         make_fetcher(httpx.MockTransport(forbidden), []).post_json("openfigi", "https://x.test", [])
     assert bad["n"] == 1  # a 401 will not fix itself
+
+
+def test_malformed_entries_are_skipped_not_fatal() -> None:
+    mixed = {"quotes": ["x", 5, None, {"quoteType": "EQUITY", "symbol": "OK"}]}
+    listing = parse_yahoo_search(json.dumps(mixed))
+    assert listing is not None and listing.symbol == "OK"
+    assert parse_yahoo_search(json.dumps({"quotes": ["x", None]})) is None
+    broken = [
+        {"data": ["x", 5, None, {"ticker": "ACME", "exchCode": "US", "marketSector": "Equity"}]}
+    ]
+    figi_listing = parse_openfigi(json.dumps(broken))
+    assert figi_listing is not None and figi_listing.symbol == "ACME"
+    assert parse_openfigi(json.dumps([{"data": ["x"]}])) is None
+
+
+def test_a_wrong_overall_shape_is_a_provider_error_not_a_crash() -> None:
+    for body in ('["x"]', '[{"data": "x"}]', "[5]", '{"quotes": 5}', "null"):
+        with pytest.raises(ProviderError):
+            parse_openfigi(body) if body != '{"quotes": 5}' else parse_yahoo_search(body)
+    with pytest.raises(ProviderError):
+        parse_yahoo_search("null")
+
+
+def test_hong_kong_tickers_get_four_digits() -> None:
+    tencent = parse_openfigi(figi(("700", "HK", "Equity")))
+    assert tencent is not None and tencent.symbol == "0700.HK"
+    alibaba = parse_openfigi(figi(("9988", "HK", "Equity")))
+    assert alibaba is not None and alibaba.symbol == "9988.HK"
+    tokyo = parse_openfigi(figi(("7203", "JT", "Equity")))
+    assert tokyo is not None and tokyo.symbol == "7203.T"  # other markets keep their digits
+
+
+def test_the_fetcher_can_release_its_connection() -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    fetcher = Fetcher(client)
+    assert not client.is_closed
+    fetcher.close()
+    assert client.is_closed

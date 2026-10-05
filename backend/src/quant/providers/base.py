@@ -73,6 +73,10 @@ class Fetcher:
         self._backoff = backoff_seconds
         self._sleep = sleep
 
+    def close(self) -> None:
+        """Release the HTTP connections. Call it when the job or request is done."""
+        self._client.close()
+
     def get_text(self, provider: str, url: str, params: Mapping[str, str] | None = None) -> str:
         request_key = str(httpx.URL(url, params=params))[:300]
         last_error: Exception | None = None

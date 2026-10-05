@@ -6,7 +6,7 @@ a user holds, so the list is built from the signed-in user's own positions.
 
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated
 
@@ -34,8 +34,9 @@ class PriceItem(BaseModel):
     isin: str
     name: str | None
     asset_class: str | None
-    # priced | waiting (mapped, no price yet) | unmapped (no ticker found) | not_checked (the
-    # mapping has not run yet) | unsupported (no ticker expected: crypto, bonds, funds without one)
+    # priced | stale (the last price is too old to use) | waiting (mapped, no price yet) |
+    # unmapped (no ticker found) | not_checked (the mapping has not run yet) | unsupported (no
+    # ticker expected: crypto, bonds, funds without one)
     status: str
     symbol: str | None
     mapping_source: str | None
@@ -80,6 +81,7 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
             )
         ).all()
     }
+    newest_anywhere = db.scalar(select(func.max(PriceEOD.date)))
     items = []
     for p in positions:
         inst = instruments.get(p.isin)
@@ -92,6 +94,10 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
             state = "unmapped"
         elif last is None:
             state = "waiting"
+        elif newest_anywhere is not None and last[0] < newest_anywhere - timedelta(
+            days=service.MAX_PRICE_AGE_DAYS
+        ):
+            state = "stale"
         else:
             state = "priced"
         items.append(
@@ -107,7 +113,14 @@ def _items(db: UserDb, user_id: uuid.UUID) -> list[PriceItem]:
                 last_close=_trim(last[1]) if last else None,
             )
         )
-    order = {"unmapped": 0, "waiting": 1, "not_checked": 2, "priced": 3, "unsupported": 4}
+    order = {
+        "unmapped": 0,
+        "stale": 1,
+        "waiting": 2,
+        "not_checked": 3,
+        "priced": 4,
+        "unsupported": 5,
+    }
     return sorted(items, key=lambda i: (order[i.status], i.name or i.isin))
 
 
@@ -134,23 +147,31 @@ def set_symbol(isin: str, body: SymbolIn, user: AdminUser, db: UserDb) -> Prices
     inst = db.scalar(select(Instrument).where(Instrument.isin == isin))
     if inst is None:
         inst = Instrument(code=isin, isin=isin, currency="EUR")
-    if inst.id is not None and inst.symbols.get("yahoo") not in (None, symbol):
+    changed = inst.id is not None and inst.symbols.get("yahoo") not in (None, symbol)
+    if changed:
         # A different ticker: the stored prices belong to the old one (maybe in another
         # currency), so drop them and fetch the whole history again.
         db.execute(delete(PriceEOD).where(PriceEOD.instrument_id == inst.id))
     inst.name = inst.name if inst.name and inst.name != isin else (position.name or isin)
     inst.asset_class = PRICEABLE.get(position.asset_class or "", "stock")
-    inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
+    if changed:
+        inst.symbols = {"yahoo": symbol}  # the other providers' symbols belong to the old ticker
+    else:
+        inst.symbols = {**(inst.symbols or {}), "yahoo": symbol}
     inst.mapping_source = MANUAL
     inst.mapped_at = datetime.now(UTC)
     inst.active = True
     db.add(inst)
     db.commit()
     settings = get_settings()
-    providers = price_providers(settings.price_providers, make_fetcher(db, settings))
-    result = ingest_prices(
-        db, providers, today_local(settings).date(), settings.backfill_days, codes=[inst.code]
-    )
+    fetcher = make_fetcher(db, settings)
+    try:
+        providers = price_providers(settings.price_providers, fetcher)
+        result = ingest_prices(
+            db, providers, today_local(settings).date(), settings.backfill_days, codes=[inst.code]
+        )
+    finally:
+        fetcher.close()
     if result.errors:
         # Keep the symbol (it may be right and the provider briefly down) and say what failed.
         raise HTTPException(
