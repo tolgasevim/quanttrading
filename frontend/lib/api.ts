@@ -211,6 +211,7 @@ export type YearTax = {
   withheld: string;
   to_settle: string;
   fund_disposals: number;
+  cost_unknown_sales: number;
   crypto: CryptoTax;
 };
 

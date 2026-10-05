@@ -135,3 +135,23 @@ def test_years_come_out_oldest_first() -> None:
         2023,
         2025,
     ]
+
+
+def test_sales_of_units_with_no_known_cost_are_counted() -> None:
+    ledger = Ledger().buy("S", "5", "50", fee="0", at=when(2025, 1, 5))
+    ledger.sell("S", "8", "160", fee="0", at=when(2025, 2, 5))  # 3 units were never bought
+    gain(ledger, "T", 2025, "100")
+    y = run(ledger, {"S": "STOCK", "T": "STOCK"})[2025]
+    assert y.cost_unknown_sales == 1
+
+
+def test_a_charge_booked_as_a_negative_refund_raises_what_was_withheld() -> None:
+    ledger = gain(Ledger(), "S", 2025, "0")
+    y = run(ledger, {"S": "STOCK"}, refunds=[Refund(date(2025, 12, 1), D("-7"))])[2025]
+    assert y.withheld == D("7.00")
+
+
+def test_crypto_income_is_not_capital_income() -> None:
+    ledger = gain(Ledger(), "S", 2025, "0")
+    income = [Income(date(2025, 5, 1), "CRYPTO", D("500"), D("0"))]
+    assert run(ledger, {"S": "STOCK"}, income)[2025].income == D(0)

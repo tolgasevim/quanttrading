@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type TaxEstimate } from "@/lib/api";
+import { api, ApiError, type TaxEstimate } from "@/lib/api";
 import { Header } from "../Header";
 import { useUser } from "../useUser";
 
@@ -14,9 +14,13 @@ const tone = (value: string) =>
 export default function TaxPage() {
   const user = useUser();
   const [data, setData] = useState<TaxEstimate | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (user) api<TaxEstimate>("/api/tax").then(setData);
+    if (!user) return;
+    api<TaxEstimate>("/api/tax")
+      .then(setData)
+      .catch((err) => setError(err instanceof ApiError ? err.detail : "Could not load the tax estimate."));
   }, [user]);
 
   if (!user) return null;
@@ -33,6 +37,8 @@ export default function TaxPage() {
           from your imported history.
         </p>
 
+        {error && <p className="notice status-failed">{error}</p>}
+
         {data && data.years.length === 0 && (
           <p className="notice">
             Nothing to estimate yet. <a href="/import">Import your transactions</a> first.
@@ -42,6 +48,12 @@ export default function TaxPage() {
         {years.map((y) => (
           <div className="card table-wrap" key={y.year} style={{ marginBottom: 16 }}>
             <h2 style={{ marginTop: 0 }}>{y.year}</h2>
+            {y.cost_unknown_sales > 0 && (
+              <p className="status-failed">
+                {y.cost_unknown_sales} sale{y.cost_unknown_sales > 1 ? "s" : ""} of units without a known
+                cost: the gain, and so the tax, is overstated.
+              </p>
+            )}
             <table>
               <tbody>
                 <tr>
@@ -96,9 +108,13 @@ export default function TaxPage() {
                 </tr>
                 <tr>
                   <td>
-                    {Number(y.to_settle) > 0 ? "Still owed on this estimate" : "Refundable on this estimate"}
+                    {Number(y.to_settle) > 0
+                      ? "Still owed on this estimate"
+                      : Number(y.to_settle) < 0
+                        ? "Refundable on this estimate"
+                        : "Nothing more to settle"}
                   </td>
-                  <td className={`num ${Number(y.to_settle) > 0 ? "status-failed" : "status-success"}`}>
+                  <td className={`num ${tone(String(-Number(y.to_settle)))}`}>
                     {eur(String(Math.abs(Number(y.to_settle))))}
                   </td>
                 </tr>

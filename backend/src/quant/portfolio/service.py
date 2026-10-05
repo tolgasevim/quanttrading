@@ -244,8 +244,14 @@ def build_tax(session: Session, user_id: uuid.UUID) -> list[YearEstimate]:
     refunds: list[Refund] = []
     for tx in rows:
         if tx.kind == "tax":
-            if tx.tax is not None and tx.tax > 0:  # a refund (loss-pot or allowance adjustment)
-                refunds.append(Refund(tx.date, tx.tax))
+            # A loss-pot or allowance adjustment. What reaches the cash account is the refund,
+            # whichever column the broker put it in; a negative result is extra tax charged.
+            net = (tx.amount or Decimal(0)) + (tx.tax or Decimal(0))
+            if net != 0:
+                refunds.append(Refund(tx.date, net))
         elif tx.amount is not None:
-            income.append(Income(tx.date, tx.asset_class, tx.amount, -(tx.tax or Decimal(0))))
+            asset_class = classes.get(tx.isin) if tx.isin else None
+            income.append(
+                Income(tx.date, asset_class or tx.asset_class, tx.amount, -(tx.tax or Decimal(0)))
+            )
     return estimate(book.disposals, classes, income, refunds)

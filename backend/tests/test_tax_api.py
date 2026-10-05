@@ -39,3 +39,20 @@ def test_assumptions_are_listed(owner: TestClient) -> None:
 
 def test_tax_needs_a_login(client: TestClient) -> None:
     assert client.get("/api/tax").status_code == 401
+
+
+def test_income_uses_the_instrument_class_and_refunds_may_sit_in_amount(
+    client: TestClient, admin: User
+) -> None:
+    login(client, admin.email)
+    fund = "IE0000000001"
+    extra = [
+        row(30, "2024-06-01", "TRADING", "BUY", "FUND", "Fund X", fund, shares="10", price="100", amount="-1000"),
+        # No asset class on the distribution row: the fund's class comes from its purchase.
+        row(31, "2025-05-01", "CASH", "DISTRIBUTION", "", "Fund X", fund, amount="100"),
+        row(32, "2025-12-20", "CASH", "TAX_OPTIMIZATION", "", "", "", amount="4"),
+    ]  # fmt: skip
+    import_history(client, history(extra))
+    [y2025] = [y for y in client.get("/api/tax").json()["years"] if y["year"] == 2025]
+    assert y2025["income"] == "70.00"  # 100 less the 30% Teilfreistellung
+    assert y2025["withheld"] == "6.00"  # 10 on the sale, less the 4 refund

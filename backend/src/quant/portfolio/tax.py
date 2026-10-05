@@ -18,7 +18,7 @@ rules for losses on derivatives (a EUR 20,000 cap and own pot), and funds that a
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -69,7 +69,7 @@ class Refund:
     """Tax the broker paid back during the year (a loss-pot or allowance adjustment)."""
 
     date: date
-    amount: Decimal  # positive
+    amount: Decimal  # positive: paid back; negative: extra tax charged
 
 
 def crypto_freigrenze(year: int) -> Decimal:
@@ -117,6 +117,7 @@ class YearEstimate:
     to_settle: Decimal  # tax less withheld: positive is still owed, negative is refundable
     crypto: CryptoYear
     fund_disposals: int  # sales that used the equity-fund assumption
+    cost_unknown_sales: int  # sales of units with no known cost: their gain is overstated
 
 
 @dataclass
@@ -130,7 +131,7 @@ class _Year:
     funds: int = 0
     crypto_taxable: Decimal = ZERO
     crypto_free: Decimal = ZERO
-    seen: bool = field(default=False)
+    unknown: int = 0
 
 
 def _crypto_split(d: Disposal) -> tuple[Decimal, Decimal]:
@@ -161,6 +162,7 @@ def estimate(
         y = years[d.date.year]
         cls = classes.get(d.isin)
         y.withheld += d.tax_withheld
+        y.unknown += d.cost_unknown
         if cls == CRYPTO:
             taxable, free = _crypto_split(d)
             y.crypto_taxable += taxable
@@ -173,6 +175,8 @@ def estimate(
         else:
             y.other += d.realised_pnl
     for row in income:
+        if row.asset_class == CRYPTO:
+            continue  # staking and similar are other income (section 22 EStG), not capital income
         y = years[row.date.year]
         factor = 1 - TEILFREISTELLUNG if row.asset_class == FUND else Decimal(1)
         y.income += row.amount * factor
@@ -223,6 +227,7 @@ def estimate(
                     under_freigrenze=y.crypto_taxable < limit,
                 ),
                 fund_disposals=y.funds,
+                cost_unknown_sales=y.unknown,
             )
         )
         stock_carry = stock_loss
