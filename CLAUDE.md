@@ -8,7 +8,7 @@ relevant FR-x before building anything, and cite it in the PR description.
   - `providers/`: market-data providers behind `PriceProvider` / `FxProvider` (PRD §8). A new source is a new class plus a registry entry.
   - `ingest/`: scheduled jobs. Every run is recorded in `job_runs`.
   - `importers/`: broker file parsers (pure functions) and the preview/commit workflow.
-  - `portfolio/`: position engine (`positions.py`), FIFO lots, cost basis and realised P&L (`lots.py`), statement reconciliation (`reconcile.py`) and the holdings read model (`service.py`).
+  - `portfolio/`: position engine (`positions.py`), FIFO lots, cost basis and realised P&L (`lots.py`), statement reconciliation (`reconcile.py`) the German tax estimate (`tax.py`) and the holdings read model (`service.py`).
   - `api/`: HTTP routers. `worker.py`: the scheduler. `cli.py`: admin commands.
 - `frontend/`: Next.js (App Router). The browser only talks to Next, which proxies `/api/*` to FastAPI.
 - `docker-compose.yml`: db, api (runs the migrations), worker, web.
