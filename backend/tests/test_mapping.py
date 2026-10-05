@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.ingest.mapping import HeldIsin, held_isins, map_isins
 from quant.ingest.prices import ingest_prices
-from quant.models import Instrument, PriceEOD
+from quant.models import Instrument, PriceEOD, User
 from quant.providers.base import Bar, PriceSeries, ProviderError
 from quant.providers.resolvers import Listing
 
@@ -226,9 +226,7 @@ def test_a_mapped_instrument_without_a_reported_currency_is_not_priced_blindly(
 
 
 def test_held_isins_follow_the_position_engine_when_a_row_has_no_class(
-    client: TestClient,
-    admin,
-    db: Session,  # type: ignore[no-untyped-def]
+    client: TestClient, admin: User, db: Session
 ) -> None:
     login(client, admin.email)
     delta, echo = "US0000000050", "US0000000051"
