@@ -154,3 +154,11 @@ def test_a_stray_isin_shaped_word_in_a_longer_line_is_not_the_rows_isin() -> Non
     )
     with pytest.raises(StatementFormatError, match="no ISIN"):
         d.parse_text(text)
+
+
+def test_the_total_may_sit_on_the_line_before_the_count() -> None:
+    text = LAYOUT_TEXT.replace(
+        "                    ANZAHL DER POSITIONEN:\xa03                                             SUMME KURSWERTE: 3.767,5\xa0€\n",
+        "SUMME KURSWERTE: 3.767,5 €\nANZAHL DER POSITIONEN: 3\n",
+    )
+    assert d.parse_text(text).footer_total == Decimal("3767.5")

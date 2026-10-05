@@ -324,7 +324,15 @@ def _import_statement(
     try:
         text = extract_text(data)
         if kind is None:
-            kind = "depot" if tr_depot_pdf.is_depot_text(text) else "crypto"
+            if tr_depot_pdf.is_depot_text(text):
+                kind = "depot"
+            elif tr_crypto_pdf.is_crypto_text(text):
+                kind = "crypto"
+            else:
+                raise StatementFormatError(
+                    "this is neither a Trade Republic securities statement (Depotauszug) "
+                    "nor a crypto statement (Crypto-Übersicht)"
+                )
         if kind == "depot":
             snapshot = _snapshot(tr_depot_pdf.SOURCE, tr_depot_pdf.parse_text(text))
         else:

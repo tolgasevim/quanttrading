@@ -173,3 +173,17 @@ def test_the_cli_still_checks_the_depot_when_the_crypto_file_is_unreadable(
     out = capsys.readouterr().out
     assert "FAIL crypto statement" in out
     assert "PASS securities quantities match the statement" in out
+
+
+def test_an_unknown_pdf_gets_a_plain_error_not_a_crypto_one(owner: TestClient, db: Session) -> None:
+    from .pdfutil import make_text_pdf
+
+    pdf = make_text_pdf([(40, 500, "Some other letter"), (40, 480, "Hello")])
+    error = owner.post(
+        "/api/holdings/statements", files={"file": ("s.pdf", pdf, "application/pdf")}
+    )
+    assert error.status_code == 422
+    assert (
+        "neither" in error.json()["detail"] and "crypto statement (Crypto" in error.json()["detail"]
+    )
+    assert "positions" not in error.json()["detail"]

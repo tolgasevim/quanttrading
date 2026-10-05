@@ -37,6 +37,10 @@ ROW = re.compile(
 )
 
 
+def is_crypto_text(text: str) -> bool:
+    return "CRYPTO-ÜBERSICHT" in text
+
+
 @dataclass(frozen=True)
 class CryptoLine:
     name: str
