@@ -38,11 +38,17 @@ def run_mapping() -> None:
         rls.bypass(session)
         fetcher = make_fetcher(session, settings)
         try:
-            resolvers = isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key)
+            # Built inside the job, so a bad setting (an unknown name) is recorded in job_runs
+            # as a failed run instead of crashing the worker at start.
             run_job(
                 session,
                 MAP_JOB,
-                lambda s: map_isins(s, resolvers, datetime.now(UTC), settings.isin_retry_days),
+                lambda s: map_isins(
+                    s,
+                    isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key),
+                    datetime.now(UTC),
+                    settings.isin_retry_days,
+                ),
             )
         finally:
             fetcher.close()
@@ -55,12 +61,14 @@ def run_prices() -> None:
         rls.bypass(session)
         fetcher = make_fetcher(session, settings)
         try:
-            providers = price_providers(settings.price_providers, fetcher)
             run_job(
                 session,
                 PRICES_JOB,
                 lambda s: ingest_prices(
-                    s, providers, today_local(settings).date(), settings.backfill_days
+                    s,
+                    price_providers(settings.price_providers, fetcher),
+                    today_local(settings).date(),
+                    settings.backfill_days,
                 ),
             )
         finally:
@@ -72,12 +80,14 @@ def run_fx() -> None:
     with get_sessionmaker()() as session:
         fetcher = make_fetcher(session, settings)
         try:
-            provider = fx_provider(settings.fx_provider, fetcher)
             run_job(
                 session,
                 FX_JOB,
                 lambda s: ingest_fx(
-                    s, provider, today_local(settings).date(), settings.backfill_days
+                    s,
+                    fx_provider(settings.fx_provider, fetcher),
+                    today_local(settings).date(),
+                    settings.backfill_days,
                 ),
             )
         finally:
@@ -104,7 +114,10 @@ def main() -> None:
         for job, fn in ((FX_JOB, run_fx), (MAP_JOB, run_mapping), (PRICES_JOB, run_prices)):
             if needs_catch_up(session, job, now):
                 log.info("catching up on %s", job)
-                fn()
+                try:
+                    fn()
+                except Exception:  # noqa: BLE001 - one broken job must not stop the scheduler
+                    log.exception("catch-up of %s failed", job)
 
     scheduler = BlockingScheduler(timezone=tz)
     common = {"misfire_grace_time": 3600, "coalesce": True, "max_instances": 1}
