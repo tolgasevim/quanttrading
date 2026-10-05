@@ -67,6 +67,7 @@ export default function HoldingsPage() {
   };
 
   const unknownCost = data?.positions.filter((p) => p.cost_flags.includes("cost_unknown")) ?? [];
+  const historyGap = data?.positions.filter((p) => p.cost_flags.includes("incomplete_history")) ?? [];
 
   return (
     <>
@@ -104,6 +105,18 @@ export default function HoldingsPage() {
             on {unknownCost.length === 1 ? "it" : "them"} can&apos;t be worked out yet:{" "}
             {unknownCost.map((p) => p.name ?? p.isin).join(", ")}.{" "}
             <a href="/costs">Enter what a unit cost</a> and it is included everywhere.
+          </p>
+        )}
+        {historyGap.length > 0 && (
+          <p className="notice">
+            <strong>
+              {historyGap.length} {historyGap.length === 1 ? "position includes" : "positions include"} units
+              your history never bought.
+            </strong>{" "}
+            That usually means an import is missing, so cost and profit on{" "}
+            {historyGap.length === 1 ? "it" : "them"} can&apos;t be worked out:{" "}
+            {historyGap.map((p) => p.name ?? p.isin).join(", ")}.{" "}
+            <a href="/import">Import more history</a>
           </p>
         )}
         {data && data.review.unattributed_cash.length > 0 && (

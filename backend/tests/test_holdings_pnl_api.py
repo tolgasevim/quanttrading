@@ -251,3 +251,22 @@ def test_a_sale_of_units_with_unknown_cost_is_flagged_in_the_realised_figures(
     assert year["cost_unknown_sales"] == 1
     flagged = {i["name"]: i["cost_unknown"] for i in realised["best"] + realised["worst"]}
     assert flagged == {"Spin Co": True, "Alpha Corp": False, "Beta Inc": False}
+
+
+def test_a_position_that_includes_units_the_history_never_bought_says_so(
+    client: TestClient, admin: User
+) -> None:
+    login(client, admin.email)
+    old, new = "US0000000020", "US0000000021"
+    extra = [
+        row(60, "2025-01-10", "TRADING", "BUY", "STOCK", "Old Co", old, shares="5", price="10", amount="-50", fee="-1"),
+        # A merger of 8 units, but only 5 were ever bought: 3 units have no history.
+        row(61, "2025-03-10", "CORPORATE_ACTION", "MERGER", "STOCK", "Old Co", old, shares="-8"),
+        row(62, "2025-03-10", "CORPORATE_ACTION", "MERGER", "STOCK", "New Co", new, shares="8"),
+    ]  # fmt: skip
+    import_history(client, history(extra))
+    body = client.get("/api/holdings").json()
+    new_co = by_name(body)["New Co"]
+    assert "incomplete_history" in new_co["cost_flags"]
+    assert "cost_unknown" not in new_co["cost_flags"]  # the Costs page cannot fix this one
+    assert body["review"]["cost_unknown"] == 1  # only the spin-off, not the history gap
