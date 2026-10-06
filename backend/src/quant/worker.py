@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
+from quant.ingest.alerts import create_alerts
 from quant.ingest.fx import ingest_fx
 from quant.ingest.jobs import JobResult, run_job
 from quant.ingest.mapping import held_isins, map_isins
@@ -31,6 +32,7 @@ log = logging.getLogger(__name__)
 PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
+ALERT_JOB = "create_alerts"
 
 
 def _map_and_fill(session: Session, settings: Settings, fetcher: Fetcher) -> JobResult:
@@ -100,6 +102,19 @@ def run_prices() -> None:
             fetcher.close()
 
 
+def run_alerts() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Alerts are made for every user from the shared prices (FR-3 bypass); each row names its
+        # user.
+        rls.bypass(session)
+        run_job(
+            session,
+            ALERT_JOB,
+            lambda s: create_alerts(s, today_local(settings).date(), datetime.now(UTC)),
+        )
+
+
 def run_fx() -> None:
     settings = get_settings()
     with get_sessionmaker()() as session:
@@ -136,7 +151,12 @@ def main() -> None:
 
     with get_sessionmaker()() as session:
         now = datetime.now(UTC)
-        for job, fn in ((FX_JOB, run_fx), (MAP_JOB, run_mapping), (PRICES_JOB, run_prices)):
+        for job, fn in (
+            (FX_JOB, run_fx),
+            (MAP_JOB, run_mapping),
+            (PRICES_JOB, run_prices),
+            (ALERT_JOB, run_alerts),
+        ):
             if needs_catch_up(session, job, now):
                 log.info("catching up on %s", job)
                 try:
@@ -159,6 +179,12 @@ def main() -> None:
         run_prices,
         CronTrigger.from_crontab(settings.prices_cron, timezone=tz),
         id=PRICES_JOB,
+        **common,
+    )
+    scheduler.add_job(
+        run_alerts,
+        CronTrigger.from_crontab(settings.alerts_cron, timezone=tz),
+        id=ALERT_JOB,
         **common,
     )
     log.info("scheduler started: fx=%r prices=%r (%s)", settings.fx_cron, settings.prices_cron, tz)

@@ -291,10 +291,10 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 - **FR-64 (P2)**: Correlation of the commodity hedge with the tech portfolio over rolling windows ("is gold actually hedging you?").
 
 ### 6.8 Notifications
-- **FR-70 (P0)**: In-app notification centre.
+- **FR-70 (P0)**: In-app notification centre. *Status: implemented (`/notifications`, a count in the header). Each alert is stored once per user (a dedupe key), can be marked read one by one or all at once, and stays in the list. The evening job `create_alerts` (22:45, after the prices) writes the alerts.*
 - **FR-71 (P0)**: Email digest, weekly by default and optionally daily (SMTP from the home server via a relay such as Brevo's free tier).
-- **FR-72 (P0)**: Telegram bot: each user links their own chat. Alert types: drift or guardrail breaches, a holding moving more than its threshold in a day (defaults ±5% single stock, ±3% ETF, ±10% crypto; D39), material score changes, the weekly AI commentary, data-job failures (admin only).
-- **FR-73 (P0)**: Per-user alert settings and quiet hours.
+- **FR-72 (P0)**: Telegram bot: each user links their own chat. Alert types: drift or guardrail breaches, a holding moving more than its threshold in a day (defaults ±5% single stock, ±3% ETF, ±10% crypto; D39), material score changes, the weekly AI commentary, data-job failures (admin only). *Status: the daily-move alert and the admin data-job-failure alert are implemented as in-app alerts. The move is the change between the two newest closes of the instrument, in its own currency, and counts only when the newest close is at most 4 days old and the previous one at most 7 days before it. Drift, guardrail, score and AI-commentary alerts, and the Telegram bot itself, follow with their features.*
+- **FR-73 (P0)**: Per-user alert settings and quiet hours. *Status: implemented for the settings (daily moves on or off, the three limits of D39, quiet hours); the limits apply to the alert job now. Quiet hours are stored and checked by `in_quiet_hours`, and take effect when email and Telegram delivery arrive (FR-71, FR-72): the in-app list always keeps every alert.*
 
 ### 6.9 Later phases (P2)
 - **Backtesting lab**: test factor and composite strategies over historical data. It must handle survivorship bias (delisted tickers), transaction costs (TR: €1 per trade, savings plans free) and taxes. Output: CAGR, Sharpe, Sortino, maximum drawdown and turnover against the benchmark.

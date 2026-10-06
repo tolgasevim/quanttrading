@@ -267,3 +267,25 @@ export type PriceItem = {
 };
 
 export type Prices = { items: PriceItem[] };
+
+export type NotificationItem = {
+  id: string;
+  kind: string;
+  severity: "info" | "warning";
+  title: string;
+  body: string;
+  isin: string | null;
+  created_at: string;
+  read: boolean;
+};
+
+export type Notifications = { items: NotificationItem[]; unread: number };
+
+export type AlertSettings = {
+  daily_moves_enabled: boolean;
+  move_stock_pct: string;
+  move_fund_pct: string;
+  move_crypto_pct: string;
+  quiet_start: string | null;
+  quiet_end: string | null;
+};

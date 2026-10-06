@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Berlin"
     prices_cron: str = "30 22 * * mon-fri"
     mapping_cron: str = "0 22 * * mon-fri"  # before the price job, so new ISINs get prices at once
+    alerts_cron: str = "45 22 * * mon-fri"  # after the price job
     fx_cron: str = "30 16 * * mon-fri"
     backfill_days: int = 400
 

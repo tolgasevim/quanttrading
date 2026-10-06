@@ -1,0 +1,190 @@
+"use client";
+
+import { type FormEvent, useEffect, useState } from "react";
+import { api, ApiError, type AlertSettings, type Notifications, post, put } from "@/lib/api";
+import { Header } from "../Header";
+import { useUser } from "../useUser";
+
+// Tells the header to read the unread count again.
+const changed = () => window.dispatchEvent(new Event("qt-notifications"));
+
+const KIND_TEXT: Record<string, string> = {
+  daily_move: "Price move",
+  job_failed: "Data job failed",
+};
+
+const when = (iso: string) =>
+  new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+
+function SettingsCard() {
+  const [form, setForm] = useState<AlertSettings | null>(null);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api<AlertSettings>("/api/alerts/settings").then(setForm);
+  }, []);
+  if (!form) return null;
+
+  const set = (patch: Partial<AlertSettings>) => {
+    setSaved(false);
+    setForm({ ...form, ...patch });
+  };
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    try {
+      setForm(await put<AlertSettings>("/api/alerts/settings", form));
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Could not save.");
+    }
+  };
+  const quiet = form.quiet_start !== null && form.quiet_end !== null;
+
+  return (
+    <form className="card" onSubmit={save}>
+      <h2 style={{ marginTop: 0 }}>Alert settings</h2>
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="checkbox"
+          checked={form.daily_moves_enabled}
+          onChange={(e) => set({ daily_moves_enabled: e.target.checked })}
+          style={{ width: "auto" }}
+        />
+        Alert me when a holding moves a lot in one day
+      </label>
+      <p className="muted">
+        The limit is the change from the previous close, in percent, up or down.
+      </p>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+        {(
+          [
+            ["move_stock_pct", "Shares"],
+            ["move_fund_pct", "Funds"],
+            ["move_crypto_pct", "Coins"],
+          ] as const
+        ).map(([key, label]) => (
+          <label key={key}>
+            {label} (%)
+            <input
+              type="number"
+              min="0.01"
+              max="100"
+              step="0.01"
+              value={form[key]}
+              onChange={(e) => set({ [key]: e.target.value })}
+              disabled={!form.daily_moves_enabled}
+              style={{ width: 100 }}
+            />
+          </label>
+        ))}
+      </div>
+      <h3>Quiet hours</h3>
+      <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input
+          type="checkbox"
+          checked={quiet}
+          onChange={(e) =>
+            set(e.target.checked ? { quiet_start: "22:00", quiet_end: "07:00" } : { quiet_start: null, quiet_end: null })
+          }
+          style={{ width: "auto" }}
+        />
+        No messages during these hours (Europe/Berlin)
+      </label>
+      {quiet && (
+        <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+          <label>
+            From
+            <input type="time" value={form.quiet_start ?? ""} onChange={(e) => set({ quiet_start: e.target.value })} />
+          </label>
+          <label>
+            To
+            <input type="time" value={form.quiet_end ?? ""} onChange={(e) => set({ quiet_end: e.target.value })} />
+          </label>
+        </div>
+      )}
+      <p className="muted">
+        Quiet hours will apply to email and Telegram messages, which are not switched on yet. This
+        list always keeps every alert.
+      </p>
+      <button type="submit">Save</button>
+      {saved && <span className="status-success"> Saved.</span>}
+      {error && <p className="error">{error}</p>}
+    </form>
+  );
+}
+
+export default function NotificationsPage() {
+  const user = useUser();
+  const [data, setData] = useState<Notifications | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!user) return;
+    api<Notifications>("/api/notifications?limit=100")
+      .then(setData)
+      .catch((err) => setError(err instanceof ApiError ? err.detail : "Could not load."));
+  }, [user]);
+  if (!user) return null;
+
+  const mutate = async (path: string) => {
+    try {
+      setData(await post<Notifications>(path));
+      changed();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Could not save.");
+    }
+  };
+
+  return (
+    <>
+      <Header user={user} />
+      <main>
+        <h1>Alerts</h1>
+        {error && <p className="notice status-failed">{error}</p>}
+        {data && data.items.length === 0 && (
+          <p className="notice">
+            No alerts yet. A price move over your limit, or a failed data job (owner only), shows up
+            here after the evening price run.
+          </p>
+        )}
+        {data && data.items.length > 0 && (
+          <div className="card">
+            <p>
+              <strong>{data.unread}</strong> unread.{" "}
+              {data.unread > 0 && (
+                <button className="link" onClick={() => mutate("/api/notifications/read-all")}>
+                  Mark all as read
+                </button>
+              )}
+            </p>
+            {data.items.map((n) => (
+              <div key={n.id} style={{ borderTop: "1px solid var(--border, #ddd)", padding: "8px 0" }}>
+                <div style={{ fontWeight: n.read ? "normal" : 600 }}>
+                  <span className={n.severity === "warning" ? "status-failed" : ""}>
+                    {KIND_TEXT[n.kind] ?? n.kind}
+                  </span>
+                  : {n.title}
+                </div>
+                <div>{n.body}</div>
+                <div className="muted">
+                  {when(n.created_at)}
+                  {!n.read && (
+                    <>
+                      {" · "}
+                      <button className="link" onClick={() => mutate(`/api/notifications/${n.id}/read`)}>
+                        Mark as read
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <SettingsCard />
+      </main>
+    </>
+  );
+}
