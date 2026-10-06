@@ -177,12 +177,13 @@ export default function NotificationsPage() {
       // "All" means the alerts the page has shown: one that arrived meanwhile, or an older one the
       // page never loaded, stays unread.
       const shown = (data?.items ?? []).slice(0, 1000).map((n) => n.id);
+      const sent = new Set(shown); // only these are marked on the server, so only these here
       const range = id === undefined && shown.length > 0 ? { ids: shown } : undefined;
       const body = await post<Notifications>(path, range);
       setData((old) => ({
         unread: body.unread,
         items: (old?.items ?? body.items).map((n) =>
-          id === undefined || n.id === id ? { ...n, read: true } : n,
+          (id === undefined ? sent.has(n.id) : n.id === id) ? { ...n, read: true } : n,
         ),
       }));
       changed();
@@ -235,6 +236,9 @@ export default function NotificationsPage() {
                 </div>
               </div>
             ))}
+            {data.unread > 0 && !data.items.some((n) => !n.read) && (
+              <p className="muted">The unread alerts are older than the ones shown here.</p>
+            )}
             {more && (
               <p>
                 <button className="link" onClick={showOlder}>
