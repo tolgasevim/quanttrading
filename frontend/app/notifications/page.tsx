@@ -94,7 +94,6 @@ function SettingsCard() {
               step="0.01"
               value={form[key]}
               onChange={(e) => set({ [key]: e.target.value })}
-              disabled={!form.daily_moves_enabled}
               style={{ width: 100 }}
             />
           </label>
