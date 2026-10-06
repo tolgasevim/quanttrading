@@ -335,7 +335,10 @@ def _store_job_alerts(
     except Exception as exc:  # noqa: BLE001 - the moves below must still run
         session.rollback()
         log.exception("job alerts failed")
-        result.errors["job alerts"] = _kind(exc)
+        # A warning, not an error: errors are counted against the users (attempted), and this step
+        # is not a user. A failure here would otherwise turn a run whose price-move alerts were all
+        # stored into a failed one.
+        result.warnings["job alerts"] = f"the job alerts could not be stored: {_kind(exc)}"
 
 
 def create_alerts(session: Session, today: date, now: datetime) -> JobResult:

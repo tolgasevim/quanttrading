@@ -760,5 +760,6 @@ def test_rows_are_counted_only_when_the_job_alerts_are_stored(
     monkeypatch.setattr(module, "_store", second_fails)
     rls.bypass(db)
     result = create_alerts(db, TODAY, now)
-    assert "job alerts" in result.errors and result.rows_written == 0  # nothing was stored
+    assert result.errors == {}  # not a user failure: it must not skew the status of the run
+    assert "RuntimeError" in result.warnings["job alerts"] and result.rows_written == 0
     assert alerts(db) == []
