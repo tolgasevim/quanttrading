@@ -42,23 +42,21 @@ def daily_move(
     return Move((close - previous) / previous * 100, close, previous, day, previous_day)
 
 
-# Share splits and reverse splits change the price by a simple ratio. For a share, a move that is
-# one of these, to within SPLIT_TOLERANCE, may be a split the data has not caught up with rather
-# than a crash or a jump. The alert is still raised, with a note, at the severity of its size.
-# Funds and coins are not checked: they have no splits.
+# A share split changes the price by a simple ratio. For a share, a fall that is one of these, to
+# within SPLIT_TOLERANCE, may be a split the data has not caught up with rather than a crash. The
+# alert is still raised, with a note, at the severity of its size. Funds and coins are not
+# checked: they have no splits.
 SPLIT_RATIOS = (2, 3, 4, 5, 8, 10, 20, 50)
 SPLIT_TOLERANCE = Decimal("0.02")
 
 
 def looks_like_split(move: Move) -> bool:
+    """A fall by a simple ratio. A rise by one (a reverse split, rare) is not flagged: the same
+    size rise is an ordinary big gain far more often."""
     if move.close <= 0 or move.previous <= 0:
         return False
-    ratio = move.previous / move.close  # 2 for a 2-for-1 split, 0.5 for a 1-for-2 reverse split
-    for k in SPLIT_RATIOS:
-        for target in (Decimal(k), Decimal(1) / k):
-            if abs(ratio - target) <= SPLIT_TOLERANCE * target:
-                return True
-    return False
+    ratio = move.previous / move.close  # 2 for a 2-for-1 split
+    return any(abs(ratio - k) <= SPLIT_TOLERANCE * k for k in SPLIT_RATIOS)
 
 
 def threshold_for(

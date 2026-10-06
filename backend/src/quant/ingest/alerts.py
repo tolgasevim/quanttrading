@@ -185,9 +185,9 @@ def _user_moves(
 
 
 def _normalise(reason: str) -> str:
-    """The reason without the parts that change from run to run (counts, ids, ports), so the same
-    outage hashes the same."""
-    return re.sub(r"[0-9a-fA-F]{6,}|\d+", "#", reason)
+    """The reason without the parts that change from run to run (ids, ports, long counts), so the
+    same outage hashes the same. Short numbers stay: HTTP 429 and HTTP 503 are different outages."""
+    return re.sub(r"[0-9a-fA-F]{6,}|\d{4,}", "#", reason)
 
 
 def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[str, object]]]:
@@ -240,6 +240,9 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
             reason = f"The run started at {run.started_at:%Y-%m-%d %H:%M} UTC and never finished."
         elif details.get("error"):
             reason = str(details["error"])
+            if run.job == ALERT_JOB_NAME:
+                # A crash of this job can carry database text with other people's data.
+                reason = reason.split(":", 1)[0]
         elif isinstance(errors, dict) and errors:
             # The alerts job names people in its errors: say what failed, not who it failed for.
             named = run.job != ALERT_JOB_NAME

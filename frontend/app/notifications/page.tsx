@@ -37,6 +37,17 @@ function SettingsCard() {
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    for (const [key, label] of [
+      ["move_stock_pct", "shares"],
+      ["move_fund_pct", "funds"],
+      ["move_crypto_pct", "coins"],
+    ] as const) {
+      const value = Number(form[key]);
+      if (form[key] === "" || !(value >= 0.01 && value <= 100)) {
+        setError(`The limit for ${label} is a number from 0.01 to 100.`);
+        return;
+      }
+    }
     // One time without the other is refused by the server; say so before the round trip.
     if (!form.quiet_start !== !form.quiet_end) {
       setError("Set both quiet hours times, or switch quiet hours off.");

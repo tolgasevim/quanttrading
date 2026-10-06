@@ -331,7 +331,8 @@ def test_a_fall_of_half_is_an_alert_for_a_fund_or_a_coin(owner: TestClient, db: 
         ("50", "100", True),  # 2-for-1
         ("49.2", "100", True),  # within 2% of the ratio
         ("33.3", "100", True),  # 3-for-1
-        ("1000", "100", True),  # a 1-for-10 reverse split
+        ("1000", "100", False),  # a rise by ten: not flagged, it is a big gain far more often
+        ("200", "100", False),  # a doubling is not a split
         ("10", "100", True),  # 10-for-1
         ("60", "100", False),
         ("55", "100", False),
@@ -585,3 +586,24 @@ def test_a_later_partial_run_makes_good_a_failure_but_not_a_run_with_errors(
     run(db, now=now)
     titles = sorted(n.title for n in alerts(db))
     assert titles == ["Job map_isins finished with errors", "Job map_isins finished with errors"]
+
+
+def test_http_codes_are_told_apart_but_ports_and_ids_are_not() -> None:
+    from quant.ingest.alerts import _normalise
+
+    assert _normalise("HTTP 429") != _normalise("HTTP 503")
+    assert _normalise("refused on port 8123 (4f9ac2e1)") == _normalise(
+        "refused on port 9456 (a1b2c3d4)"
+    )
+
+
+def test_a_crash_of_the_alerts_job_shows_only_the_kind_of_error_to_the_admins(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=10)
+    db.add(JobRun(job=ALERT_JOB_NAME, status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+                  details={"error": "IntegrityError: duplicate key (user_id)=(secret-id) already exists"}))  # fmt: skip
+    db.commit()
+    run(db, now=now)
+    [n] = alerts(db)
+    assert n.body == "IntegrityError" and "secret" not in n.body
