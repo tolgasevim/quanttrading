@@ -24,9 +24,12 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from quant.portfolio.alerts import DEFAULT_CRYPTO_PCT, DEFAULT_FUND_PCT, DEFAULT_STOCK_PCT
 
 
 class Base(DeclarativeBase):
@@ -322,10 +325,16 @@ class AlertSettings(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
-    daily_moves_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    move_stock_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(5))
-    move_fund_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(3))
-    move_crypto_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(10))
+    daily_moves_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    move_stock_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=DEFAULT_STOCK_PCT, server_default=str(DEFAULT_STOCK_PCT)
+    )
+    move_fund_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=DEFAULT_FUND_PCT, server_default=str(DEFAULT_FUND_PCT)
+    )
+    move_crypto_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=DEFAULT_CRYPTO_PCT, server_default=str(DEFAULT_CRYPTO_PCT)
+    )
     quiet_start: Mapped[time | None] = mapped_column(Time)
     quiet_end: Mapped[time | None] = mapped_column(Time)
     updated_at: Mapped[datetime] = mapped_column(

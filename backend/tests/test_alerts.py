@@ -22,6 +22,7 @@ from quant.portfolio.alerts import (
     breaches,
     daily_move,
     in_quiet_hours,
+    looks_like_split,
     move_text,
     threshold_for,
 )
@@ -135,9 +136,9 @@ def alerts(db: Session) -> list[Notification]:
     return list(db.scalars(select(Notification).order_by(Notification.dedupe_key)))
 
 
-def run(db: Session, today: date = TODAY) -> int:
+def run(db: Session, today: date = TODAY, now: datetime = NOW) -> int:
     rls.bypass(db)
-    result = create_alerts(db, today, NOW)
+    result = create_alerts(db, today, now)
     assert result.errors == {}
     return result.rows_written
 
@@ -226,31 +227,49 @@ def test_each_user_only_gets_alerts_for_their_own_holdings(
     assert other.id not in {n.user_id for n in alerts(db)}
 
 
-def test_a_failed_job_is_an_alert_for_admins_only(owner: TestClient, db: Session) -> None:
+def test_failed_and_partly_failed_jobs_are_alerts_for_admins_only(
+    owner: TestClient, db: Session, admin: User
+) -> None:
     other = make_user(db, "member@example.com")
-    now = NOW
+    now = admin.created_at + timedelta(hours=10)  # the runs below are after the admin's account
+    done = now - timedelta(hours=1)
     db.add_all(
         [
-            JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=now,
+            JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=done,
                    details={"error": "RuntimeError: boom"}),
-            JobRun(job="map_isins", status=JobStatus.FAILED, finished_at=now,
+            JobRun(job="map_isins", status=JobStatus.PARTIAL, finished_at=done,
                    details={"errors": {"US1": "yahoo: down", "US2": "yahoo: down", "US3": "x"}}),
+            JobRun(job="clean_partial", status=JobStatus.PARTIAL, finished_at=done, details={}),
             JobRun(job="old", status=JobStatus.FAILED, finished_at=now - timedelta(hours=60),
                    details={"error": "long ago"}),
             JobRun(job="running", status=JobStatus.RUNNING, details={}),
-            JobRun(job="partial", status=JobStatus.PARTIAL, finished_at=now, details={}),
+            JobRun(job="fine", status=JobStatus.SUCCESS, finished_at=done, details={}),
         ]
     )  # fmt: skip
     db.commit()
-    assert run(db) == 2
-    rows = alerts(db)
-    assert {n.title for n in rows} == {"Job ingest_prices failed", "Job map_isins failed"}
-    assert all(n.severity == "warning" and n.kind == "job_failed" for n in rows)
-    bodies = {n.title: n.body for n in rows}
-    assert bodies["Job ingest_prices failed"] == "RuntimeError: boom"
-    assert "3 items failed" in bodies["Job map_isins failed"]
-    assert other.id not in {n.user_id for n in rows}
-    assert run(db) == 0  # once per failed run
+    assert run(db, now=now) == 2
+    rows = {n.title: n for n in alerts(db)}
+    assert set(rows) == {"Job ingest_prices failed", "Job map_isins finished with errors"}
+    assert (rows["Job ingest_prices failed"].severity, rows["Job ingest_prices failed"].body) == (
+        "warning",
+        "RuntimeError: boom",
+    )
+    partial = rows["Job map_isins finished with errors"]
+    assert partial.severity == "info" and "3 items failed" in partial.body
+    assert all(n.kind == "job_failed" and n.user_id == admin.id for n in rows.values())
+    assert other.id not in {n.user_id for n in rows.values()}
+    assert run(db, now=now) == 0  # once per run
+
+
+def test_a_new_admin_gets_no_alerts_about_the_time_before_the_account(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    db.add(
+        JobRun(job="ingest_prices", status=JobStatus.FAILED,
+               finished_at=admin.created_at - timedelta(hours=1), details={"error": "early"})
+    )  # fmt: skip
+    db.commit()
+    assert run(db, now=admin.created_at + timedelta(hours=1)) == 0
 
 
 def test_one_users_failure_does_not_stop_the_others(
@@ -260,22 +279,67 @@ def test_one_users_failure_does_not_stop_the_others(
 
     make_user(db, "member@example.com")
     price(db, A, ("108", "100"))
-    real = module._user_moves
-    calls: list[str] = []
+    real = module._open_positions
 
-    def flaky(
-        session: Session, user: User, *args: object, **kwargs: object
-    ) -> list[dict[str, object]]:
-        calls.append(user.email)
+    def flaky(session: Session, user: User):  # type: ignore[no-untyped-def]
         if user.email == "member@example.com":
             raise RuntimeError("bad data")
-        return real(session, user, *args, **kwargs)  # type: ignore[arg-type]
+        return real(session, user)
 
-    monkeypatch.setattr(module, "_user_moves", flaky)
+    monkeypatch.setattr(module, "_open_positions", flaky)
     rls.bypass(db)
     result = create_alerts(db, TODAY, NOW)
     assert len(result.errors) == 1 and "bad data" in next(iter(result.errors.values()))
-    assert len(alerts(db)) == 1 and len(calls) == 2  # the owner still got theirs
+    assert len(alerts(db)) == 1  # the owner still got theirs
+
+
+def test_a_move_that_is_a_split_ratio_is_not_an_alert(owner: TestClient, db: Session) -> None:
+    price(db, A, ("50", "100"))  # a 2-for-1 split not yet in the earlier close
+    price(db, SPIN, ("40", "100"))  # a real fall of 60%: not a simple ratio
+    run(db)
+    assert [n.isin for n in alerts(db)] == [SPIN]
+
+
+@pytest.mark.parametrize(
+    ("close", "previous", "split"),
+    [
+        ("50", "100", True),  # 2-for-1
+        ("49.2", "100", True),  # within 2% of the ratio
+        ("33.3", "100", True),  # 3-for-1
+        ("1000", "100", True),  # a 1-for-10 reverse split
+        ("10", "100", True),  # 10-for-1
+        ("60", "100", False),
+        ("55", "100", False),
+        ("150", "100", False),
+        ("108", "100", False),
+    ],
+)
+def test_split_ratios_are_told_from_real_moves(close: str, previous: str, split: bool) -> None:
+    move = daily_move([(TODAY, D(close)), (TODAY - timedelta(1), D(previous))], TODAY)
+    assert move is not None and looks_like_split(move) is split
+
+
+def test_the_defaults_are_one_set_for_the_model_the_api_and_the_job(db: Session) -> None:
+    from quant.ingest.alerts import DEFAULTS
+
+    rls.bypass(db)
+    make = make_user(db, "x@example.com")
+    db.add(AlertSettings(user_id=make.id))  # nothing given: the database fills the defaults
+    db.commit()
+    row_ = db.get(AlertSettings, make.id)
+    assert row_ is not None
+    db.refresh(row_)
+    assert (
+        row_.daily_moves_enabled,
+        row_.move_stock_pct,
+        row_.move_fund_pct,
+        row_.move_crypto_pct,
+    ) == (
+        DEFAULTS.daily_moves_enabled,
+        DEFAULTS.move_stock_pct,
+        DEFAULTS.move_fund_pct,
+        DEFAULTS.move_crypto_pct,
+    )
 
 
 def test_the_alert_job_is_recorded_like_the_others(owner: TestClient, db: Session) -> None:

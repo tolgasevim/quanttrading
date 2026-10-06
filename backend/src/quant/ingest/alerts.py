@@ -7,6 +7,7 @@ after the Mac mini was off, never stores the same alert twice.
 """
 
 import logging
+import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -27,22 +28,26 @@ from quant.models import (
 )
 from quant.portfolio import service
 from quant.portfolio.alerts import (
+    DEFAULT_CRYPTO_PCT,
+    DEFAULT_FUND_PCT,
+    DEFAULT_STOCK_PCT,
     MOVE_CLASSES,
     breaches,
     daily_move,
+    looks_like_split,
     move_text,
     threshold_for,
 )
-from quant.portfolio.positions import compute_positions, open_positions
+from quant.portfolio.positions import Position, compute_positions, open_positions
 
 log = logging.getLogger(__name__)
 
 FAILED_JOB_WINDOW_HOURS = 48
 DEFAULTS = AlertSettings(
     daily_moves_enabled=True,
-    move_stock_pct=Decimal(5),
-    move_fund_pct=Decimal(3),
-    move_crypto_pct=Decimal(10),
+    move_stock_pct=DEFAULT_STOCK_PCT,
+    move_fund_pct=DEFAULT_FUND_PCT,
+    move_crypto_pct=DEFAULT_CRYPTO_PCT,
 )
 
 
@@ -87,16 +92,19 @@ def _newest_bars(
     return bars
 
 
+def _open_positions(session: Session, user: User) -> list[Position]:
+    return open_positions(compute_positions(service.load_movements(session, user.id)))
+
+
 def _user_moves(
-    session: Session,
     user: User,
+    positions: list[Position],
     settings: AlertSettings,
     instruments: dict[str, Instrument],
     bars: dict[int, list[tuple[date, Decimal]]],
     today: date,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    positions = open_positions(compute_positions(service.load_movements(session, user.id)))
     for position in positions:
         limit = threshold_for(
             position.asset_class,
@@ -108,7 +116,7 @@ def _user_moves(
         if limit is None or instrument is None or position.asset_class not in MOVE_CLASSES:
             continue
         move = daily_move(bars.get(instrument.id, []), today)
-        if move is None or not breaches(move, limit):
+        if move is None or not breaches(move, limit) or looks_like_split(move):
             continue
         name = position.name or instrument.name or position.isin
         title, body = move_text(name, position.asset_class or "", move, limit, instrument.currency)
@@ -127,29 +135,34 @@ def _user_moves(
 
 
 def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str, object]]:
+    """Runs that failed, or finished with errors, in the last two days and after the admin's
+    account existed (a new admin gets no alerts about the time before)."""
+    since = max(now - timedelta(hours=FAILED_JOB_WINDOW_HOURS), admin.created_at)
     runs = session.scalars(
         select(JobRun).where(
-            JobRun.status == JobStatus.FAILED,
+            JobRun.status.in_([JobStatus.FAILED, JobStatus.PARTIAL]),
             JobRun.finished_at.is_not(None),
-            JobRun.finished_at >= now - timedelta(hours=FAILED_JOB_WINDOW_HOURS),
+            JobRun.finished_at >= since,
         )
     )
     rows: list[dict[str, object]] = []
     for run in runs:
         details = run.details or {}
         reason = str(details.get("error") or "")
-        if not reason and isinstance(details.get("errors"), dict):
-            errors = details["errors"]
-            assert isinstance(errors, dict)
+        errors = details.get("errors")
+        if not reason and isinstance(errors, dict) and errors:
             reason = f"{len(errors)} items failed, for example: " + "; ".join(
                 f"{k}: {v}" for k, v in list(errors.items())[:2]
             )
+        if run.status == JobStatus.PARTIAL and not reason:
+            continue  # nothing went wrong that a person could act on
+        failed = run.status == JobStatus.FAILED
         rows.append(
             {
                 "user_id": admin.id,
                 "kind": "job_failed",
-                "severity": "warning",
-                "title": f"Job {run.job} failed",
+                "severity": "warning" if failed else "info",
+                "title": f"Job {run.job} {'failed' if failed else 'finished with errors'}",
                 "body": (reason or "The run failed with no message.")[:900],
                 "isin": None,
                 "dedupe_key": f"job_failed:{run.id}",
@@ -162,21 +175,34 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     result = JobResult()
     users = list(session.scalars(select(User).order_by(User.created_at)))
     settings = {s.user_id: s for s in session.scalars(select(AlertSettings))}
+    # Each user's open positions, read once. Only what somebody holds needs prices.
+    positions: dict[uuid.UUID, list[Position]] = {}
+    for user in users:
+        if settings.get(user.id, DEFAULTS).daily_moves_enabled:
+            try:
+                positions[user.id] = _open_positions(session, user)
+            except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
+                session.rollback()
+                log.exception("positions of user %s failed", user.id)
+                result.errors[str(user.id)] = f"{type(exc).__name__}: {exc}"
+    held = {p.isin for mine in positions.values() for p in mine if p.asset_class in MOVE_CLASSES}
     instruments = {
         i.isin: i
         for i in session.scalars(
-            select(Instrument).where(Instrument.isin.is_not(None), Instrument.active.is_(True))
+            select(Instrument).where(Instrument.isin.in_(held), Instrument.active.is_(True))
         )
         if i.isin
     }
     bars = _newest_bars(session, [i.id for i in instruments.values()])
     for user in users:
         result.attempted += 1
+        if str(user.id) in result.errors:
+            continue
         mine = settings.get(user.id, DEFAULTS)
         try:
             rows: list[dict[str, object]] = []
-            if mine.daily_moves_enabled:
-                rows += _user_moves(session, user, mine, instruments, bars, today)
+            if user.id in positions:
+                rows += _user_moves(user, positions[user.id], mine, instruments, bars, today)
             if user.role == Role.ADMIN:
                 rows += _failed_jobs(session, user, now)
             result.rows_written += _store(session, rows)

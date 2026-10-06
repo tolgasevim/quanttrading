@@ -44,10 +44,25 @@ def upgrade() -> None:
     op.create_table(
         "alert_settings",
         sa.Column("user_id", sa.UUID(), nullable=False),
-        sa.Column("daily_moves_enabled", sa.Boolean(), nullable=False),
-        sa.Column("move_stock_pct", sa.Numeric(precision=5, scale=2), nullable=False),
-        sa.Column("move_fund_pct", sa.Numeric(precision=5, scale=2), nullable=False),
-        sa.Column("move_crypto_pct", sa.Numeric(precision=5, scale=2), nullable=False),
+        sa.Column("daily_moves_enabled", sa.Boolean(), server_default=sa.true(), nullable=False),
+        sa.Column(
+            "move_stock_pct",
+            sa.Numeric(precision=5, scale=2),
+            server_default="5",
+            nullable=False,
+        ),
+        sa.Column(
+            "move_fund_pct",
+            sa.Numeric(precision=5, scale=2),
+            server_default="3",
+            nullable=False,
+        ),
+        sa.Column(
+            "move_crypto_pct",
+            sa.Numeric(precision=5, scale=2),
+            server_default="10",
+            nullable=False,
+        ),
         sa.Column("quiet_start", sa.Time(), nullable=True),
         sa.Column("quiet_end", sa.Time(), nullable=True),
         sa.Column(

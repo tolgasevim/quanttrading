@@ -22,9 +22,11 @@ function SettingsCard() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    api<AlertSettings>("/api/alerts/settings").then(setForm);
+    api<AlertSettings>("/api/alerts/settings")
+      .then(setForm)
+      .catch((err) => setError(err instanceof ApiError ? err.detail : "Could not load the settings."));
   }, []);
-  if (!form) return null;
+  if (!form) return error ? <p className="notice status-failed">{error}</p> : null;
 
   const set = (patch: Partial<AlertSettings>) => {
     setSaved(false);

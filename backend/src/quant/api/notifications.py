@@ -9,12 +9,13 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from quant.api.deps import CurrentUser, UserDb
 from quant.models import AlertSettings, Notification
+from quant.portfolio.alerts import DEFAULT_CRYPTO_PCT, DEFAULT_FUND_PCT, DEFAULT_STOCK_PCT
 
 router = APIRouter(prefix="/api", tags=["notifications"])
 
@@ -54,6 +55,12 @@ class SettingsIn(BaseModel):
     move_crypto_pct: Pct
     quiet_start: str | None = None
     quiet_end: str | None = None
+
+    @field_validator("quiet_start", "quiet_end", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        """A cleared time input sends an empty string: that means no time."""
+        return None if isinstance(value, str) and not value.strip() else value
 
     @model_validator(mode="after")
     def _quiet_hours_are_a_pair(self) -> "SettingsIn":
@@ -154,9 +161,9 @@ def _settings_out(row: AlertSettings | None) -> SettingsOut:
     if row is None:
         return SettingsOut(
             daily_moves_enabled=True,
-            move_stock_pct=Decimal(5),
-            move_fund_pct=Decimal(3),
-            move_crypto_pct=Decimal(10),
+            move_stock_pct=DEFAULT_STOCK_PCT,
+            move_fund_pct=DEFAULT_FUND_PCT,
+            move_crypto_pct=DEFAULT_CRYPTO_PCT,
             quiet_start=None,
             quiet_end=None,
         )

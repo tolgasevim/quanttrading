@@ -7,6 +7,11 @@ from decimal import Decimal
 
 TENTH = Decimal("0.1")
 
+# The daily-move limits of decision D39, in percent. The model, the API and the job all use these.
+DEFAULT_STOCK_PCT = Decimal(5)
+DEFAULT_FUND_PCT = Decimal(3)
+DEFAULT_CRYPTO_PCT = Decimal(10)
+
 # The broker's asset classes that get a daily-move alert, and how an alert names them.
 MOVE_CLASSES: dict[str, str] = {"STOCK": "share", "FUND": "fund", "CRYPTO": "coin"}
 
@@ -40,6 +45,24 @@ def daily_move(
     if (day - previous_day).days > MAX_GAP_DAYS or day <= previous_day or previous <= 0:
         return None
     return Move((close - previous) / previous * 100, close, previous, day, previous_day)
+
+
+# Share splits and reverse splits change the price by a simple ratio. A move that is one of
+# these, to within SPLIT_TOLERANCE, is far more likely a split the data has not caught up with
+# than a crash or a jump, so it raises no alert.
+SPLIT_RATIOS = (2, 3, 4, 5, 8, 10, 20, 50)
+SPLIT_TOLERANCE = Decimal("0.02")
+
+
+def looks_like_split(move: Move) -> bool:
+    if move.close <= 0 or move.previous <= 0:
+        return False
+    ratio = move.previous / move.close  # 2 for a 2-for-1 split, 0.5 for a 1-for-2 reverse split
+    for k in SPLIT_RATIOS:
+        for target in (Decimal(k), Decimal(1) / k):
+            if abs(ratio - target) <= SPLIT_TOLERANCE * target:
+                return True
+    return False
 
 
 def threshold_for(

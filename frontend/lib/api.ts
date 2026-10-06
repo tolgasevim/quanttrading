@@ -17,7 +17,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     let detail = response.statusText;
     try {
       const body = await response.json();
-      detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      detail =
+        typeof body.detail === "string"
+          ? body.detail
+          : Array.isArray(body.detail)
+            ? // FastAPI validation errors: a list of {msg, loc, ...}
+              body.detail.map((d: { msg?: string }) => d.msg ?? JSON.stringify(d)).join("; ")
+            : JSON.stringify(body.detail);
     } catch {
       // keep statusText
     }

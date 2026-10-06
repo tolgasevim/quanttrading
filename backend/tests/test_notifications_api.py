@@ -186,3 +186,23 @@ def test_settings_belong_to_one_user(client: TestClient, db: Session, admin: Use
     client.post("/api/auth/logout")
     login(client, "member@example.com")
     assert client.get("/api/alerts/settings").json()["move_stock_pct"] == "5"  # their own default
+
+
+def test_a_cleared_time_means_no_time_but_one_time_alone_is_refused(owner: TestClient) -> None:
+    both_blank = owner.put(
+        "/api/alerts/settings", json={**GOOD, "quiet_start": "", "quiet_end": " "}
+    )
+    assert both_blank.status_code == 200 and both_blank.json()["quiet_start"] is None
+    one = owner.put("/api/alerts/settings", json={**GOOD, "quiet_start": "22:00", "quiet_end": ""})
+    assert one.status_code == 422
+
+
+def test_a_new_users_settings_equal_the_defaults_the_job_uses(owner: TestClient) -> None:
+    from quant.ingest.alerts import DEFAULTS
+
+    shown = owner.get("/api/alerts/settings").json()
+    assert (shown["move_stock_pct"], shown["move_fund_pct"], shown["move_crypto_pct"]) == (
+        str(DEFAULTS.move_stock_pct),
+        str(DEFAULTS.move_fund_pct),
+        str(DEFAULTS.move_crypto_pct),
+    )
