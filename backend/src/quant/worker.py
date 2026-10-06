@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from quant import rls
+from quant.ai.scoring import score_picks
 from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
 from quant.ingest.alerts import ALERT_JOB_NAME, create_alerts
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
+SCORE_JOB = "score_picks"
 
 
 def _map_and_fill(session: Session, settings: Settings, fetcher: Fetcher) -> JobResult:
@@ -132,6 +134,11 @@ def run_evening() -> None:
         log.exception("the price run failed")
         _record_crash(PRICES_JOB, exc)
     run_alerts()
+    try:
+        run_scoring()  # after the prices, so a window that ended today is scored today
+    except Exception as exc:  # noqa: BLE001 - the evening run is over either way
+        log.exception("the pick scoring failed")
+        _record_crash(SCORE_JOB, exc)
 
 
 def run_alerts() -> None:
@@ -145,6 +152,14 @@ def run_alerts() -> None:
             ALERT_JOB_NAME,
             lambda s: create_alerts(s, today_local(settings).date(), datetime.now(UTC)),
         )
+
+
+def run_scoring() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Scores every user's picks from the shared prices (FR-3 bypass).
+        rls.bypass(session)
+        run_job(session, SCORE_JOB, lambda s: score_picks(s, today_local(settings).date()))
 
 
 def run_fx() -> None:

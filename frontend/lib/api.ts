@@ -340,3 +340,30 @@ export type AiAnswer = {
   data_points: string[];
   notes: string[];
 };
+
+export type AiScore = {
+  window_months: number;
+  end_date: string;
+  pick_return_pct: string;
+  benchmark_return_pct: string;
+  excess_pct: string;
+  hit: boolean;
+};
+
+export type AiWindowSummary = {
+  window_months: number;
+  scored: number;
+  hits: number;
+  hit_rate_pct: string | null;
+  avg_pick_return_pct: string | null;
+  avg_benchmark_return_pct: string | null;
+  avg_excess_pct: string | null;
+};
+
+export type AiTrackRecord = {
+  benchmark: string;
+  picks: number;
+  unscored: number;
+  windows: AiWindowSummary[];
+  items: { pick: AiPick; scores: AiScore[] }[];
+};

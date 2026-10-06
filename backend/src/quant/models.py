@@ -418,3 +418,26 @@ class AiPick(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
     price_currency: Mapped[str | None] = mapped_column(String(3))
     price_date: Mapped[date | None] = mapped_column(Date)
+
+
+class AiPickScore(Base):
+    """How a pick did after 1, 3, 6 or 12 months against the benchmark (FR-52). One row per pick
+    and window, written once and never changed."""
+
+    __tablename__ = "ai_pick_scores"
+    __table_args__ = (
+        UniqueConstraint("pick_id", "window_months", name="uq_ai_pick_scores_pick_window"),
+        Index("ix_ai_pick_scores_user", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    pick_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ai_picks.id", ondelete="CASCADE"))
+    window_months: Mapped[int] = mapped_column(Integer)
+    scored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)  # the close the score used (<= the window's end)
+    pick_return_pct: Mapped[Decimal] = mapped_column(Numeric(14, 4))
+    benchmark_return_pct: Mapped[Decimal] = mapped_column(Numeric(14, 4))
+    excess_pct: Mapped[Decimal] = mapped_column(Numeric(14, 4))  # pick minus benchmark
+    hit: Mapped[bool] = mapped_column(Boolean)  # buy/hold beat the benchmark; sell trailed it
