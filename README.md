@@ -32,7 +32,11 @@ the securities and crypto statements.
    docker compose exec api python -m quant.cli ingest-prices
    ```
    The worker then does this by itself: FX at 16:30, ticker lookup at 22:00 and prices at 22:30
-   (Europe/Berlin, weekdays), and the alerts right after the prices. It also catches up after the Mac mini was off. A holding without a
+   (Europe/Berlin, weekdays), and the alerts right after the prices. It also catches up after the
+   Mac mini was off. To make the alerts by hand, run
+   `docker compose exec api python -m quant.cli create-alerts`. The alerts (big daily moves in
+   your holdings, and failed jobs for the owner) are on the Alerts page, where you set the limits.
+   A holding without a
    ticker is listed on the Prices page, where you can enter it by hand. An optional free OpenFIGI
    key (`QT_OPENFIGI_API_KEY`) raises the lookup rate limit. The same job reads the sector of each
    share (Yahoo's names) for the Holdings page. Coins are priced in euros from

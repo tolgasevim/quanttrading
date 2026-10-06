@@ -70,6 +70,16 @@ class Person:
 
 
 @dataclass(frozen=True)
+class Listed:
+    """The few fields of an instrument an alert needs, copied out once: a rollback after one
+    user's failure expires the ORM rows, and every later access would query again."""
+
+    id: int
+    name: str
+    currency: str
+
+
+@dataclass(frozen=True)
 class Effective:
     """What a user's alert settings come to: their saved row, or the defaults when there is none."""
 
@@ -137,7 +147,7 @@ def _user_moves(
     user: Person,
     positions: list[Position],
     settings: Effective,
-    instruments: dict[str, Instrument],
+    instruments: dict[str, Listed],
     bars: dict[int, list[tuple[date, Decimal]]],
     today: date,
 ) -> list[dict[str, object]]:
@@ -306,7 +316,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
                 result.errors[str(user.id)] = _kind(exc)
     held = {p.isin for mine in positions.values() for p in mine if p.asset_class in MOVE_CLASSES}
     instruments = {
-        i.isin: i
+        i.isin: Listed(i.id, i.name, i.currency)
         for i in session.scalars(
             select(Instrument).where(Instrument.isin.in_(held), Instrument.active.is_(True))
         )
