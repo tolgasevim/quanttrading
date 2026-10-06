@@ -305,12 +305,14 @@ class Notification(Base):
     the same event (a price move on a day, a failed job run) is stored once per user."""
 
     __tablename__ = "notifications"
-    __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="uq_notifications_user_key"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedupe_key", name="uq_notifications_user_key"),
+        # The list is read newest first for one user.
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     kind: Mapped[str] = mapped_column(String(30))  # daily_move | job_failed
     severity: Mapped[str] = mapped_column(String(10))  # info | warning
     title: Mapped[str] = mapped_column(String(200))

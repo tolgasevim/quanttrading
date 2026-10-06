@@ -40,7 +40,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("user_id", "dedupe_key", name="uq_notifications_user_key"),
     )
-    op.create_index(op.f("ix_notifications_user_id"), "notifications", ["user_id"], unique=False)
+    op.create_index(
+        "ix_notifications_user_created", "notifications", ["user_id", "created_at"], unique=False
+    )
     op.create_table(
         "alert_settings",
         sa.Column("user_id", sa.UUID(), nullable=False),
@@ -83,5 +85,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("alert_settings")
-    op.drop_index(op.f("ix_notifications_user_id"), table_name="notifications")
+    op.drop_index("ix_notifications_user_created", table_name="notifications")
     op.drop_table("notifications")

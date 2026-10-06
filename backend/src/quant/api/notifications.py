@@ -136,8 +136,10 @@ def list_notifications(
 
 
 class ReadAllIn(BaseModel):
-    # Mark only the alerts created up to this moment (the newest one the page has shown), so an
-    # alert that arrives while the page is open is not marked read unseen. Without it: all.
+    # Mark only the alerts the page showed: the ones created from `since` (its oldest) up to
+    # `up_to` (its newest). An alert that arrived meanwhile, or an older one the page never
+    # loaded, stays unread. Without a body: all.
+    since: datetime | None = None
     up_to: datetime | None = None
 
 
@@ -148,6 +150,8 @@ def read_all(user: CurrentUser, db: UserDb, body: ReadAllIn | None = None) -> No
     )
     if body is not None and body.up_to is not None:
         query = query.where(Notification.created_at <= body.up_to)
+    if body is not None and body.since is not None:
+        query = query.where(Notification.created_at >= body.since)
     db.execute(query.values(read_at=datetime.now(UTC)))
     db.commit()
     return list_notifications(user, db)

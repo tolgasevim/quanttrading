@@ -174,9 +174,14 @@ export default function NotificationsPage() {
   // only, so the rows on the page are updated here, by id.
   const mutate = async (path: string, id?: string) => {
     try {
-      // "All" means all the page has shown: an alert that arrived meanwhile stays unread.
-      const newest = data?.items[0]?.created_at;
-      const body = await post<Notifications>(path, id === undefined && newest ? { up_to: newest } : undefined);
+      // "All" means all the page has shown, from its oldest alert to its newest: an alert that
+      // arrived meanwhile, or an older one the page never loaded, stays unread.
+      const shown = data?.items ?? [];
+      const range =
+        id === undefined && shown.length > 0
+          ? { since: shown[shown.length - 1].created_at, up_to: shown[0].created_at }
+          : undefined;
+      const body = await post<Notifications>(path, range);
       setData((old) => ({
         unread: body.unread,
         items: (old?.items ?? body.items).map((n) =>

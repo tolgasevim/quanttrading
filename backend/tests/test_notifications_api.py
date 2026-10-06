@@ -246,3 +246,22 @@ def test_read_all_up_to_a_moment_leaves_newer_alerts_unread(
     assert body["unread"] == 2
     assert owner.post("/api/notifications/read-all").json()["unread"] == 0  # no body: all
     assert owner.post("/api/notifications/read-all", json={"up_to": "yesterday"}).status_code == 422
+
+
+def test_read_all_marks_only_the_range_the_page_showed(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    rows = [add(db, admin, n) for n in range(1, 7)]  # one hour apart, Title 6 the newest
+    shown = {"since": rows[2].created_at.isoformat(), "up_to": rows[4].created_at.isoformat()}
+    body = owner.post("/api/notifications/read-all", json=shown).json()
+    # The page showed titles 3 to 5: the newer one that arrived and the older ones it never loaded
+    # stay unread.
+    assert {i["title"]: i["read"] for i in body["items"]} == {
+        "Title 6": False,
+        "Title 5": True,
+        "Title 4": True,
+        "Title 3": True,
+        "Title 2": False,
+        "Title 1": False,
+    }
+    assert body["unread"] == 3
