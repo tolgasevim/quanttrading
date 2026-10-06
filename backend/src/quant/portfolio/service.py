@@ -105,6 +105,26 @@ class Holdings:
     sectors: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
 
 
+def mark_value(mark: Mark) -> Decimal:
+    """What a mark says a position is worth: the price times the quantity it applies to."""
+    return mark.price * mark.quantity
+
+
+def weights(holdings: Holdings) -> tuple[dict[str, Decimal], Decimal, int]:
+    """Each valued position's share of the total market value, in percent, with that total and
+    the number of positions in it. Positions without a market value are left out of both, and so
+    is anything not worth more than nothing, so the shares always add up to 100."""
+    values = {
+        p.isin: value
+        for p in holdings.positions
+        if (m := holdings.marks.get(p.isin)) and (value := mark_value(m)) >= 0
+    }
+    total = sum(values.values(), Decimal(0))
+    if total <= 0:
+        return {}, total, 0
+    return {isin: value / total * 100 for isin, value in values.items()}, total, len(values)
+
+
 def load_sectors(session: Session, isins: list[str]) -> dict[str, tuple[str | None, str | None]]:
     """The sector and industry of each ISIN that has one. The instrument list is shared market
     data, so this reads no personal data."""

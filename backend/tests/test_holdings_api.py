@@ -1,4 +1,5 @@
-import httpx
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -55,11 +56,12 @@ def import_history(client: TestClient, text: str | None = None) -> None:
     assert client.post(f"/api/imports/{preview['id']}/commit").status_code == 200
 
 
-def upload_statement(client: TestClient, pdf: bytes) -> httpx.Response:
-    response: httpx.Response = client.post(
+def upload_statement(client: TestClient, pdf: bytes) -> Any:
+    # Any: the response class is httpx's or httpx2's, depending on which the test client picked
+    # (the anthropic package brings httpx2).
+    return client.post(
         "/api/holdings/statements/crypto", files={"file": ("s.pdf", pdf, "application/pdf")}
     )
-    return response
 
 
 @pytest.fixture
