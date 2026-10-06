@@ -289,6 +289,14 @@ def ask(
                 traces=traces,
             )
             messages.append({"role": "assistant", "content": reply.raw_content})
+            if _turn == MAX_TURNS - 1:  # the next call is the last: ask for the answer now
+                results.append(
+                    {
+                        "type": "text",
+                        "text": "That was the last round of tool calls. Answer now, from what "
+                        "you have. Do not call more tools.",
+                    }
+                )
             messages.append({"role": "user", "content": results})
             asked_tools = True
             continue

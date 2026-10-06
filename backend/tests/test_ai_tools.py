@@ -221,7 +221,10 @@ def test_a_broken_tool_is_an_error_not_a_crash(
 def test_a_long_result_is_cut(db: Session, admin: User, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(tools.RUNNERS, "get_fx", lambda c, a: ({"x": "y" * 20000}, "big"))
     text, _ = call(ctx(db, admin), "get_fx", currency="USD")
-    assert len(text) < tools.MAX_RESULT_CHARS + 20 and text.endswith("(cut)")
+    import json
+
+    out = json.loads(text)  # still valid JSON, and it says it is partial
+    assert out["truncated"] is True and len(out["partial_text"]) == tools.MAX_RESULT_CHARS
 
 
 # --- through the chat endpoint ------------------------------------------------------------------
@@ -303,11 +306,11 @@ def test_chat_history_is_limited(owner: TestClient, fake: Fake) -> None:
     assert owner.post("/api/ai/ask", json={"question": "Next?", "history": many}).status_code == 200
     assert len(fake.requests[0]["messages"]) <= 11
     fake.replies = [reply("ok")]
-    longer = many * 3  # a long chat is trimmed, not refused
+    longer = many * 2  # a long chat is trimmed, not refused
     assert (
         owner.post("/api/ai/ask", json={"question": "Next?", "history": longer}).status_code == 200
     )
-    absurd = [{"role": "user", "content": "x"}] * 501
+    absurd = [{"role": "user", "content": "x"}] * 101
     assert (
         owner.post("/api/ai/ask", json={"question": "Next?", "history": absurd}).status_code == 422
     )
@@ -419,3 +422,90 @@ def test_an_exact_name_beats_a_longer_one_and_a_sold_position_is_found(
 def test_prices_say_how_old_the_last_close_is(db: Session, two: User) -> None:
     text, _ = call(ctx(db, two), "get_prices", query="NVIDIA Corp")
     assert f'"last_close_age_days": {(date.today() - RECENT).days}' in text
+
+
+def test_a_whole_number_of_shares_is_not_written_in_scientific_notation(
+    db: Session, admin: User
+) -> None:
+    rls.bypass(db)
+    db.add(
+        Transaction(
+            user_id=admin.id, broker="tr", external_id="q", name="Hundred AG", isin=A,
+            executed_at=datetime(2025, 1, 2, tzinfo=UTC), date=date(2025, 1, 2), kind="trade",
+            category="TRADING", type="BUY", asset_class="STOCK", shares=D("100"), price=D("1"),
+            amount=D("-100"), currency="EUR",
+        )
+    )  # fmt: skip
+    db.commit()
+    text, _ = call(ctx(db, admin), "get_position", query="hundred")
+    assert '"quantity": "100"' in text and "E+" not in text
+
+
+def test_an_ambiguous_name_is_not_hidden_by_a_sold_position_or_a_ticker_search(
+    db: Session, two: User
+) -> None:
+    hold(db, two, "DE000BASF111", "SAP Labs")  # two open holdings fit "sap"
+    for name in ("get_position", "get_prices"):
+        text, trace = call(ctx(db, two), name, query="sap")
+        assert trace.error and "several" in text
+
+
+def test_the_listing_with_the_newest_close_is_the_one_quoted(db: Session, two: User) -> None:
+    rls.bypass(db)
+    stale = Instrument(
+        code="SAPOLD", isin=None, name="SAP old listing", asset_class="stock", currency="USD"
+    )
+    db.add(stale)
+    db.flush()
+    db.add(PriceEOD(instrument_id=stale.id, date=RECENT - timedelta(days=40), close=D("9"), currency="USD", source="t"))  # fmt: skip
+    db.commit()
+    text, _ = call(ctx(db, two), "get_prices", query=B)  # ISIN: the SAP listing
+    assert '"currency": "EUR"' in text
+    text, trace = call(ctx(db, two), "get_prices", query="sapold")
+    age = (date.today() - RECENT).days + 40
+    assert (
+        not trace.error and '"currency": "USD"' in text and f'"last_close_age_days": {age}' in text
+    )
+
+
+def test_duplicate_targets_are_refused_and_a_covered_target_still_counts_as_matched(
+    db: Session, two: User
+) -> None:
+    import json
+
+    text, trace = call(
+        ctx(db, two), "scenario",
+        shocks=[{"target": "Technology", "pct": -30}, {"target": "technology", "pct": -10}],
+    )  # fmt: skip
+    assert trace.error and "once" in text
+    out = json.loads(
+        call(
+            ctx(db, two),
+            "scenario",
+            shocks=[
+                {"target": "all", "pct": -5},
+                {"target": "Technology", "pct": -30},
+                {"target": "Software", "pct": -10},
+            ],
+        )[0]
+    )
+    assert out["targets_that_matched_nothing"] == []  # "all" matched, though sectors won everywhere
+
+
+def test_the_last_round_of_tools_asks_for_an_answer(
+    owner: TestClient, fake: Fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.ai import service as ai_service
+
+    monkeypatch.setattr(ai_service, "MAX_TURNS", 2)
+    accept(owner)
+    fake.replies = [
+        reply("", [ToolCall("t0", "get_fx", {"currency": "USD"})]),
+        reply("", [ToolCall("t1", "get_fx", {"currency": "USD"})]),
+        reply("Rates are not stored yet."),
+    ]
+    body = owner.post("/api/ai/ask", json={"question": "Rates?"}).json()
+    assert body["answer"] == "Rates are not stored yet." and body["notes"] == []
+    last = fake.requests[2]["messages"][-1]["content"]
+    assert last[-1]["type"] == "text" and "last round" in last[-1]["text"]
+    assert all(b["type"] != "text" for b in fake.requests[1]["messages"][-1]["content"])

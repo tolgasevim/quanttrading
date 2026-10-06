@@ -142,6 +142,10 @@ class ToolError(Exception):
     """A problem the model can read and work around."""
 
 
+class NoMatch(ToolError):
+    """Nothing the user holds fits the query (as opposed to several holdings fitting it)."""
+
+
 def _dec(value: Decimal | None, places: str = "0.01") -> str | None:
     return None if value is None else str(value.quantize(Decimal(places)))
 
@@ -159,7 +163,7 @@ def _find_position(ctx: ToolContext, query: str) -> Any:
         return named[0]
     if len(named) > 1:
         raise ToolError("several holdings match: " + ", ".join(p.name or p.isin for p in named[:8]))
-    raise ToolError("the user holds nothing that matches")
+    raise NoMatch("the user holds nothing that matches")
 
 
 def _closed_position(ctx: ToolContext, query: str) -> tuple[dict[str, Any], str] | None:
@@ -190,8 +194,8 @@ def get_position(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any]
     query = str(args.get("query", ""))
     try:
         p = _find_position(ctx, query)
-    except ToolError:
-        closed = _closed_position(ctx, query)
+    except NoMatch:
+        closed = _closed_position(ctx, query)  # only when no open holding fits at all
         if closed is None:
             raise
         return closed
@@ -212,7 +216,7 @@ def get_position(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any]
         return out, f"{p.name or p.isin}: weight only"
     mark = h.marks.get(p.isin)
     cost = h.costs.get(p.isin)
-    out["quantity"] = str(p.quantity.normalize())
+    out["quantity"] = format(p.quantity.normalize(), "f")  # never 1E+2
     if cost is not None:
         out["average_cost_eur"] = _dec(cost.average_cost, "0.0001")
         out["total_cost_eur"] = _dec(cost.total_cost)
@@ -253,21 +257,23 @@ def get_prices(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], 
         isin: str | None = held.isin
         ticker: str | None = None
         name = held.name
-    except ToolError:
+    except NoMatch:  # not a holding: an ISIN or a ticker the app tracks
         isin = query.upper() if len(query) == 12 else None
         ticker, name = query, None
-    found = candidates(ctx.session, isin, ticker)
-    for instrument in found:
-        rows = ctx.session.execute(
+    options = []
+    for candidate in candidates(ctx.session, isin, ticker):
+        got = ctx.session.execute(
             select(PriceEOD.date, PriceEOD.close, PriceEOD.currency)
             .where(
-                PriceEOD.instrument_id == instrument.id,
+                PriceEOD.instrument_id == candidate.id,
                 PriceEOD.date >= date.today() - timedelta(days=max(days, 370)),
             )
             .order_by(PriceEOD.date)
         ).all()
-        if not rows:
-            continue
+        if got:
+            options.append((got[-1][0], candidate, got))
+    # Several listings can fit: the one with the newest close is the one the app keeps current.
+    for _, instrument, rows in sorted(options, key=lambda o: o[0], reverse=True)[:1]:
         closes = [(d, c) for d, c, _ in rows]
         last_day = closes[-1][0]
         # The periods run back from the last stored close, which may be a few days old.
@@ -309,6 +315,9 @@ def scenario(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], st
         if not target or not -100 <= pct <= 1000:
             raise ToolError("pct must be between -100 and 1000")
         parsed.append((target, pct))
+    targets = [t for t, _ in parsed]
+    if len(set(targets)) != len(targets):
+        raise ToolError("each target may appear once; send one shock per target")
     h = ctx.holdings
     weights, total, _ = service.weights(h)
     if not weights:
@@ -327,9 +336,9 @@ def scenario(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], st
         for rank in (p.isin.lower(), sector, cls, "all"):
             hit = next((pct for target, pct in parsed if rank and target == rank), None)
             if hit is not None:
-                move = hit
-                used.add(rank)
-                break
+                used.add(rank)  # a target counts as matched even when a more specific one wins
+                if move is None:
+                    move = hit
         if move is None:
             continue
         part = weight * move / 100
@@ -462,5 +471,6 @@ def run(ctx: ToolContext, name: str, args: dict[str, Any]) -> tuple[str, ToolTra
         )
     text = json.dumps(out, ensure_ascii=False, default=str)
     if len(text) > MAX_RESULT_CHARS:
-        text = text[:MAX_RESULT_CHARS] + "...(cut)"
+        # Still valid JSON, with a flag, so the model knows the data is partial.
+        text = json.dumps({"truncated": True, "partial_text": text[:MAX_RESULT_CHARS]})
     return text, ToolTrace(name, shown, summary[:200])
