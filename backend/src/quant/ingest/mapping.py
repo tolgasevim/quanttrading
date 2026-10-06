@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
-from quant.models import Instrument, Transaction
+from quant.models import AiPick, Instrument, Transaction
 from quant.portfolio.positions import DUST, QUANTITY_CATEGORIES
 from quant.providers.base import ProviderError
 from quant.providers.resolvers import CryptoResolver, IsinResolver, Listing
@@ -42,8 +42,9 @@ class HeldIsin:
 
 
 def held_isins(session: Session) -> list[HeldIsin]:
-    """Every priceable ISIN that at least one user still holds. A fully sold position needs no
-    price, so it gets no ticker lookup, and the price job skips it too (see `ingest_prices`).
+    """Every priceable ISIN that at least one user still holds, plus every ISIN the AI has
+    recommended. A fully sold position needs no price, so it gets no ticker lookup, and the price
+    job skips it too (see `ingest_prices`).
 
     "Still held" is worked out like the position engine does it: all quantity rows of the ISIN
     count, whatever class the row itself carries (some rows have none), and a non-zero net is
@@ -65,11 +66,23 @@ def held_isins(session: Session) -> list[HeldIsin]:
         .group_by(Transaction.isin)
         .order_by(Transaction.isin)
     ).all()
-    return [
+    found = [
         HeldIsin(isin, name, PRICEABLE[cls])
         for isin, name, cls in rows
         if isin and cls in PRICEABLE
     ]
+    # An ISIN the AI recommended (the pick log, FR-52) is tracked too, so the pick can be scored.
+    # The pick has no asset class: it is looked up as a share, which Yahoo also answers for
+    # funds. TR's pseudo-ISINs for coins ("XF...") cannot be looked up this way.
+    have = {h.isin for h in found}
+    picked = session.execute(
+        select(AiPick.isin, func.max(AiPick.name))
+        .where(AiPick.isin.is_not(None), AiPick.isin.not_like("XF%"))
+        .group_by(AiPick.isin)
+        .order_by(AiPick.isin)
+    ).all()
+    found += [HeldIsin(isin, name, "stock") for isin, name in picked if isin and isin not in have]
+    return found
 
 
 def _resolve(

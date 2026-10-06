@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal as D
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from quant import rls
 from quant.ai import scoring
-from quant.models import AiPick, AiPickScore, Instrument, JobStatus, PriceEOD, User
+from quant.models import AiPick, AiPickScore, FxRate, Instrument, JobStatus, PriceEOD, User
 
 from .conftest import login, make_user
 
@@ -31,7 +32,7 @@ def bars(db: Session, row: Instrument, closes: dict[date, str]) -> None:
 
 
 def pick(
-    db: Session, user: User, when: date, direction: str = "buy", isin: str | None = ISIN, **kw: str
+    db: Session, user: User, when: date, direction: str = "buy", isin: str | None = ISIN, **kw: Any
 ) -> AiPick:
     rls.bypass(db)
     row = AiPick(
@@ -48,7 +49,7 @@ def pick(
 def market(db: Session) -> tuple[Instrument, Instrument]:
     alpha = instrument(db, "ALPHA", ISIN)
     bench = instrument(db, scoring.BENCHMARK_CODE, "IE00B53SZB19")
-    start = date(2026, 5, 4)  # a Monday
+    start = date(2026, 5, 1)  # the Friday before the pick (Monday 4 May): no look-ahead
     one = date(2026, 6, 4)
     three = date(2026, 8, 4)
     # Alpha +20 % after a month, +50 % after three; the benchmark +10 % and +12 %.
@@ -238,7 +239,7 @@ def test_one_instrument_scores_every_window_of_a_pick(
     alpha, _ = market
     # A second candidate (same ticker as the pick's) with other prices must not be mixed in.
     other = instrument(db, "ALPHA2")
-    bars(db, other, {date(2026, 5, 4): "10", date(2026, 6, 4): "11", date(2026, 9, 1): "12"})
+    bars(db, other, {date(2026, 5, 1): "10", date(2026, 6, 4): "11", date(2026, 9, 1): "12"})
     pick(db, admin, date(2026, 5, 4), isin=ISIN, ticker="alpha2")
     rls.bypass(db)
     scoring.score_picks(db, TODAY)
@@ -271,3 +272,88 @@ def test_a_skipped_duplicate_is_not_counted(
     )  # fmt: skip
     db.commit()
     assert scoring.score_picks(db, TODAY).rows_written == 1  # only the 3-month window is new
+
+
+def test_a_dollar_pick_is_judged_in_euros(db: Session, admin: User) -> None:
+    usd = Instrument(
+        code="USDCO", isin="US0000000077", name="Usd", asset_class="stock", currency="USD"
+    )
+    db.add(usd)
+    bench = instrument(db, scoring.BENCHMARK_CODE, "IE00B53SZB19")
+    db.flush()
+    days = {date(2026, 5, 1): "100", date(2026, 6, 4): "110", date(2026, 6, 10): "110"}
+    for day, close in days.items():
+        db.add(PriceEOD(instrument_id=usd.id, date=day, close=D(close), currency="USD", source="t"))
+        db.add(
+            PriceEOD(instrument_id=bench.id, date=day, close=D("200"), currency="EUR", source="t")
+        )
+    # The dollar loses 10 % against the euro over the month: 1 EUR = 1.00 USD, then 1.10 USD.
+    db.add(FxRate(quote="USD", date=date(2026, 5, 1), rate=D("1.0"), source="ecb"))
+    db.add(FxRate(quote="USD", date=date(2026, 6, 4), rate=D("1.1"), source="ecb"))
+    db.commit()
+    pick(db, admin, date(2026, 5, 4), isin="US0000000077")
+    rls.bypass(db)
+    scoring.score_picks(db, date(2026, 6, 10))
+    one = db.scalars(select(AiPickScore)).one()
+    assert one.pick_return_pct == D("0.0000")  # +10 % in dollars is flat in euros
+    assert one.hit is False and one.benchmark_return_pct == D("0.0000")
+
+
+def test_a_day_without_an_exchange_rate_waits(db: Session, admin: User) -> None:
+    usd = Instrument(
+        code="USDCO", isin="US0000000077", name="Usd", asset_class="stock", currency="USD"
+    )
+    db.add(usd)
+    bench = instrument(db, scoring.BENCHMARK_CODE, "IE00B53SZB19")
+    db.flush()
+    for day in (date(2026, 5, 1), date(2026, 6, 4), date(2026, 6, 10)):
+        db.add(PriceEOD(instrument_id=usd.id, date=day, close=D("100"), currency="USD", source="t"))
+        db.add(
+            PriceEOD(instrument_id=bench.id, date=day, close=D("200"), currency="EUR", source="t")
+        )
+    db.commit()
+    pick(db, admin, date(2026, 5, 4), isin="US0000000077")
+    rls.bypass(db)
+    assert scoring.score_picks(db, date(2026, 6, 10)).rows_written == 0
+
+
+def test_the_price_stored_on_the_pick_is_the_start(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    pick(
+        db,
+        admin,
+        date(2026, 5, 4),
+        price=D("80"),
+        price_currency="EUR",
+        price_date=date(2026, 5, 1),
+    )
+    rls.bypass(db)
+    scoring.score_picks(db, TODAY)
+    one = db.scalars(select(AiPickScore).where(AiPickScore.window_months == 1)).one()
+    assert one.pick_return_pct == D("50.0000")  # 80 -> 120, not 100 -> 120
+    assert one.start_date == date(2026, 5, 1)
+
+
+def test_the_close_of_the_pick_day_is_not_the_start(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    alpha, _ = market
+    bars(
+        db, alpha, {date(2026, 5, 4): "130"}
+    )  # the day of the pick: a jump the pick must not claim
+    pick(db, admin, date(2026, 5, 4))
+    rls.bypass(db)
+    scoring.score_picks(db, TODAY)
+    one = db.scalars(select(AiPickScore).where(AiPickScore.window_months == 1)).one()
+    assert one.start_date == date(2026, 5, 1) and one.pick_return_pct == D("20.0000")
+
+
+def test_the_nightly_price_job_tracks_what_the_ai_recommended(db: Session, admin: User) -> None:
+    from quant.ingest.mapping import held_isins
+
+    pick(db, admin, date(2026, 5, 4), isin="US0000000555")
+    pick(db, admin, date(2026, 5, 4), isin="XF000BTC0017")  # a coin's pseudo-ISIN: no lookup
+    rls.bypass(db)
+    found = {h.isin: h for h in held_isins(db)}
+    assert found["US0000000555"].asset_class == "stock" and "XF000BTC0017" not in found
