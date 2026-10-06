@@ -3,7 +3,18 @@
 from fastapi import FastAPI
 from sqlalchemy import text
 
-from quant.api import admin, auth, costs, holdings, imports, market, prices, tax, transactions
+from quant.api import (
+    admin,
+    auth,
+    costs,
+    holdings,
+    imports,
+    market,
+    notifications,
+    prices,
+    tax,
+    transactions,
+)
 from quant.api.deps import DbSession
 
 app = FastAPI(
@@ -18,6 +29,7 @@ app.include_router(holdings.router)
 app.include_router(tax.router)
 app.include_router(costs.router)
 app.include_router(prices.router)
+app.include_router(notifications.router)
 
 
 @app.get("/api/health")

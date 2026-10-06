@@ -116,6 +116,27 @@ def compute_positions(transactions: Iterable[TxLike]) -> dict[str, Position]:
     return positions
 
 
+def holding_since(transactions: Iterable[TxLike]) -> dict[str, str]:
+    """For each ISIN still held, the day the current holding began: the last time its quantity
+    came up from nothing. A position sold in full and bought again begins at the second purchase,
+    which `Position.first_date` (the first quantity row ever) does not say."""
+    quantity: dict[str, Decimal] = {}
+    since: dict[str, str] = {}
+    for tx in sorted(transactions, key=lambda t: t.executed_at):
+        if not moves_quantity(tx):
+            continue
+        assert tx.isin is not None and tx.shares is not None
+        day = tx.date if isinstance(tx.date, str) else tx.date.isoformat()
+        before = abs(quantity.get(tx.isin, Decimal(0)))
+        quantity[tx.isin] = quantity.get(tx.isin, Decimal(0)) + tx.shares
+        after = abs(quantity[tx.isin])
+        if after > DUST and before <= DUST:
+            since[tx.isin] = day  # a holding begins
+        elif after <= DUST:
+            since.pop(tx.isin, None)  # it ended
+    return since
+
+
 def open_positions(positions: dict[str, Position]) -> list[Position]:
     return sorted(
         (p for p in positions.values() if p.is_open),

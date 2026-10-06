@@ -5,6 +5,7 @@ that was asleep or rebooted during the scheduled time still gets its data.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
+from quant.ingest.alerts import ALERT_JOB_NAME, create_alerts
 from quant.ingest.fx import ingest_fx
 from quant.ingest.jobs import JobResult, run_job
 from quant.ingest.mapping import held_isins, map_isins
@@ -100,6 +102,51 @@ def run_prices() -> None:
             fetcher.close()
 
 
+def _record_crash(job: str, exc: Exception) -> None:
+    """A job that crashes before `run_job` can write its row (a bad setting, a database error at
+    start) leaves nothing in job_runs, and the admin alerts are built from job_runs. Leave a failed
+    row, so they hear about it. Only the kind of error is kept."""
+    try:
+        with get_sessionmaker()() as session:
+            session.add(
+                JobRun(
+                    job=job,
+                    status=JobStatus.FAILED,
+                    finished_at=datetime.now(UTC),
+                    details={"error": type(exc).__name__},
+                )
+            )
+            session.commit()
+    except Exception:  # noqa: BLE001 - the log already has the crash
+        log.exception("could not record the crash of %s", job)
+
+
+def run_evening() -> None:
+    """The evening run: prices, then the alerts that need them. Chained, so a slow or late price
+    run can never leave the alerts to work on yesterday's bars. A failed price run is recorded
+    in job_runs (and logged here if it fails before it can be); the alerts still run, so the
+    admins hear about it."""
+    try:
+        run_prices()
+    except Exception as exc:  # noqa: BLE001 - the alerts must still run
+        log.exception("the price run failed")
+        _record_crash(PRICES_JOB, exc)
+    run_alerts()
+
+
+def run_alerts() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Alerts are made for every user from the shared prices (FR-3 bypass); each row names its
+        # user.
+        rls.bypass(session)
+        run_job(
+            session,
+            ALERT_JOB_NAME,
+            lambda s: create_alerts(s, today_local(settings).date(), datetime.now(UTC)),
+        )
+
+
 def run_fx() -> None:
     settings = get_settings()
     with get_sessionmaker()() as session:
@@ -136,13 +183,25 @@ def main() -> None:
 
     with get_sessionmaker()() as session:
         now = datetime.now(UTC)
-        for job, fn in ((FX_JOB, run_fx), (MAP_JOB, run_mapping), (PRICES_JOB, run_prices)):
+        for job, fn in ((FX_JOB, run_fx), (MAP_JOB, run_mapping)):
             if needs_catch_up(session, job, now):
                 log.info("catching up on %s", job)
                 try:
                     fn()
                 except Exception:  # noqa: BLE001 - one broken job must not stop the scheduler
                     log.exception("catch-up of %s failed", job)
+        # Prices and alerts go together, as in the evening run.
+        late: Callable[[], None] | None = None
+        if needs_catch_up(session, PRICES_JOB, now):
+            late = run_evening
+        elif needs_catch_up(session, ALERT_JOB_NAME, now):
+            late = run_alerts
+        if late is not None:
+            log.info("catching up on %s", late.__name__)
+            try:
+                late()
+            except Exception:  # noqa: BLE001 - the scheduler must still start
+                log.exception("catch-up failed")
 
     scheduler = BlockingScheduler(timezone=tz)
     common = {"misfire_grace_time": 3600, "coalesce": True, "max_instances": 1}
@@ -156,7 +215,7 @@ def main() -> None:
         **common,
     )
     scheduler.add_job(
-        run_prices,
+        run_evening,
         CronTrigger.from_crontab(settings.prices_cron, timezone=tz),
         id=PRICES_JOB,
         **common,

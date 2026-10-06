@@ -22,7 +22,14 @@ BYPASS_KEY = "rls_bypass"
 
 # Tables with a user_id column protected by the policy below. Add new user-owned tables here
 # and in a migration that calls `enable_rls_sql`.
-USER_TABLES = ("imports", "transactions", "snapshots", "unit_costs")
+USER_TABLES = (
+    "imports",
+    "transactions",
+    "snapshots",
+    "unit_costs",
+    "notifications",
+    "alert_settings",
+)
 
 
 def policy_sql(table: str) -> list[str]:

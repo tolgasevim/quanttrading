@@ -5,7 +5,7 @@ Portfolio tables (user-scoped, protected by row-level security per FR-3) arrive 
 
 import enum
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -21,8 +21,10 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -285,6 +287,66 @@ class UnitCost(Base):
     isin: Mapped[str] = mapped_column(String(20))
     unit_cost: Mapped[Decimal] = mapped_column(Numeric(28, 10))  # EUR per unit
     note: Mapped[str | None] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+# The daily-move limits of decision D39, in percent. The columns below, the API and the alert job
+# all take their defaults from here.
+DEFAULT_DAILY_MOVES = True
+DEFAULT_STOCK_PCT = Decimal(5)
+DEFAULT_FUND_PCT = Decimal(3)
+DEFAULT_CRYPTO_PCT = Decimal(10)
+
+
+class Notification(Base):
+    """An item in a user's notification centre (FR-70). `dedupe_key` makes an alert idempotent:
+    the same event (a price move on a day, a failed job run) is stored once per user."""
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedupe_key", name="uq_notifications_user_key"),
+        # The list is read newest first for one user.
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(30))  # daily_move | job_failed
+    severity: Mapped[str] = mapped_column(String(10))  # info | warning
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(String(1000))
+    isin: Mapped[str | None] = mapped_column(String(20))
+    dedupe_key: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AlertSettings(Base):
+    """A user's alert settings (FR-73). No row means the defaults. The move thresholds are the
+    daily-move limits of decision D39. Quiet hours are for the channels that push (email,
+    Telegram); the in-app centre always keeps every alert."""
+
+    __tablename__ = "alert_settings"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    daily_moves_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=DEFAULT_DAILY_MOVES, server_default=true()
+    )
+    move_stock_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=DEFAULT_STOCK_PCT, server_default=str(DEFAULT_STOCK_PCT)
+    )
+    move_fund_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=DEFAULT_FUND_PCT, server_default=str(DEFAULT_FUND_PCT)
+    )
+    move_crypto_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=DEFAULT_CRYPTO_PCT, server_default=str(DEFAULT_CRYPTO_PCT)
+    )
+    quiet_start: Mapped[time | None] = mapped_column(Time)
+    quiet_end: Mapped[time | None] = mapped_column(Time)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
