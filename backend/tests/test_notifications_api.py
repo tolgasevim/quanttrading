@@ -231,37 +231,42 @@ def test_older_alerts_can_be_reached_with_an_offset(
     assert owner.get("/api/notifications?offset=-1").status_code == 422
 
 
-def test_read_all_up_to_a_moment_leaves_newer_alerts_unread(
+def test_read_all_marks_only_the_alerts_the_page_showed(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    rows = [add(db, admin, n) for n in range(1, 5)]  # created one hour apart
-    seen = rows[1].created_at  # the page showed alerts 1 and 2
-    body = owner.post("/api/notifications/read-all", json={"up_to": seen.isoformat()}).json()
+    rows = [add(db, admin, n) for n in range(1, 7)]
+    shown = [str(r.id) for r in rows[2:5]]  # the page showed titles 3 to 5
+    body = owner.post("/api/notifications/read-all", json={"ids": shown}).json()
     assert {i["title"]: i["read"] for i in body["items"]} == {
-        "Title 4": False,
-        "Title 3": False,
-        "Title 2": True,
-        "Title 1": True,
-    }
-    assert body["unread"] == 2
-    assert owner.post("/api/notifications/read-all").json()["unread"] == 0  # no body: all
-    assert owner.post("/api/notifications/read-all", json={"up_to": "yesterday"}).status_code == 422
-
-
-def test_read_all_marks_only_the_range_the_page_showed(
-    owner: TestClient, db: Session, admin: User
-) -> None:
-    rows = [add(db, admin, n) for n in range(1, 7)]  # one hour apart, Title 6 the newest
-    shown = {"since": rows[2].created_at.isoformat(), "up_to": rows[4].created_at.isoformat()}
-    body = owner.post("/api/notifications/read-all", json=shown).json()
-    # The page showed titles 3 to 5: the newer one that arrived and the older ones it never loaded
-    # stay unread.
-    assert {i["title"]: i["read"] for i in body["items"]} == {
-        "Title 6": False,
+        "Title 6": False,  # arrived meanwhile
         "Title 5": True,
         "Title 4": True,
         "Title 3": True,
-        "Title 2": False,
+        "Title 2": False,  # older, never loaded
         "Title 1": False,
     }
     assert body["unread"] == 3
+    assert owner.post("/api/notifications/read-all").json()["unread"] == 0  # no body: all
+
+
+def test_alerts_with_one_timestamp_are_told_apart_by_their_ids(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    rls.bypass(db)
+    same = datetime(2026, 10, 1, tzinfo=UTC)  # one run stores its alerts in one transaction
+    rows = [
+        Notification(user_id=admin.id, kind="daily_move", severity="info", title=f"T{n}", body="b",
+                     dedupe_key=f"s{n}", created_at=same)
+        for n in range(4)
+    ]  # fmt: skip
+    db.add_all(rows)
+    db.commit()
+    body = owner.post("/api/notifications/read-all", json={"ids": [str(rows[0].id)]}).json()
+    assert body["unread"] == 3 and sum(i["read"] for i in body["items"]) == 1
+
+
+def test_read_all_refuses_bad_or_too_many_ids(owner: TestClient) -> None:
+    assert owner.post("/api/notifications/read-all", json={"ids": ["x"]}).status_code == 422
+    too_many = [str(uuid.uuid4()) for _ in range(1001)]
+    assert owner.post("/api/notifications/read-all", json={"ids": too_many}).status_code == 422
+    assert owner.post("/api/notifications/read-all", json={"ids": []}).status_code == 200

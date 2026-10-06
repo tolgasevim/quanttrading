@@ -135,12 +135,14 @@ def list_notifications(
     return NotificationsOut(items=[_out(n) for n in rows], unread=_unread(db, user.id))
 
 
+MAX_IDS = 1000
+
+
 class ReadAllIn(BaseModel):
-    # Mark only the alerts the page showed: the ones created from `since` (its oldest) up to
-    # `up_to` (its newest). An alert that arrived meanwhile, or an older one the page never
-    # loaded, stays unread. Without a body: all.
-    since: datetime | None = None
-    up_to: datetime | None = None
+    # Mark only these alerts: the ones the page showed. An alert that arrived meanwhile, or an
+    # older one the page never loaded, stays unread. (A time range would not do: the alerts of one
+    # run are stored in one transaction and share one time.) Without a body: all.
+    ids: Annotated[list[uuid.UUID], Field(max_length=MAX_IDS)] | None = None
 
 
 @router.post("/notifications/read-all", response_model=NotificationsOut)
@@ -148,10 +150,8 @@ def read_all(user: CurrentUser, db: UserDb, body: ReadAllIn | None = None) -> No
     query = update(Notification).where(
         Notification.user_id == user.id, Notification.read_at.is_(None)
     )
-    if body is not None and body.up_to is not None:
-        query = query.where(Notification.created_at <= body.up_to)
-    if body is not None and body.since is not None:
-        query = query.where(Notification.created_at >= body.since)
+    if body is not None and body.ids is not None:
+        query = query.where(Notification.id.in_(body.ids))
     db.execute(query.values(read_at=datetime.now(UTC)))
     db.commit()
     return list_notifications(user, db)

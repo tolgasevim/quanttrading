@@ -635,3 +635,21 @@ def test_users_holding_nothing_are_not_counted_as_attempted(
     rls.bypass(db)
     result = create_alerts(db, TODAY, NOW)
     assert result.attempted == 1  # the admin, who also gets the job alerts
+
+
+def test_a_partial_run_without_a_count_of_attempts_alerts_on_failures_alone(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=10)
+    done = now - timedelta(hours=1)
+    db.add_all(
+        [
+            JobRun(job="few", status=JobStatus.PARTIAL, finished_at=done,
+                   details={"errors": {"US1": "x"}}),  # one failure, no count: not enough
+            JobRun(job="many", status=JobStatus.PARTIAL, finished_at=done,
+                   details={"errors": {f"US{i}": "x" for i in range(5)}}),
+        ]
+    )  # fmt: skip
+    db.commit()
+    run(db, now=now)
+    assert [n.title for n in alerts(db)] == ["Job many finished with errors"]

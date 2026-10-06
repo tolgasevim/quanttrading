@@ -258,7 +258,8 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
             # One delisted ticker is a Prices-page matter, not an alert every night: a partial run
             # alerts when a few items failed, or a quarter of them.
             attempted = details.get("attempted")
-            share = failures / attempted if isinstance(attempted, int) and attempted else 1
+            # Without a count of attempts only the number of failures can speak.
+            share = failures / attempted if isinstance(attempted, int) and attempted else 0
             if failures < PARTIAL_MIN_FAILURES and share < PARTIAL_MIN_SHARE:
                 continue
         what = (
