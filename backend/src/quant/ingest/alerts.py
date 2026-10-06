@@ -59,6 +59,17 @@ PARTIAL_MIN_SHARE = 0.25
 
 
 @dataclass(frozen=True)
+class Person:
+    """The few fields of a user the job needs, copied out once: the session commits after every
+    user, which would otherwise expire the ORM rows and re-read them at each access."""
+
+    id: uuid.UUID
+    email: str
+    is_admin: bool
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class Effective:
     """What a user's alert settings come to: their saved row, or the defaults when there is none."""
 
@@ -112,12 +123,12 @@ def _newest_bars(
     return bars
 
 
-def _open_positions(session: Session, user: User) -> list[Position]:
+def _open_positions(session: Session, user: Person) -> list[Position]:
     return open_positions(compute_positions(service.load_movements(session, user.id)))
 
 
 def _user_moves(
-    user: User,
+    user: Person,
     positions: list[Position],
     settings: Effective,
     instruments: dict[str, Instrument],
@@ -261,7 +272,10 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
 
 def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     result = JobResult()
-    users = list(session.scalars(select(User).order_by(User.created_at)))
+    users = [
+        Person(u.id, u.email, u.role == Role.ADMIN, u.created_at)
+        for u in session.scalars(select(User).order_by(User.created_at))
+    ]
     settings: dict[uuid.UUID, Effective] = {
         s.user_id: Effective(
             s.daily_moves_enabled, s.move_stock_pct, s.move_fund_pct, s.move_crypto_pct
@@ -289,10 +303,8 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     # A move needs a fresh bar and one at most MAX_GAP_DAYS before it: nothing older is read.
     window = today - timedelta(days=MAX_PRICE_AGE_DAYS + MAX_GAP_DAYS + 1)
     bars = _newest_bars(session, [i.id for i in instruments.values()], window)
-    job_events = _job_events(session, now) if any(u.role == Role.ADMIN for u in users) else []
-    wanted = {
-        u.id for u in users if u.id in positions or u.role == Role.ADMIN or u.email in result.errors
-    }
+    job_events = _job_events(session, now) if any(u.is_admin for u in users) else []
+    wanted = {u.id for u in users if u.id in positions or u.is_admin or u.email in result.errors}
     result.attempted = len(wanted)  # the users that have something to check
     for user in users:
         if user.id not in wanted:
@@ -302,7 +314,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             rows: list[dict[str, object]] = []
             if user.id in positions:
                 rows += _user_moves(user, positions[user.id], mine, instruments, bars, today)
-            if user.role == Role.ADMIN:
+            if user.is_admin:
                 # Nothing about the time before the account existed.
                 rows += [
                     {**event, "user_id": user.id}

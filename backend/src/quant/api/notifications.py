@@ -76,8 +76,9 @@ class SettingsIn(BaseModel):
             parsed = time.fromisoformat(value)
         except ValueError as exc:
             raise ValueError("a time is HH:MM") from exc
-        # Some browsers send "22:00:00"; seconds are accepted when zero and are not kept.
-        if len(value) not in (5, 8) or parsed.second or parsed.microsecond:
+        # Some browsers send "22:00:00"; seconds are accepted when zero and are not kept. A time
+        # with a zone ("22:00+01") is not a wall-clock time and is refused.
+        if len(value) not in (5, 8) or parsed.second or parsed.microsecond or parsed.tzinfo:
             raise ValueError("a time is HH:MM")
         return parsed
 

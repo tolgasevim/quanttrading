@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
-from quant.ingest.alerts import create_alerts
+from quant.ingest.alerts import ALERT_JOB_NAME, create_alerts
 from quant.ingest.fx import ingest_fx
 from quant.ingest.jobs import JobResult, run_job
 from quant.ingest.mapping import held_isins, map_isins
@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
-ALERT_JOB = "create_alerts"
+ALERT_JOB = ALERT_JOB_NAME
 
 
 def _map_and_fill(session: Session, settings: Settings, fetcher: Fetcher) -> JobResult:

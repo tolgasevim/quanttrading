@@ -165,6 +165,8 @@ def test_saving_twice_updates_the_same_row(owner: TestClient, db: Session, admin
         {"quiet_start": "24:00", "quiet_end": "08:00"},
         {"quiet_start": "22:00:30", "quiet_end": "08:00"},
         {"quiet_start": "22:00:00:00", "quiet_end": "08:00"},
+        {"quiet_start": "22:00+01", "quiet_end": "08:00"},
+        {"quiet_start": "22:00", "quiet_end": "08:00Z"},
         {"quiet_start": "late", "quiet_end": "08:00"},
     ],
 )

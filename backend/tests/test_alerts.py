@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from quant import rls
-from quant.ingest.alerts import create_alerts
+from quant.ingest.alerts import Person, create_alerts
 from quant.models import (
     AlertSettings,
     Instrument,
@@ -70,6 +70,14 @@ def test_a_limit_is_breached_at_the_limit_and_beyond_it_in_both_directions() -> 
     assert breaches(Move(D(5), D(1), D(1), TODAY, TODAY), limit)
     assert breaches(Move(D(-5), D(1), D(1), TODAY, TODAY), limit)
     assert not breaches(Move(D("4.99"), D(1), D(1), TODAY, TODAY), limit)
+
+
+def test_every_class_with_a_move_label_has_a_limit_and_no_other_class_does() -> None:
+    from quant.portfolio.alerts import MOVE_CLASSES
+
+    args = (D(5), D(3), D(10))
+    assert {c for c in MOVE_CLASSES if threshold_for(c, *args) is not None} == set(MOVE_CLASSES)
+    assert threshold_for("ETC", *args) is None
 
 
 def test_each_asset_class_has_its_own_limit() -> None:
@@ -285,7 +293,7 @@ def test_one_users_failure_does_not_stop_the_others(
     price(db, A, ("108", "100"))
     real = module._open_positions
 
-    def flaky(session: Session, user: User):  # type: ignore[no-untyped-def]
+    def flaky(session: Session, user: Person):  # type: ignore[no-untyped-def]
         if user.email == "member@example.com":
             raise RuntimeError("bad data")
         return real(session, user)
@@ -372,7 +380,7 @@ def test_an_admin_whose_positions_cannot_be_read_still_gets_the_failed_job_alert
 ) -> None:
     from quant.ingest import alerts as module
 
-    def broken(session: Session, user: User):  # type: ignore[no-untyped-def]
+    def broken(session: Session, user: Person):  # type: ignore[no-untyped-def]
         raise RuntimeError("bad ledger")
 
     monkeypatch.setattr(module, "_open_positions", broken)
