@@ -52,26 +52,31 @@ def _text(value: Any, limit: int) -> str | None:
     return cleaned[:limit] or None
 
 
+def candidates(session: Session, isin: str | None, ticker: str | None) -> list[Instrument]:
+    """The instruments the pick may mean: the one with that ISIN, then the one with that ticker.
+    The model may give a wrong ISIN or only a ticker, so both are tried."""
+    found: list[Instrument] = []
+    if isin:
+        found += session.scalars(select(Instrument).where(Instrument.isin == isin)).all()
+    if ticker:
+        found += session.scalars(select(Instrument).where(Instrument.code == ticker.upper())).all()
+    return found
+
+
 def latest_price(
     session: Session, isin: str | None, ticker: str | None
 ) -> tuple[Decimal, str, date] | None:
-    """The newest stored close for the security, from the shared market data."""
-    instrument = None
-    if isin:
-        instrument = session.scalars(select(Instrument).where(Instrument.isin == isin)).first()
-    if instrument is None and ticker:  # also when the model gave an ISIN the app does not know
-        instrument = session.scalars(
-            select(Instrument).where(Instrument.code == ticker.upper())
-        ).first()
-    if instrument is None:
-        return None
-    row = session.scalar(
-        select(PriceEOD)
-        .where(PriceEOD.instrument_id == instrument.id)
-        .order_by(PriceEOD.date.desc())
-        .limit(1)
-    )
-    return None if row is None else (row.close, row.currency, row.date)
+    """The newest stored close of the first candidate that has one, from the shared market data."""
+    for instrument in candidates(session, isin, ticker):
+        row = session.scalar(
+            select(PriceEOD)
+            .where(PriceEOD.instrument_id == instrument.id)
+            .order_by(PriceEOD.date.desc())
+            .limit(1)
+        )
+        if row is not None:
+            return row.close, row.currency, row.date
+    return None
 
 
 def record_pick(
@@ -101,6 +106,8 @@ def record_pick(
     isin = isin.upper() if isin else None
     ticker = _text(data.get("ticker"), 30)
     quote = latest_price(session, isin, ticker)
+    known = {i.isin for i in candidates(session, isin, ticker) if i.isin}
+    held = bool(({isin} | known) & held_isins)
     pick = AiPick(
         user_id=user_id,
         usage_id=usage_id,
@@ -111,7 +118,7 @@ def record_pick(
         direction=direction.lower(),
         horizon_months=horizon,
         rationale=rationale,
-        held=isin in held_isins if isin else False,
+        held=held,
         price=quote[0] if quote else None,
         price_currency=quote[1] if quote else None,
         price_date=quote[2] if quote else None,

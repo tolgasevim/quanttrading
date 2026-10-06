@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from quant.ai import budget, consent, picks
-from quant.ai.client import LlmClient, LlmReply, default_client
+from quant.ai.client import LlmClient, LlmError, LlmReply, default_client
 from quant.config import get_settings
 from quant.models import AiPick
 from quant.portfolio import service
@@ -27,7 +27,9 @@ MAX_TURNS = 3
 MAX_POSITIONS = 60
 MAX_QUESTION_CHARS = 1000
 RECOMMENDS = re.compile(
-    r"\b(buy|sell|hold|accumulate|reduce|trim|kaufen|verkaufen|halten)\b", re.IGNORECASE
+    r"\b(buy|sell|hold|accumulate|add to|reduce|trim|avoid|overweight|underweight"
+    r"|kaufen|verkaufen|halten)\b",
+    re.IGNORECASE,
 )
 
 SYSTEM = """You are a careful investing guide for a private investor in Germany. You give \
@@ -162,21 +164,39 @@ def ask(
     saved: list[AiPick] = []
     models: set[str] = set()
     answer = ""
+    notes: list[str] = []
     followed_up = False
     failed = 0  # picks the model got wrong on the last turn, with no turn left to fix them
 
     for _turn in range(MAX_TURNS + 1):
         # No transaction stays open while the model thinks: the connection goes back to the pool.
         session.commit()
-        reply = client.send(system=SYSTEM, messages=messages, tools=[picks.TOOL])
+        if _turn > 0:  # every paid call is checked, not only the first
+            try:
+                budget.check(session, user_id, settings)
+            except budget.BudgetExceeded:
+                notes.append("The AI budget ran out, so the answer stops here.")
+                break
+        try:
+            reply = client.send(system=SYSTEM, messages=messages, tools=[picks.TOOL])
+        except LlmError:
+            if _turn == 0:
+                raise
+            # The earlier calls were paid for and their picks are stored: keep what we have.
+            notes.append("The AI service failed part way, so the answer may be incomplete.")
+            break
         models.add(reply.model)
         usage = budget.record(session, user_id, "ask", reply, settings)
         if reply.refused:
             return _result(
                 "The AI declined to answer this question.", saved, points, models, settings, True
             )
-        if not followed_up:  # a reply to the follow-up is bookkeeping, not the answer
-            answer = reply.text or answer
+        if reply.stop_reason == "max_tokens":
+            notes.append("The answer was cut off at the length limit.")
+        # A reply to the follow-up, or a short "Recorded." after the tool results, is not the
+        # answer: keep the longest text of the other replies.
+        if not followed_up and len(reply.text) > len(answer):
+            answer = reply.text
         if reply.tool_calls:
             before = len(saved)
             results = _handle_tools(
@@ -208,7 +228,8 @@ def ask(
             )
             continue
         break
-    result = _result(answer, saved, points, models, settings, False)
+    result = _result(answer or "The AI gave no answer.", saved, points, models, settings, False)
+    result.notes.extend(notes)
     if failed:
         result.notes.append(
             f"{failed} pick(s) in this answer could not be recorded in the pick log. "

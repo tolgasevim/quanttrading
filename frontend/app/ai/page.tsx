@@ -151,6 +151,32 @@ export default function AiPage() {
               </button>
             </p>
             <p className="muted">{status.label}</p>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={status.anonymise_amounts}
+                disabled={busy}
+                onChange={async (e) => {
+                  setError("");
+                  try {
+                    setStatus(
+                      await post<AiStatus>("/api/ai/consent", {
+                        accept: true,
+                        anonymise_amounts: e.target.checked,
+                      }),
+                    );
+                  } catch (err) {
+                    setError(err instanceof ApiError ? err.detail : "Could not save.");
+                  }
+                }}
+                style={{ width: "auto" }}
+              />
+              Hide amounts: send only the weight of each position
+            </label>
+            <details>
+              <summary className="muted">Disclaimer</summary>
+              <p className="muted">{status.disclaimer}</p>
+            </details>
           </form>
         )}
         {answer && (

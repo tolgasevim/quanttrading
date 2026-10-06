@@ -12,8 +12,11 @@ the first one cannot; the model that answered is in `LlmReply.model`.
 """
 
 import importlib
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+log = logging.getLogger(__name__)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -148,6 +151,9 @@ class AnthropicLlm:
             return LlmBadRequest("the AI provider rejected the request")
         if isinstance(exc, sdk.APIConnectionError | sdk.APIStatusError):
             return LlmUnavailable("the AI provider is not reachable right now")
+        # An unexpected error, e.g. a TypeError from a request field this SDK version does not
+        # know. The type is logged so it can be found; the message might hold request data.
+        log.warning("AI request failed: %s", type(exc).__name__)
         return LlmError("the AI request failed")
 
     def _reply(self, response: Any) -> LlmReply:

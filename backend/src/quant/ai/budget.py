@@ -6,8 +6,8 @@ user and one for everybody. The total is read in a separate session with row-lev
 bypassed, because it has to count every user's rows. At 50, 80 and 100 percent of the total cap
 each admin gets one notification a month (dedupe key `llm_cap:{month}:{percent}`).
 
-A cap is checked before a call, not during it, so the last call may pass the cap by its own cost.
-Two calls at once can both pass a check; with a handful of users that is accepted.
+A cap is checked before every call, not during it, so the last call may pass the cap by its
+own cost. Two calls at once can both pass a check; with a handful of users that is accepted.
 """
 
 import logging
@@ -88,7 +88,9 @@ def check(
 ) -> None:
     """Raise `BudgetExceeded` when the user's or the household's cap is reached."""
     settings = settings or get_settings()
-    if user_spend(session, user_id, now) >= settings.llm_user_monthly_cap_eur:
+    over_user = user_spend(session, user_id, now) >= settings.llm_user_monthly_cap_eur
+    session.commit()  # give the connection back before total_spend takes another one
+    if over_user:
         raise BudgetExceeded("user")
     if total_spend(now) >= settings.llm_monthly_cap_eur:
         raise BudgetExceeded("total")
@@ -182,9 +184,11 @@ def summary(
 ) -> Spend:
     settings = settings or get_settings()
     _, month = month_bounds()
+    mine = user_spend(session, user_id)
+    session.commit()  # give the connection back before total_spend takes another one
     return Spend(
         month=month,
-        user_eur=user_spend(session, user_id),
+        user_eur=mine,
         user_cap_eur=settings.llm_user_monthly_cap_eur,
         total_eur=total_spend() if include_total else None,
         total_cap_eur=settings.llm_monthly_cap_eur,

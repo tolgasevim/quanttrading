@@ -787,3 +787,105 @@ def test_the_app_cannot_change_the_ledger_or_the_pick_log(db: Session, admin: Us
         with pytest.raises(ProgrammingError):
             db.execute(text(sql))
         db.rollback()
+
+
+def test_a_short_reply_after_the_tool_results_does_not_replace_the_answer(
+    owner: TestClient, fake: Fake
+) -> None:
+    accept(owner)
+    fake.replies = [
+        reply("Alpha looks solid. Main risk: one weak quarter.", [pick_call()]),
+        reply("Done."),
+    ]
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert body["answer"].startswith("Alpha looks solid")
+
+
+class Boom:
+    """Answers once, then fails."""
+
+    def __init__(self, first: LlmReply, exc: Exception) -> None:
+        self.first, self.exc, self.calls = first, exc, 0
+
+    def send(self, **kw: Any) -> LlmReply:
+        self.calls += 1
+        if self.calls == 1:
+            return self.first
+        raise self.exc
+
+
+def test_an_error_after_the_first_turn_keeps_the_answer_and_the_picks(
+    owner: TestClient, db: Session
+) -> None:
+    accept(owner)
+    boom = Boom(reply("Alpha looks solid.", [pick_call()]), LlmRateLimited("slow"))
+    app.dependency_overrides[llm_client] = lambda: boom
+    r = owner.post("/api/ai/ask", json={"question": "Buy what?"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["answer"] == "Alpha looks solid." and len(body["picks"]) == 1
+    assert any("failed part way" in n for n in body["notes"])
+    # A first-turn error is still an error.
+    boom.calls = 1  # the next call raises
+    assert owner.post("/api/ai/ask", json={"question": "Again please"}).status_code == 429
+
+
+def test_the_cap_is_checked_before_every_call(
+    owner: TestClient, fake: Fake, db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    accept(owner)
+    monkeypatch.setattr(get_settings(), "llm_user_monthly_cap_eur", D("0.01"))
+    # The first call costs 0.01 or more (1000 in, 500 out at the list price), so the second is refused.
+    fake.replies = [reply("Alpha looks solid.", [pick_call()]), reply("never sent")]
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert len(fake.requests) == 1 and len(body["picks"]) == 1
+    assert any("budget ran out" in n for n in body["notes"])
+
+
+def test_a_cut_off_answer_is_flagged(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    cut = reply("Half an ans")
+    cut.stop_reason = "max_tokens"
+    fake.replies = [cut]
+    body = owner.post("/api/ai/ask", json={"question": "Tell me more"}).json()
+    assert any("cut off" in n for n in body["notes"])
+
+
+def test_a_pick_with_only_a_ticker_still_counts_as_held_and_priced(
+    owner: TestClient, fake: Fake, db: Session, admin: User
+) -> None:
+    hold(db, admin)
+    rls.bypass(db)
+    instrument = Instrument(
+        code="NVDA", isin=ISIN, name="Alpha Corp", asset_class="stock", currency="USD"
+    )
+    db.add(instrument)
+    db.flush()
+    db.add(
+        PriceEOD(
+            instrument_id=instrument.id,
+            date=date(2026, 10, 1),
+            close=D("10"),
+            currency="USD",
+            source="yahoo",
+        )
+    )
+    db.commit()  # fmt: skip
+    accept(owner)
+    fake.replies = [
+        reply("", [pick_call(isin=None, ticker="nvda", direction="sell")]),
+        reply("Sell it."),
+    ]
+    [pick] = owner.post("/api/ai/ask", json={"question": "Sell what?"}).json()["picks"]
+    assert pick["held"] is True and pick["price"] == "10.000000"
+    # A wrong ISIN with the right ticker is resolved the same way.
+    fake.replies = [reply("", [pick_call("t2", isin="XX0000000000", ticker="NVDA")]), reply("ok")]
+    [again] = owner.post("/api/ai/ask", json={"question": "Sell what?"}).json()["picks"]
+    assert again["held"] is True and again["price"] == "10.000000"
+
+
+def test_wider_recommendation_words_trigger_the_follow_up(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    fake.replies = [reply("I would overweight Alpha."), reply("none")]
+    owner.post("/api/ai/ask", json={"question": "Any ideas?"})
+    assert len(fake.requests) == 2
