@@ -53,6 +53,8 @@ def fill_sectors(
     for instrument in todo:
         if instrument.sector_checked_at and instrument.sector_checked_at > stale:
             continue
+        if instrument.mapped_at and instrument.mapped_at >= now:
+            continue  # found in this very run: its sector was asked about then, ask again tomorrow
         isin = instrument.isin
         if not isin:
             continue

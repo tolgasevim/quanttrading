@@ -569,3 +569,15 @@ def test_a_source_saying_no_sector_settles_it_even_when_another_source_is_down(
     yahoo.asked.clear()
     fill_sectors(db, [down, yahoo], NOW + timedelta(days=2), isins=held)
     assert yahoo.asked == []
+
+
+def test_a_share_mapped_in_this_run_is_not_asked_about_its_sector_again_at_once(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    figi = FakeResolver("openfigi", {A: listing("ALPH", "openfigi")})  # gives no sector
+    map_isins(db, [figi], NOW, isins=held)
+    figi.asked.clear()
+    result = fill_sectors(db, [figi], NOW, isins=held)
+    assert A not in figi.asked and result.attempted == 0  # the same run: no second call
+    fill_sectors(db, [figi], NOW + timedelta(days=1), isins=held)
+    assert A in figi.asked  # the next run asks
