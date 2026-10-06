@@ -57,8 +57,8 @@ def test_no_move_without_two_bars_or_with_stale_or_holey_data() -> None:
     assert daily_move(bars("100"), TODAY) is None
     assert daily_move(bars("108", "100", last=TODAY - timedelta(days=5)), TODAY) is None  # stale
     assert daily_move(bars("108", "100", last=TODAY - timedelta(days=4)), TODAY) is not None
-    assert daily_move(bars("108", "100", step=8), TODAY) is None  # a hole in the data
-    assert daily_move(bars("108", "100", step=7), TODAY) is not None  # a long weekend is fine
+    assert daily_move(bars("108", "100", step=6), TODAY) is None  # a hole in the data
+    assert daily_move(bars("108", "100", step=5), TODAY) is not None  # Easter is fine
     assert daily_move(bars("108", "0"), TODAY) is None  # no base to divide by
     assert daily_move(bars("108", "100", last=TODAY + timedelta(days=1)), TODAY) is None  # future
     same_day = [(TODAY, D(108)), (TODAY, D(100))]
@@ -653,3 +653,56 @@ def test_a_partial_run_without_a_count_of_attempts_alerts_on_failures_alone(
     db.commit()
     run(db, now=now)
     assert [n.title for n in alerts(db)] == ["Job many finished with errors"]
+
+
+def test_a_move_before_the_user_bought_is_not_their_alert(owner: TestClient, db: Session) -> None:
+    # Alpha was first bought on 2024-02-01 in the test history. Bars from before that day are a move
+    # the user never went through; a move after it is.
+    early = date(2024, 1, 10)
+    inst = price(db, A, ("108", "100"))
+    db.query(PriceEOD).filter_by(instrument_id=inst).delete()
+    for day, close in ((early, D("108")), (early - timedelta(1), D("100"))):
+        db.add(PriceEOD(instrument_id=inst, date=day, close=close, currency="EUR", source="x"))
+    db.commit()
+    assert run(db, today=early) == 0
+    db.add(
+        PriceEOD(
+            instrument_id=inst, date=date(2024, 2, 5), close=D("100"), currency="EUR", source="x"
+        )
+    )
+    db.add(
+        PriceEOD(
+            instrument_id=inst, date=date(2024, 2, 6), close=D("110"), currency="EUR", source="x"
+        )
+    )
+    db.commit()
+    assert run(db, today=date(2024, 2, 6)) == 1
+
+
+def test_the_job_alerts_arrive_even_when_the_price_read_breaks(
+    owner: TestClient, db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.ingest import alerts as module
+
+    now = admin.created_at + timedelta(hours=10)
+    db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+                  details={"error": "boom"}))  # fmt: skip
+    db.commit()
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("price read broke")
+
+    monkeypatch.setattr(module, "_newest_bars", broken)
+    rls.bypass(db)
+    with pytest.raises(RuntimeError):  # the moves cannot be made: the job itself fails...
+        create_alerts(db, TODAY, now)
+    assert [n.title for n in alerts(db)] == ["Job ingest_prices failed"]  # ...the news was stored
+
+
+def test_a_stuck_run_names_its_start_in_utc(owner: TestClient, db: Session, admin: User) -> None:
+    now = admin.created_at + timedelta(days=1)
+    started = (now - timedelta(hours=7)).astimezone(UTC)
+    db.add(JobRun(job="ingest_prices", status=JobStatus.RUNNING, started_at=started, details={}))
+    db.commit()
+    run(db, now=now)
+    assert f"{started:%Y-%m-%d %H:%M} UTC" in alerts(db)[0].body

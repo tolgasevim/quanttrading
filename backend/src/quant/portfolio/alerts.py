@@ -13,9 +13,9 @@ MOVE_CLASSES: dict[str, str] = {"STOCK": "share", "FUND": "fund", "CRYPTO": "coi
 # The newest price must be this recent to count as "today's" move. A job that stopped must not
 # keep alerting on an old day, and a closed market is not news.
 MAX_PRICE_AGE_DAYS = 4
-# The previous price may be at most this far back (a long weekend, a holiday). A longer gap is a
-# hole in the data, not a daily move.
-MAX_GAP_DAYS = 7
+# The previous price may be at most this far back (a long weekend: Friday to Tuesday is 4 days,
+# Easter 5). A longer gap is a hole in the data, not a daily move.
+MAX_GAP_DAYS = 5
 
 
 @dataclass(frozen=True)

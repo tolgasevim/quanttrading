@@ -207,7 +207,7 @@ export default function NotificationsPage() {
           <div className="card">
             <p>
               <strong>{data.unread}</strong> unread.{" "}
-              {data.unread > 0 && (
+              {data.items.some((n) => !n.read) && (
                 <button className="link" onClick={() => mutate("/api/notifications/read-all")}>
                   Mark all as read
                 </button>

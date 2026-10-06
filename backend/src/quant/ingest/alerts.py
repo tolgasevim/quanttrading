@@ -13,7 +13,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -165,6 +165,8 @@ def _user_moves(
         move = daily_move(bars.get(instrument.id, []), today)
         if move is None or not breaches(move, limit):
             continue
+        if position.first_date > move.previous_day.isoformat():
+            continue  # bought after the move began: not a move the user went through
         split = position.asset_class == "STOCK" and looks_like_split(move)
         name = position.name or instrument.name or position.isin
         title, body = move_text(
@@ -237,7 +239,8 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
         errors = details.get("errors")
         failures = len(errors) if isinstance(errors, dict) else 0
         if stuck:
-            reason = f"The run started at {run.started_at:%Y-%m-%d %H:%M} UTC and never finished."
+            began = run.started_at.astimezone(UTC)
+            reason = f"The run started at {began:%Y-%m-%d %H:%M} UTC and never finished."
         elif details.get("error"):
             reason = str(details["error"])
             if run.job == ALERT_JOB_NAME:
@@ -296,6 +299,31 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
     return events
 
 
+def _store_job_alerts(
+    session: Session, users: list[Person], now: datetime, result: JobResult
+) -> None:
+    """The job alerts of every admin, stored on their own. Nothing here may stop the price moves,
+    and nothing in the moves may stop these."""
+    admins = [u for u in users if u.is_admin]
+    if not admins:
+        return
+    try:
+        events = _job_events(session, now)
+        for admin in admins:
+            # Nothing about the time before the account existed.
+            rows = [
+                {**event, "user_id": admin.id}
+                for happened, event in events
+                if happened >= admin.created_at
+            ]
+            result.rows_written += _store(session, rows)
+        session.commit()
+    except Exception as exc:  # noqa: BLE001 - the moves below must still run
+        session.rollback()
+        log.exception("job alerts failed")
+        result.errors["job alerts"] = _kind(exc)
+
+
 def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     result = JobResult()
     users = [
@@ -308,6 +336,9 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
         )
         for s in session.scalars(select(AlertSettings))
     }
+    # What went wrong in the jobs comes first and on its own: the admins hear about a failed price
+    # run even if reading the positions or the prices below breaks.
+    _store_job_alerts(session, users, now, result)
     # Each user's open positions, read once. Only what somebody holds needs prices.
     positions: dict[uuid.UUID, list[Position]] = {}
     for user in users:
@@ -329,11 +360,9 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     # A move needs a fresh bar and one at most MAX_GAP_DAYS before it: nothing older is read.
     window = today - timedelta(days=MAX_PRICE_AGE_DAYS + MAX_GAP_DAYS + 1)
     bars = _newest_bars(session, [i.id for i in instruments.values()], window)
-    job_events = _job_events(session, now) if any(u.is_admin for u in users) else []
-    wanted = {
-        u.id for u in users if bool(positions.get(u.id)) or u.is_admin or str(u.id) in result.errors
-    }
-    result.attempted = len(wanted)  # the users that have something to check
+    wanted = {u.id for u in users if bool(positions.get(u.id)) or str(u.id) in result.errors}
+    # The users that have something to check: the admins (job alerts) and the holders.
+    result.attempted = len(wanted | {u.id for u in users if u.is_admin})
     for user in users:
         if user.id not in wanted:
             continue
@@ -342,13 +371,6 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             rows: list[dict[str, object]] = []
             if user.id in positions:
                 rows += _user_moves(user, positions[user.id], mine, instruments, bars, today)
-            if user.is_admin:
-                # Nothing about the time before the account existed.
-                rows += [
-                    {**event, "user_id": user.id}
-                    for happened, event in job_events
-                    if happened >= user.created_at
-                ]
             result.rows_written += _store(session, rows)
             session.commit()
         except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
