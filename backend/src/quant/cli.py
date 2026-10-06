@@ -248,6 +248,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("map-isins", help="map held ISINs to tickers now (FR-12)")
     sub.add_parser("ingest-prices", help="run the EOD price job now")
     sub.add_parser("create-alerts", help="create the daily-move and failed-job alerts now")
+    sub.add_parser("score-picks", help="score the AI picks against the benchmark now (FR-52)")
     sub.add_parser("ingest-fx", help="run the ECB FX job now")
     sub.add_parser("worker", help="run the scheduler")
 
@@ -264,7 +265,14 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(check_holdings(Path(args.csv), crypto, depot))
     elif args.command == "check-tr-csv":
         sys.exit(check_tr_csv(Path(args.path)))
-    elif args.command in ("map-isins", "ingest-prices", "ingest-fx", "create-alerts", "worker"):
+    elif args.command in (
+        "map-isins",
+        "ingest-prices",
+        "ingest-fx",
+        "create-alerts",
+        "score-picks",
+        "worker",
+    ):
         from quant import worker
 
         {
@@ -272,6 +280,7 @@ def main(argv: list[str] | None = None) -> None:
             "ingest-prices": worker.run_prices,
             "ingest-fx": worker.run_fx,
             "create-alerts": worker.run_alerts,
+            "score-picks": worker.run_scoring,
             "worker": worker.main,
         }[args.command]()
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { api, ApiError, type AiAnswer, type AiPick, type AiStatus, post } from "@/lib/api";
 import { Header } from "../Header";
@@ -226,6 +227,9 @@ export default function AiPage() {
           </p>
         )}
         <h2>Pick log</h2>
+        <p className="muted">
+          <Link href="/ai/track-record">See how the picks did against the benchmark</Link>
+        </p>
         <Picks picks={picks} />
       </main>
     </>

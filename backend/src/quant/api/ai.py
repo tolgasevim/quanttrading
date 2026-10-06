@@ -14,12 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
-from quant.ai import budget, consent
+from quant.ai import budget, consent, scoring
 from quant.ai import service as ai_service
 from quant.ai.client import LlmClient, LlmError, default_client
 from quant.api.deps import CurrentUser, UserDb
 from quant.config import get_settings
-from quant.models import AiPick, Role
+from quant.models import AiPick, AiPickScore, Role
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -192,3 +192,114 @@ def list_picks(
         .limit(limit)
     ).all()
     return [_pick(p) for p in rows]
+
+
+class ScoreOut(BaseModel):
+    window_months: int
+    end_date: date
+    pick_return_pct: Decimal
+    benchmark_return_pct: Decimal
+    excess_pct: Decimal
+    hit: bool
+
+
+class ScoredPickOut(BaseModel):
+    pick: PickOut
+    scores: list[ScoreOut]
+
+
+class WindowSummary(BaseModel):
+    window_months: int
+    scored: int
+    hits: int
+    hit_rate_pct: Decimal | None
+    avg_pick_return_pct: Decimal | None
+    avg_benchmark_return_pct: Decimal | None
+    avg_excess_pct: Decimal | None
+
+
+class TrackRecordOut(BaseModel):
+    benchmark: str
+    picks: int
+    unscored: int  # picks with no score yet (too young, or no prices)
+    windows: list[WindowSummary]
+    items: list[ScoredPickOut]
+
+
+def _avg(values: list[Decimal]) -> Decimal | None:
+    return (sum(values, Decimal(0)) / len(values)).quantize(Decimal("0.01")) if values else None
+
+
+@router.get("/track-record", response_model=TrackRecordOut)
+def track_record(
+    db: UserDb, user: CurrentUser, limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 100
+) -> TrackRecordOut:
+    """How the user's own AI picks did against the benchmark (FR-52)."""
+    total = db.scalars(select(AiPick.id).where(AiPick.user_id == user.id)).all()
+    scores = db.scalars(
+        select(AiPickScore)
+        .where(AiPickScore.user_id == user.id)
+        .order_by(AiPickScore.window_months)
+    ).all()
+    directions = dict(
+        db.execute(select(AiPick.id, AiPick.direction).where(AiPick.user_id == user.id)).all()
+    )
+    by_pick: dict[uuid.UUID, list[AiPickScore]] = {}
+    for score in scores:
+        by_pick.setdefault(score.pick_id, []).append(score)
+    windows = []
+    for months in scoring.WINDOWS:
+        rows = [s for s in scores if s.window_months == months]
+        windows.append(
+            WindowSummary(
+                window_months=months,
+                scored=len(rows),
+                hits=sum(1 for s in rows if s.hit),
+                hit_rate_pct=(
+                    (Decimal(sum(1 for s in rows if s.hit)) * 100 / len(rows)).quantize(
+                        Decimal("0.1")
+                    )
+                    if rows
+                    else None
+                ),
+                avg_pick_return_pct=_avg([s.pick_return_pct for s in rows]),
+                avg_benchmark_return_pct=_avg([s.benchmark_return_pct for s in rows]),
+                # The edge: the excess return, with its sign flipped for a sell, so that a
+                # positive number always means the AI was right.
+                avg_excess_pct=_avg(
+                    [
+                        -s.excess_pct if directions.get(s.pick_id) == "sell" else s.excess_pct
+                        for s in rows
+                    ]
+                ),
+            )
+        )
+    picks = db.scalars(
+        select(AiPick)
+        .where(AiPick.user_id == user.id)
+        .order_by(AiPick.created_at.desc(), AiPick.id)
+        .limit(limit)
+    ).all()
+    return TrackRecordOut(
+        benchmark=scoring.BENCHMARK_CODE,
+        picks=len(total),
+        unscored=len([i for i in total if i not in by_pick]),
+        windows=windows,
+        items=[
+            ScoredPickOut(
+                pick=_pick(p),
+                scores=[
+                    ScoreOut(
+                        window_months=s.window_months,
+                        end_date=s.end_date,
+                        pick_return_pct=s.pick_return_pct,
+                        benchmark_return_pct=s.benchmark_return_pct,
+                        excess_pct=s.excess_pct,
+                        hit=s.hit,
+                    )
+                    for s in by_pick.get(p.id, [])
+                ],
+            )
+            for p in picks
+        ],
+    )
