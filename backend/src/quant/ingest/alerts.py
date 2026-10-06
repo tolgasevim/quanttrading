@@ -48,7 +48,12 @@ from quant.portfolio.alerts import (
     move_text,
     threshold_for,
 )
-from quant.portfolio.positions import Position, compute_positions, open_positions
+from quant.portfolio.positions import (
+    Position,
+    compute_positions,
+    holding_since,
+    open_positions,
+)
 
 log = logging.getLogger(__name__)
 
@@ -139,20 +144,27 @@ def _kind(exc: Exception) -> str:
     return type(exc).__name__
 
 
-def _open_positions(session: Session, user: Person) -> list[Position]:
-    return open_positions(compute_positions(service.load_movements(session, user.id)))
+@dataclass(frozen=True)
+class Held:
+    positions: list[Position]
+    since: dict[str, str]  # ISIN -> the day the current holding began
+
+
+def _open_positions(session: Session, user: Person) -> Held:
+    movements = service.load_movements(session, user.id)
+    return Held(open_positions(compute_positions(movements)), holding_since(movements))
 
 
 def _user_moves(
     user: Person,
-    positions: list[Position],
+    held: Held,
     settings: Effective,
     instruments: dict[str, Listed],
     bars: dict[int, list[tuple[date, Decimal]]],
     today: date,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    for position in positions:
+    for position in held.positions:
         limit = threshold_for(
             position.asset_class,
             settings.move_stock_pct,
@@ -165,7 +177,7 @@ def _user_moves(
         move = daily_move(bars.get(instrument.id, []), today)
         if move is None or not breaches(move, limit):
             continue
-        if position.first_date > move.previous_day.isoformat():
+        if held.since.get(position.isin, position.first_date) > move.previous_day.isoformat():
             continue  # bought after the move began: not a move the user went through
         split = position.asset_class == "STOCK" and looks_like_split(move)
         name = position.name or instrument.name or position.isin
@@ -340,7 +352,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     # run even if reading the positions or the prices below breaks.
     _store_job_alerts(session, users, now, result)
     # Each user's open positions, read once. Only what somebody holds needs prices.
-    positions: dict[uuid.UUID, list[Position]] = {}
+    positions: dict[uuid.UUID, Held] = {}
     for user in users:
         if settings.get(user.id, DEFAULTS).daily_moves_enabled:
             try:
@@ -349,7 +361,12 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
                 session.rollback()
                 log.exception("positions of user %s failed", user.id)
                 result.errors[str(user.id)] = _kind(exc)
-    held = {p.isin for mine in positions.values() for p in mine if p.asset_class in MOVE_CLASSES}
+    held = {
+        p.isin
+        for mine in positions.values()
+        for p in mine.positions
+        if p.asset_class in MOVE_CLASSES
+    }
     instruments = {
         i.isin: Listed(i.id, i.name, i.currency)
         for i in session.scalars(
@@ -360,7 +377,11 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     # A move needs a fresh bar and one at most MAX_GAP_DAYS before it: nothing older is read.
     window = today - timedelta(days=MAX_PRICE_AGE_DAYS + MAX_GAP_DAYS + 1)
     bars = _newest_bars(session, [i.id for i in instruments.values()], window)
-    wanted = {u.id for u in users if bool(positions.get(u.id)) or str(u.id) in result.errors}
+    wanted = {
+        u.id
+        for u in users
+        if bool(positions.get(u.id) and positions[u.id].positions) or str(u.id) in result.errors
+    }
     # The users that have something to check: the admins (job alerts) and the holders.
     result.attempted = len(wanted | {u.id for u in users if u.is_admin})
     for user in users:

@@ -706,3 +706,31 @@ def test_a_stuck_run_names_its_start_in_utc(owner: TestClient, db: Session, admi
     db.commit()
     run(db, now=now)
     assert f"{started:%Y-%m-%d %H:%M} UTC" in alerts(db)[0].body
+
+
+def test_a_holding_bought_back_after_the_move_is_not_alerted_for_it(
+    client: TestClient, admin: User, db: Session
+) -> None:
+    login(client, admin.email)
+    rebuy = [
+        row(80, "2025-05-01", "TRADING", "SELL", "STOCK", "Alpha Corp", A, shares="-6", price="1"),
+        row(81, "2026-10-05", "TRADING", "BUY", "STOCK", "Alpha Corp", A, shares="3", price="1"),
+    ]
+    import_history(client, history(rebuy))  # bought 2024, sold in full 2025, bought again 5 Oct
+    inst = price(db, A, ("100",))  # one bar; the others are added below
+
+    def set_bars(*pairs: tuple[date, str]) -> None:
+        db.query(PriceEOD).filter_by(instrument_id=inst).delete()
+        for day, close in pairs:
+            db.add(
+                PriceEOD(instrument_id=inst, date=day, close=D(close), currency="EUR", source="x")
+            )
+        db.commit()
+
+    # +8% from 2 to 3 October: before the buy-back. The first purchase was in 2024, so the first
+    # date alone would have raised this alert for a holding that did not exist then.
+    set_bars((date(2026, 10, 2), "100"), (date(2026, 10, 3), "108"))
+    assert run(db, today=date(2026, 10, 3)) == 0
+    # +8% from 5 to 6 October: the new holding began on 5 October, so it went through the move.
+    set_bars((date(2026, 10, 5), "100"), (date(2026, 10, 6), "108"))
+    assert run(db, today=date(2026, 10, 6)) == 1

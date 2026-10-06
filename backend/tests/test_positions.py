@@ -157,3 +157,26 @@ def test_latest_name_wins() -> None:
 def test_plain_positions_are_not_flagged_as_corporate_action() -> None:
     positions = compute_positions(Ledger().buy("A", "1").add("A", "CASH", "DIVIDEND", "1").rows)
     assert not positions["A"].corporate_action_touched
+
+
+def test_a_holding_begins_again_when_a_sold_position_is_bought_back() -> None:
+    from quant.portfolio.positions import holding_since
+
+    ledger = Ledger().buy("A", "10").sell("A", "10").buy("A", "4").buy("B", "2")
+    since = holding_since(ledger.rows)
+    assert since["A"] == (T0 + timedelta(days=2)).date().isoformat()  # the second purchase
+    assert since["B"] == (T0 + timedelta(days=3)).date().isoformat()
+
+
+def test_a_partial_sale_does_not_restart_the_holding() -> None:
+    from quant.portfolio.positions import holding_since
+
+    ledger = Ledger().buy("A", "10").sell("A", "4").buy("A", "1")
+    assert holding_since(ledger.rows)["A"] == T0.date().isoformat()
+
+
+def test_a_position_sold_in_full_has_no_holding_and_other_rows_are_ignored() -> None:
+    from quant.portfolio.positions import holding_since
+
+    ledger = Ledger().buy("A", "10").sell("A", "10").add("A", "CASH", "DIVIDEND", "10")
+    assert holding_since(ledger.rows) == {}
