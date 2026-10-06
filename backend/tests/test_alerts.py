@@ -15,6 +15,7 @@ from quant.models import (
     JobStatus,
     Notification,
     PriceEOD,
+    Role,
     User,
 )
 from quant.portfolio.alerts import (
@@ -516,3 +517,44 @@ def test_the_job_reads_no_bar_older_than_it_can_use(owner: TestClient, db: Sessi
     found = _newest_bars(db, [inst], TODAY - timedelta(days=12))
     assert [d for d, _ in found[inst]] == [TODAY, TODAY - timedelta(1)]
     assert _newest_bars(db, [], TODAY) == {}
+
+
+def test_the_same_outage_with_other_numbers_is_one_alert_a_day(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=10)
+    for hours, port in ((2, "8123"), (4, "9456")):
+        db.add(JobRun(job="ingest_fx", status=JobStatus.FAILED,
+                      finished_at=admin.created_at + timedelta(hours=hours),
+                      details={"error": f"ConnectError: port {port} refused (request 4f9ac2e1)"}))  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 1
+
+
+def test_the_alerts_job_does_not_name_people_in_its_own_failure_alert(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    from quant.ingest.alerts import ALERT_JOB_NAME
+    from quant.worker import ALERT_JOB
+
+    assert ALERT_JOB_NAME == ALERT_JOB
+    now = admin.created_at + timedelta(hours=10)
+    db.add(JobRun(job=ALERT_JOB, status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+                  details={"errors": {f"member{i}@example.com": f"RuntimeError: x{i}" for i in range(6)}}))  # fmt: skip
+    db.commit()
+    run(db, now=now)
+    [n] = alerts(db)
+    assert "6 items failed" in n.body and "RuntimeError" in n.body
+    assert "@example.com" not in n.body  # what failed, not who it failed for
+
+
+def test_two_admins_each_get_the_job_alerts_from_one_read(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    second = make_user(db, "second@example.com", Role.ADMIN)
+    now = max(admin.created_at, second.created_at) + timedelta(hours=10)
+    db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+                  details={"error": "boom"}))  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 2
+    assert {n.user_id for n in alerts(db)} == {admin.id, second.id}

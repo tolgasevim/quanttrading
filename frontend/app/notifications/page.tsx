@@ -37,6 +37,11 @@ function SettingsCard() {
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    // One time without the other is refused by the server; say so before the round trip.
+    if (!form.quiet_start !== !form.quiet_end) {
+      setError("Set both quiet hours times, or switch quiet hours off.");
+      return;
+    }
     try {
       setForm(await put<AlertSettings>("/api/alerts/settings", form));
       setSaved(true);

@@ -10,7 +10,9 @@ corrected.
 
 import hashlib
 import logging
+import re
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -50,15 +52,23 @@ from quant.portfolio.positions import Position, compute_positions, open_position
 log = logging.getLogger(__name__)
 
 FAILED_JOB_WINDOW_HOURS = 48
+ALERT_JOB_NAME = "create_alerts"  # the job that runs this module
 STUCK_AFTER_HOURS = 6  # no job here runs this long
 PARTIAL_MIN_FAILURES = 5
 PARTIAL_MIN_SHARE = 0.25
-DEFAULTS = AlertSettings(
-    daily_moves_enabled=True,
-    move_stock_pct=DEFAULT_STOCK_PCT,
-    move_fund_pct=DEFAULT_FUND_PCT,
-    move_crypto_pct=DEFAULT_CRYPTO_PCT,
-)
+
+
+@dataclass(frozen=True)
+class Effective:
+    """What a user's alert settings come to: their saved row, or the defaults when there is none."""
+
+    daily_moves_enabled: bool
+    move_stock_pct: Decimal
+    move_fund_pct: Decimal
+    move_crypto_pct: Decimal
+
+
+DEFAULTS = Effective(True, DEFAULT_STOCK_PCT, DEFAULT_FUND_PCT, DEFAULT_CRYPTO_PCT)
 
 
 def _store(session: Session, rows: list[dict[str, object]]) -> int:
@@ -109,7 +119,7 @@ def _open_positions(session: Session, user: User) -> list[Position]:
 def _user_moves(
     user: User,
     positions: list[Position],
-    settings: AlertSettings,
+    settings: Effective,
     instruments: dict[str, Instrument],
     bars: dict[int, list[tuple[date, Decimal]]],
     today: date,
@@ -123,7 +133,7 @@ def _user_moves(
             settings.move_crypto_pct,
         )
         instrument = instruments.get(position.isin)
-        if limit is None or instrument is None or position.asset_class not in MOVE_CLASSES:
+        if limit is None or instrument is None:
             continue
         move = daily_move(bars.get(instrument.id, []), today)
         if move is None or not breaches(move, limit):
@@ -147,11 +157,17 @@ def _user_moves(
     return rows
 
 
-def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str, object]]:
-    """Runs that failed, finished with errors, or look stuck, in the last two days and after the
-    admin's account existed (a new admin gets no alerts about the time before). A run that a later
-    successful run of the same job has made good is not news any more."""
-    since = max(now - timedelta(hours=FAILED_JOB_WINDOW_HOURS), admin.created_at)
+def _normalise(reason: str) -> str:
+    """The reason without the parts that change from run to run (counts, ids, ports), so the same
+    outage hashes the same."""
+    return re.sub(r"[0-9a-fA-F]{6,}|\d+", "#", reason)
+
+
+def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[str, object]]]:
+    """What went wrong in the jobs in the last two days, as alert rows without a user, each with
+    the time it happened. Runs that failed, finished with errors, or look stuck. A run that a later
+    successful run of the same job has made good is not news any more. Read once for all admins."""
+    since = now - timedelta(hours=FAILED_JOB_WINDOW_HOURS)
     last_success = dict(
         session.execute(
             select(JobRun.job, func.max(JobRun.finished_at))
@@ -177,7 +193,7 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
             )
         )
     )
-    rows: list[dict[str, object]] = []
+    events: list[tuple[datetime, dict[str, object]]] = []
     for run in runs:
         happened = run.finished_at or run.started_at
         fixed = last_success.get(run.job)
@@ -192,9 +208,12 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
         elif details.get("error"):
             reason = str(details["error"])
         elif isinstance(errors, dict) and errors:
-            reason = f"{failures} items failed, for example: " + "; ".join(
-                f"{k}: {v}" for k, v in list(errors.items())[:2]
+            # The alerts job names people in its errors: say what failed, not who it failed for.
+            named = run.job != ALERT_JOB_NAME
+            examples = "; ".join(
+                f"{k}: {v}" if named else str(v) for k, v in list(errors.items())[:2]
             )
+            reason = f"{failures} items failed, for example: {examples}"
         else:
             reason = ""
         if run.status == JobStatus.PARTIAL:
@@ -219,27 +238,36 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
         digest = (
             ""
             if run.status == JobStatus.PARTIAL
-            else hashlib.sha256(reason.encode()).hexdigest()[:8]
+            else hashlib.sha256(_normalise(reason).encode()).hexdigest()[:8]
         )
         day = happened.astimezone(tz).date().isoformat()
-        rows.append(
-            {
-                "user_id": admin.id,
-                "kind": "job_failed",
-                "severity": "info" if run.status == JobStatus.PARTIAL else "warning",
-                "title": f"Job {run.job} {what}",
-                "body": (reason or "The run failed with no message.")[:900],
-                "isin": None,
-                "dedupe_key": f"job_failed:{run.job}:{run.status.value}:{day}:{digest}".rstrip(":"),
-            }
+        events.append(
+            (
+                happened,
+                {
+                    "kind": "job_failed",
+                    "severity": "info" if run.status == JobStatus.PARTIAL else "warning",
+                    "title": f"Job {run.job} {what}",
+                    "body": (reason or "The run failed with no message.")[:900],
+                    "isin": None,
+                    "dedupe_key": f"job_failed:{run.job}:{run.status.value}:{day}:{digest}".rstrip(
+                        ":"
+                    ),
+                },
+            )
         )
-    return rows
+    return events
 
 
 def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     result = JobResult()
     users = list(session.scalars(select(User).order_by(User.created_at)))
-    settings = {s.user_id: s for s in session.scalars(select(AlertSettings))}
+    settings: dict[uuid.UUID, Effective] = {
+        s.user_id: Effective(
+            s.daily_moves_enabled, s.move_stock_pct, s.move_fund_pct, s.move_crypto_pct
+        )
+        for s in session.scalars(select(AlertSettings))
+    }
     # Each user's open positions, read once. Only what somebody holds needs prices.
     positions: dict[uuid.UUID, list[Position]] = {}
     for user in users:
@@ -261,6 +289,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     # A move needs a fresh bar and one at most MAX_GAP_DAYS before it: nothing older is read.
     window = today - timedelta(days=MAX_PRICE_AGE_DAYS + MAX_GAP_DAYS + 1)
     bars = _newest_bars(session, [i.id for i in instruments.values()], window)
+    job_events = _job_events(session, now) if any(u.role == Role.ADMIN for u in users) else []
     wanted = {
         u.id for u in users if u.id in positions or u.role == Role.ADMIN or u.email in result.errors
     }
@@ -274,7 +303,12 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             if user.id in positions:
                 rows += _user_moves(user, positions[user.id], mine, instruments, bars, today)
             if user.role == Role.ADMIN:
-                rows += _failed_jobs(session, user, now)
+                # Nothing about the time before the account existed.
+                rows += [
+                    {**event, "user_id": user.id}
+                    for happened, event in job_events
+                    if happened >= user.created_at
+                ]
             result.rows_written += _store(session, rows)
             session.commit()
         except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
