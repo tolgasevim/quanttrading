@@ -352,8 +352,89 @@ def test_the_close_of_the_pick_day_is_not_the_start(
 def test_the_nightly_price_job_tracks_what_the_ai_recommended(db: Session, admin: User) -> None:
     from quant.ingest.mapping import held_isins
 
-    pick(db, admin, date(2026, 5, 4), isin="US0000000555")
+    pick(db, admin, date(2026, 5, 4), isin="US67066G1040")
     pick(db, admin, date(2026, 5, 4), isin="XF000BTC0017")  # a coin's pseudo-ISIN: no lookup
+    pick(db, admin, date(2026, 5, 4), isin="US0000000555")  # the check digit is wrong: invented
     rls.bypass(db)
     found = {h.isin: h for h in held_isins(db)}
-    assert found["US0000000555"].asset_class == "stock" and "XF000BTC0017" not in found
+    assert found["US67066G1040"].asset_class == "stock"
+    assert "XF000BTC0017" not in found and "US0000000555" not in found
+
+
+def test_valid_isins_have_the_right_check_digit() -> None:
+    from quant.ingest.mapping import valid_isin
+
+    for good in ("US67066G1040", "IE00B53SZB19", "DE0007164600"):
+        assert valid_isin(good)
+    for bad in ("US67066G1041", "US0000000001", "us67066g1040", "US67066G104", ""):
+        assert not valid_isin(bad)
+
+
+def test_an_instrument_with_no_prices_of_its_own_is_not_chosen(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    empty = instrument(db, "EMPTY", "US67066G1040")
+    db.commit()
+    # The pick names the empty instrument by ISIN and the priced one by ticker, and carries a price.
+    pick(db, admin, date(2026, 5, 4), isin=empty.isin, ticker="alpha", price=D("100"),
+         price_currency="EUR", price_date=date(2026, 5, 1))  # fmt: skip
+    rls.bypass(db)
+    assert scoring.score_picks(db, TODAY).rows_written == 2  # scored on ALPHA
+
+
+def test_one_bad_pick_does_not_stop_the_others(
+    db: Session, admin: User, market: tuple[Instrument, Instrument], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = pick(db, admin, date(2026, 5, 4))
+    second = pick(db, admin, date(2026, 5, 4))
+    real = scoring.outcome
+
+    def flaky(session: Session, p: AiPick, *a: Any) -> Any:
+        if p.id == first.id:
+            raise RuntimeError("boom")
+        return real(session, p, *a)
+
+    monkeypatch.setattr(scoring, "outcome", flaky)
+    rls.bypass(db)
+    result = scoring.score_picks(db, TODAY)
+    assert result.errors == {str(first.id): "RuntimeError"} and result.rows_written == 2
+    assert {s.pick_id for s in db.scalars(select(AiPickScore))} == {second.id}
+
+
+def test_an_absurd_return_is_a_data_error_not_a_score() -> None:
+    assert scoring._pct(D("0.000001"), D("1000")) is None
+    assert scoring._pct(D("100"), D("120")) == D("20.0000")
+
+
+def test_the_benchmark_starts_with_the_pick(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    alpha, bench = market
+    bars(db, bench, {date(2026, 5, 4): "400", date(2026, 4, 30): "190"})  # 4 May must not be used
+    pick(
+        db,
+        admin,
+        date(2026, 5, 4),
+        price=D("100"),
+        price_currency="EUR",
+        price_date=date(2026, 4, 30),
+    )
+    rls.bypass(db)
+    scoring.score_picks(db, TODAY)
+    one = db.scalars(select(AiPickScore).where(AiPickScore.window_months == 1)).one()
+    assert one.start_date == date(2026, 4, 30)
+    # From the 30 April close (190), the pick's own start day, to 220.
+    assert one.benchmark_return_pct == D("15.7895")
+
+
+def test_the_edge_flips_for_a_sell(
+    client: TestClient, db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    pick(db, admin, date(2026, 5, 4), direction="buy")
+    pick(db, admin, date(2026, 5, 4), direction="sell")
+    rls.bypass(db)
+    scoring.score_picks(db, TODAY)
+    login(client, admin.email)
+    w = {x["window_months"]: x for x in client.get("/api/ai/track-record").json()["windows"]}
+    # Alpha beat the benchmark by 10 points: +10 for the buy, -10 for the sell.
+    assert w[1]["scored"] == 2 and w[1]["hits"] == 1 and w[1]["avg_excess_pct"] == "0.00"

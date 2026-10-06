@@ -137,15 +137,25 @@ def is_hit(direction: str, excess: Decimal) -> bool:
     return excess < 0 if direction == "sell" else excess > 0
 
 
-def _pct(start: Decimal, end: Decimal) -> Decimal:
-    return ((end / start - 1) * 100).quantize(Decimal("0.0001"))
+MAX_PCT = Decimal("1000000")  # a return beyond this is a data error, not a result
+
+
+def _pct(start: Decimal, end: Decimal) -> Decimal | None:
+    value = (end / start - 1) * 100
+    return value.quantize(Decimal("0.0001")) if abs(value) <= MAX_PCT else None
 
 
 def choose(session: Session, pick: AiPick, instruments: list[Instrument]) -> Instrument | None:
     """The one instrument all windows of the pick are scored on: the first candidate with a
     close at the pick day. Chosen once, so the 1- and the 12-month score never differ in it."""
+    day = pick_day(pick) - timedelta(days=1)
     for instrument in instruments:
-        if start_price(session, pick, instrument) is not None:
+        # The instrument needs prices of its own around the day, not only a price on the pick:
+        # the pick's price may have come from another candidate.
+        if (
+            close_on_or_before(session, instrument.id, day) is not None
+            and start_price(session, pick, instrument) is not None
+        ):
             return instrument
     return None
 
@@ -155,18 +165,29 @@ def outcome(
 ) -> Outcome | None:
     """The pick's and the benchmark's return from the day of the pick to `end`, each from its own
     nearest close, or None when a price is missing or the prices do not run past `end` yet."""
-    start_day = pick_day(pick)
     if not (covered(session, instrument.id, end) and covered(session, bench.id, end)):
         return None
     first = start_price(session, pick, instrument)
     last = close_on_or_before(session, instrument.id, end)
-    bench_first = close_on_or_before(session, bench.id, start_day - timedelta(days=1))
+    if first is None:
+        return None
+    # The benchmark starts on the same day as the pick, so both cover the same days at the start.
+    bench_first = close_on_or_before(session, bench.id, first[0])
     bench_last = close_on_or_before(session, bench.id, end)
-    if not (first and last and bench_first and bench_last):
+    if not (last and bench_first and bench_last):
         return None
-    if first[1] <= 0 or bench_first[1] <= 0 or last[0] <= first[0]:
+    if (
+        first[1] <= 0
+        or bench_first[1] <= 0
+        or last[0] <= first[0]
+        or bench_last[0] <= bench_first[0]
+    ):
         return None
-    return Outcome(first[0], last[0], _pct(first[1], last[1]), _pct(bench_first[1], bench_last[1]))
+    pick_pct = _pct(first[1], last[1])
+    bench_pct = _pct(bench_first[1], bench_last[1])
+    if pick_pct is None or bench_pct is None:
+        return None
+    return Outcome(first[0], last[0], pick_pct, bench_pct)
 
 
 def score_picks(session: Session, today: date) -> JobResult:
@@ -183,7 +204,7 @@ def score_picks(session: Session, today: date) -> JobResult:
         )
     }
     waiting = unscorable = 0
-    for pick in session.scalars(select(AiPick).order_by(AiPick.created_at)):
+    for pick in session.scalars(select(AiPick).order_by(AiPick.created_at)).all():
         due = [
             w
             for w in WINDOWS
@@ -191,35 +212,40 @@ def score_picks(session: Session, today: date) -> JobResult:
         ]
         if not due:
             continue
-        chosen = choose(session, pick, candidates(session, pick.isin, pick.ticker))
-        if chosen is None:
-            unscorable += 1
-            continue
-        for window in due:
-            result.attempted += 1
-            end = add_months(pick_day(pick), window)
-            found = outcome(session, pick, chosen, bench, end)
-            if found is None:
-                waiting += 1
+        try:
+            chosen = choose(session, pick, candidates(session, pick.isin, pick.ticker))
+            if chosen is None:
+                unscorable += 1
                 continue
-            inserted = session.scalars(
-                insert(AiPickScore)
-                .values(
-                    user_id=pick.user_id,
-                    pick_id=pick.id,
-                    window_months=window,
-                    start_date=found.start,
-                    end_date=found.end,
-                    pick_return_pct=found.pick_pct,
-                    benchmark_return_pct=found.benchmark_pct,
-                    excess_pct=found.excess,
-                    hit=is_hit(pick.direction, found.excess),
-                )
-                .on_conflict_do_nothing(constraint="uq_ai_pick_scores_pick_window")
-                .returning(AiPickScore.id)
-            ).all()
-            result.rows_written += len(inserted)  # a score another run wrote first is not counted
-        session.commit()
+            for window in due:
+                result.attempted += 1
+                end = add_months(pick_day(pick), window)
+                found = outcome(session, pick, chosen, bench, end)
+                if found is None:
+                    waiting += 1
+                    continue
+                inserted = session.scalars(
+                    insert(AiPickScore)
+                    .values(
+                        user_id=pick.user_id,
+                        pick_id=pick.id,
+                        window_months=window,
+                        start_date=found.start,
+                        end_date=found.end,
+                        pick_return_pct=found.pick_pct,
+                        benchmark_return_pct=found.benchmark_pct,
+                        excess_pct=found.excess,
+                        hit=is_hit(pick.direction, found.excess),
+                    )
+                    .on_conflict_do_nothing(constraint="uq_ai_pick_scores_pick_window")
+                    .returning(AiPickScore.id)
+                ).all()
+                result.rows_written += len(inserted)  # one another run wrote first is not counted
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 - one bad pick must not stop the others
+            session.rollback()
+            log.exception("could not score pick %s", pick.id)
+            result.errors[str(pick.id)] = type(exc).__name__
     if waiting:
         result.warnings["waiting"] = f"{waiting} window(s) wait for prices"
     if unscorable:

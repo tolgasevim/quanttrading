@@ -7,6 +7,7 @@ marked `none`, shown on the Prices page, where an admin can enter the symbol by 
 """
 
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -39,6 +40,22 @@ class HeldIsin:
     isin: str
     name: str | None
     asset_class: str  # the instrument class: "stock", "etf" or "crypto"
+
+
+def valid_isin(isin: str) -> bool:
+    """12 characters: two letters, nine letters or digits, a check digit (Luhn over the letters
+    turned into numbers)."""
+    if not re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]", isin):
+        return False
+    digits = "".join(str(int(c, 36)) for c in isin)
+    total = 0
+    for index, ch in enumerate(reversed(digits)):
+        n = int(ch)
+        if index % 2 == 1:
+            n *= 2
+            n -= 9 if n > 9 else 0
+        total += n
+    return total % 10 == 0
 
 
 def held_isins(session: Session) -> list[HeldIsin]:
@@ -81,7 +98,11 @@ def held_isins(session: Session) -> list[HeldIsin]:
         .group_by(AiPick.isin)
         .order_by(AiPick.isin)
     ).all()
-    found += [HeldIsin(isin, name, "stock") for isin, name in picked if isin and isin not in have]
+    found += [
+        HeldIsin(isin, name, "stock")
+        for isin, name in picked
+        if isin and isin not in have and valid_isin(isin)  # the model may invent one
+    ]
     return found
 
 

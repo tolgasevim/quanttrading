@@ -30,7 +30,7 @@ export default function TrackRecordPage() {
           Every pick the AI made, scored after 1, 3, 6 and 12 months against the benchmark (
           {data?.benchmark ?? "SXRV"}, a Nasdaq-100 fund). A buy or hold is a hit when it beat the
           benchmark. A sell is a hit when the share trailed it afterwards. Returns are price
-          returns, before fees and tax. <Link href="/ai">Back to the AI guide</Link>
+          returns in euros, before fees and tax. The edge is the pick's return minus the benchmark's (reversed for a sell), so a positive number means the AI was right. <Link href="/ai">Back to the AI guide</Link>
         </p>
         {error && <p className="notice status-failed">{error}</p>}
         {data && (
@@ -48,7 +48,7 @@ export default function TrackRecordPage() {
                     <th className="num">Hit rate</th>
                     <th className="num">Avg pick</th>
                     <th className="num">Avg benchmark</th>
-                    <th className="num">Avg excess</th>
+                    <th className="num">Avg edge</th>
                   </tr>
                 </thead>
                 <tbody>

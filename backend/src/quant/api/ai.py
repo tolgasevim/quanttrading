@@ -241,6 +241,9 @@ def track_record(
         .where(AiPickScore.user_id == user.id)
         .order_by(AiPickScore.window_months)
     ).all()
+    directions = dict(
+        db.execute(select(AiPick.id, AiPick.direction).where(AiPick.user_id == user.id)).all()
+    )
     by_pick: dict[uuid.UUID, list[AiPickScore]] = {}
     for score in scores:
         by_pick.setdefault(score.pick_id, []).append(score)
@@ -261,7 +264,14 @@ def track_record(
                 ),
                 avg_pick_return_pct=_avg([s.pick_return_pct for s in rows]),
                 avg_benchmark_return_pct=_avg([s.benchmark_return_pct for s in rows]),
-                avg_excess_pct=_avg([s.excess_pct for s in rows]),
+                # The edge: the excess return, with its sign flipped for a sell, so that a
+                # positive number always means the AI was right.
+                avg_excess_pct=_avg(
+                    [
+                        -s.excess_pct if directions.get(s.pick_id) == "sell" else s.excess_pct
+                        for s in rows
+                    ]
+                ),
             )
         )
     picks = db.scalars(
