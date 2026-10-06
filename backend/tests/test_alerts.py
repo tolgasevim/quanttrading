@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from quant import rls
-from quant.ingest.alerts import Person, create_alerts
+from quant.ingest.alerts import ALERT_JOB_NAME, Person, create_alerts
 from quant.models import (
     AlertSettings,
     Instrument,
@@ -371,7 +371,7 @@ def test_the_alert_job_is_recorded_like_the_others(owner: TestClient, db: Sessio
     from quant import worker
 
     worker.run_alerts()
-    run_ = db.query(JobRun).filter_by(job=worker.ALERT_JOB).one()
+    run_ = db.query(JobRun).filter_by(job=ALERT_JOB_NAME).one()
     assert run_.status == JobStatus.SUCCESS and run_.rows_written == 0
 
 
@@ -390,7 +390,7 @@ def test_an_admin_whose_positions_cannot_be_read_still_gets_the_failed_job_alert
     db.commit()
     rls.bypass(db)
     result = create_alerts(db, TODAY, now)
-    assert "bad ledger" in result.errors[admin.email]  # the run is not clean...
+    assert "bad ledger" in result.errors[str(admin.id)]  # the run is not clean...
     assert [n.title for n in alerts(db)] == ["Job ingest_prices failed"]  # ...but the news arrives
 
 
@@ -542,12 +542,8 @@ def test_the_same_outage_with_other_numbers_is_one_alert_a_day(
 def test_the_alerts_job_does_not_name_people_in_its_own_failure_alert(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    from quant.ingest.alerts import ALERT_JOB_NAME
-    from quant.worker import ALERT_JOB
-
-    assert ALERT_JOB_NAME == ALERT_JOB
     now = admin.created_at + timedelta(hours=10)
-    db.add(JobRun(job=ALERT_JOB, status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+    db.add(JobRun(job=ALERT_JOB_NAME, status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
                   details={"errors": {f"member{i}@example.com": f"RuntimeError: x{i}" for i in range(6)}}))  # fmt: skip
     db.commit()
     run(db, now=now)
@@ -566,3 +562,26 @@ def test_two_admins_each_get_the_job_alerts_from_one_read(
     db.commit()
     assert run(db, now=now) == 2
     assert {n.user_id for n in alerts(db)} == {admin.id, second.id}
+
+
+def test_a_later_partial_run_makes_good_a_failure_but_not_a_run_with_errors(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=30)
+    t = admin.created_at
+    db.add_all(
+        [
+            JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=t + timedelta(hours=2),
+                   details={"error": "boom"}),
+            JobRun(job="ingest_prices", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=20),
+                   details={"attempted": 50, "errors": {"US1": "x"}}),  # healthy for the scheduler
+            JobRun(job="map_isins", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=2),
+                   details={"attempted": 4, "errors": {"US1": "a", "US2": "b"}}),
+            JobRun(job="map_isins", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=20),
+                   details={"attempted": 4, "errors": {"US1": "a"}}),  # still not clean
+        ]
+    )  # fmt: skip
+    db.commit()
+    run(db, now=now)
+    titles = sorted(n.title for n in alerts(db))
+    assert titles == ["Job map_isins finished with errors", "Job map_isins finished with errors"]

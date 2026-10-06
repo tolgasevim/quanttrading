@@ -25,6 +25,7 @@ from quant.config import get_settings
 from quant.ingest.jobs import JobResult
 from quant.models import (
     DEFAULT_CRYPTO_PCT,
+    DEFAULT_DAILY_MOVES,
     DEFAULT_FUND_PCT,
     DEFAULT_STOCK_PCT,
     AlertSettings,
@@ -79,7 +80,7 @@ class Effective:
     move_crypto_pct: Decimal
 
 
-DEFAULTS = Effective(True, DEFAULT_STOCK_PCT, DEFAULT_FUND_PCT, DEFAULT_CRYPTO_PCT)
+DEFAULTS = Effective(DEFAULT_DAILY_MOVES, DEFAULT_STOCK_PCT, DEFAULT_FUND_PCT, DEFAULT_CRYPTO_PCT)
 
 
 def _store(session: Session, rows: list[dict[str, object]]) -> int:
@@ -179,13 +180,19 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
     the time it happened. Runs that failed, finished with errors, or look stuck. A run that a later
     successful run of the same job has made good is not news any more. Read once for all admins."""
     since = now - timedelta(hours=FAILED_JOB_WINDOW_HOURS)
-    last_success = dict(
-        session.execute(
+
+    def last_finished(*statuses: JobStatus) -> dict[str, datetime]:
+        rows = session.execute(
             select(JobRun.job, func.max(JobRun.finished_at))
-            .where(JobRun.status == JobStatus.SUCCESS)
+            .where(JobRun.status.in_(statuses))
             .group_by(JobRun.job)
-        ).all()
-    )
+        )
+        return {job: when for job, when in rows if when is not None}
+
+    # The scheduler counts a partial run as healthy, so a later partial run makes good a failure
+    # or a stuck run; only a clean run makes good a run that finished with errors.
+    healthy = last_finished(JobStatus.SUCCESS, JobStatus.PARTIAL)
+    clean = last_finished(JobStatus.SUCCESS)
     tz = ZoneInfo(get_settings().timezone)
     runs = session.scalars(
         select(JobRun).where(
@@ -207,7 +214,7 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
     events: list[tuple[datetime, dict[str, object]]] = []
     for run in runs:
         happened = run.finished_at or run.started_at
-        fixed = last_success.get(run.job)
+        fixed = (clean if run.status == JobStatus.PARTIAL else healthy).get(run.job)
         if fixed is not None and fixed > happened:
             continue
         stuck = run.status == JobStatus.RUNNING
@@ -291,7 +298,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
                 session.rollback()
                 log.exception("positions of user %s failed", user.id)
-                result.errors[user.email] = f"{type(exc).__name__}: {exc}"
+                result.errors[str(user.id)] = f"{type(exc).__name__}: {exc}"
     held = {p.isin for mine in positions.values() for p in mine if p.asset_class in MOVE_CLASSES}
     instruments = {
         i.isin: i
@@ -304,7 +311,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     window = today - timedelta(days=MAX_PRICE_AGE_DAYS + MAX_GAP_DAYS + 1)
     bars = _newest_bars(session, [i.id for i in instruments.values()], window)
     job_events = _job_events(session, now) if any(u.is_admin for u in users) else []
-    wanted = {u.id for u in users if u.id in positions or u.is_admin or u.email in result.errors}
+    wanted = {u.id for u in users if u.id in positions or u.is_admin or str(u.id) in result.errors}
     result.attempted = len(wanted)  # the users that have something to check
     for user in users:
         if user.id not in wanted:
@@ -326,5 +333,5 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
         except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
             session.rollback()
             log.exception("alerts for user %s failed", user.id)
-            result.errors[user.email] = f"{type(exc).__name__}: {exc}"
+            result.errors[str(user.id)] = f"{type(exc).__name__}: {exc}"
     return result

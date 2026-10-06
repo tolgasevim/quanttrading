@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
-ALERT_JOB = ALERT_JOB_NAME
 
 
 def _map_and_fill(session: Session, settings: Settings, fetcher: Fetcher) -> JobResult:
@@ -123,7 +122,7 @@ def run_alerts() -> None:
         rls.bypass(session)
         run_job(
             session,
-            ALERT_JOB,
+            ALERT_JOB_NAME,
             lambda s: create_alerts(s, today_local(settings).date(), datetime.now(UTC)),
         )
 
@@ -175,7 +174,7 @@ def main() -> None:
         late: Callable[[], None] | None = None
         if needs_catch_up(session, PRICES_JOB, now):
             late = run_evening
-        elif needs_catch_up(session, ALERT_JOB, now):
+        elif needs_catch_up(session, ALERT_JOB_NAME, now):
             late = run_alerts
         if late is not None:
             log.info("catching up on %s", late.__name__)

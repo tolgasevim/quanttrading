@@ -294,6 +294,7 @@ class UnitCost(Base):
 
 # The daily-move limits of decision D39, in percent. The columns below, the API and the alert job
 # all take their defaults from here.
+DEFAULT_DAILY_MOVES = True
 DEFAULT_STOCK_PCT = Decimal(5)
 DEFAULT_FUND_PCT = Decimal(3)
 DEFAULT_CRYPTO_PCT = Decimal(10)
@@ -330,7 +331,9 @@ class AlertSettings(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
-    daily_moves_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    daily_moves_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=DEFAULT_DAILY_MOVES, server_default=true()
+    )
     move_stock_pct: Mapped[Decimal] = mapped_column(
         Numeric(5, 2), default=DEFAULT_STOCK_PCT, server_default=str(DEFAULT_STOCK_PCT)
     )

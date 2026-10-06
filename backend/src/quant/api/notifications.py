@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from quant.api.deps import CurrentUser, UserDb
 from quant.models import (
     DEFAULT_CRYPTO_PCT,
+    DEFAULT_DAILY_MOVES,
     DEFAULT_FUND_PCT,
     DEFAULT_STOCK_PCT,
     AlertSettings,
@@ -163,7 +164,7 @@ def read_one(notification_id: uuid.UUID, user: CurrentUser, db: UserDb) -> Notif
 def _settings_out(row: AlertSettings | None) -> SettingsOut:
     if row is None:
         return SettingsOut(
-            daily_moves_enabled=True,
+            daily_moves_enabled=DEFAULT_DAILY_MOVES,
             move_stock_pct=DEFAULT_STOCK_PCT,
             move_fund_pct=DEFAULT_FUND_PCT,
             move_crypto_pct=DEFAULT_CRYPTO_PCT,
