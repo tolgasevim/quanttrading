@@ -183,6 +183,43 @@ def _handle_tools(
     return results, failed
 
 
+def _history_messages(
+    history: list[dict[str, str]] | None, anonymise: bool
+) -> list[dict[str, Any]]:
+    """The earlier messages of a chat, cleaned. The history comes from the browser, so it is
+    trusted for nothing but wording: roles are checked, text is cut, and the turns must start
+    with the user and alternate.
+
+    With "hide amounts" the earlier answers are not sent at all (they may hold euro amounts from
+    before the user switched it on, and the server cannot tell): the questions go along as one
+    message instead."""
+    rows = [
+        {"role": m["role"], "content": m["content"][:MAX_HISTORY_CHARS]}
+        for m in (history or [])
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
+    if anonymise:
+        asked = [m["content"] for m in rows if m["role"] == "user"][-MAX_HISTORY // 2 :]
+        if not asked:
+            return []
+        return [
+            {"role": "user", "content": "Earlier questions in this chat: " + " | ".join(asked)},
+            {"role": "assistant", "content": "Understood."},
+        ]
+    merged: list[dict[str, Any]] = []
+    for m in rows:  # two of one role in a row (a turn never recorded): the later one is kept
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1] = m
+        elif merged or m["role"] == "user":
+            merged.append(m)
+    merged = merged[-MAX_HISTORY:]
+    while merged and merged[0]["role"] != "user":
+        merged.pop(0)
+    if merged and merged[-1]["role"] == "user":
+        merged.pop()
+    return merged
+
+
 def _warn_if_unlogged(answer: str, saved: list[AiPick], notes: list[str]) -> None:
     """The loop stopped early. If the answer reads like advice and nothing is logged, say so."""
     if not saved and RECOMMENDS.search(answer):
@@ -207,24 +244,7 @@ def ask(
     holdings = service.build_holdings(session, user_id)
     context, points, held = build_context(holdings, agreed.anonymise_amounts)
     ctx = tools.ToolContext(session, user_id, agreed.anonymise_amounts, holdings)
-    messages: list[dict[str, Any]] = [
-        {"role": m["role"], "content": m["content"][:MAX_HISTORY_CHARS]}
-        for m in (history or [])[-MAX_HISTORY:]
-        if m.get("role") in ("user", "assistant") and m.get("content")
-    ]
-    # The API wants the first message from the user and the roles to alternate.
-    while messages and messages[0]["role"] != "user":
-        messages.pop(0)
-    # Two messages of one role in a row (a turn that was never recorded): the later one is kept.
-    merged: list[dict[str, Any]] = []
-    for m in messages:
-        if merged and merged[-1]["role"] == m["role"]:
-            merged[-1] = m
-        else:
-            merged.append(m)
-    messages = merged
-    if messages and messages[-1]["role"] == "user":
-        messages.pop()
+    messages = _history_messages(history, agreed.anonymise_amounts)
     messages.append(
         {"role": "user", "content": f"Portfolio summary:\n{context}\n\nQuestion: {question}"}
     )

@@ -114,6 +114,7 @@ export default function AiPage() {
     try {
       // Only the latest messages go along: the server uses ten at most.
       const history = turns
+        .filter((t) => !t.answer.refused)
         .slice(-5)
         .flatMap((t) => [
           { role: "user", content: t.question },

@@ -26,6 +26,7 @@ from quant.portfolio.tax import YearEstimate
 
 MAX_RESULT_CHARS = 6000
 MAX_DAYS = 400
+STALE_DAYS = 5  # a close older than this is flagged in get_prices
 HIDDEN = "hidden: the user chose to hide amounts, so only weights are available"
 
 SCHEMAS: list[dict[str, Any]] = [
@@ -146,6 +147,23 @@ class NoMatch(ToolError):
     """Nothing the user holds fits the query (as opposed to several holdings fitting it)."""
 
 
+def _int_arg(args: dict[str, Any], name: str, default: int, low: int, high: int) -> int:
+    """An integer argument, clamped. A float with a whole value or a numeric string is accepted;
+    anything else is an error the model can read, not a silent default."""
+    raw = args.get(name)
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        raise ToolError(f"{name} must be a whole number")
+    try:
+        number = Decimal(str(raw).strip())
+    except ArithmeticError:
+        raise ToolError(f"{name} must be a whole number") from None
+    if not number.is_finite() or number != number.to_integral_value():
+        raise ToolError(f"{name} must be a whole number")
+    return max(low, min(int(number), high))
+
+
 def _dec(value: Decimal | None, places: str = "0.01") -> str | None:
     return None if value is None else str(value.quantize(Decimal(places)))
 
@@ -169,9 +187,16 @@ def _find_position(ctx: ToolContext, query: str) -> Any:
 def _closed_position(ctx: ToolContext, query: str) -> tuple[dict[str, Any], str] | None:
     """A holding the user has sold completely: what is left to say is the realised result."""
     wanted = " ".join(query.split()).lower()
-    for p in ctx.holdings.everything.values():
-        if p.is_open or not (p.isin.lower() == wanted or (p.name and wanted in p.name.lower())):
-            continue
+    closed = [
+        p
+        for p in ctx.holdings.everything.values()
+        if not p.is_open and (p.isin.lower() == wanted or (p.name and wanted in p.name.lower()))
+    ]
+    if len(closed) > 1:
+        raise ToolError(
+            "several sold holdings match: " + ", ".join(p.name or p.isin for p in closed[:8])
+        )
+    for p in closed:
         out: dict[str, Any] = {
             "name": p.name,
             "isin": p.isin,
@@ -249,9 +274,7 @@ def get_prices(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], 
     query = " ".join(str(args.get("query", "")).split())
     if not query:
         raise ToolError("query is empty")
-    days = args.get("days", 90)
-    days = days if isinstance(days, int) and not isinstance(days, bool) else 90
-    days = max(7, min(days, MAX_DAYS))
+    days = _int_arg(args, "days", 90, 7, MAX_DAYS)
     try:  # a holding named in words resolves to its ISIN
         held = _find_position(ctx, query)
         isin: str | None = held.isin
@@ -295,6 +318,11 @@ def get_prices(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], 
             f"low_{days}d": _dec(min(window), "0.0001"),
             "note": "end-of-day closes, price only, not adjusted for dividends",
         }
+        if (date.today() - last_day).days > STALE_DAYS:
+            out["warning"] = (
+                f"the last stored close is {(date.today() - last_day).days} days old, so these "
+                "changes are not recent"
+            )
         return out, f"{out['name']}: last close {out['last_close']} ({out['last_date']})"
     raise ToolError("the app has no stored prices for that (it tracks held and recommended shares)")
 
@@ -352,6 +380,7 @@ def scenario(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], st
             }
         )
     ignored = sorted({t for t, _ in parsed} - used)
+    sectors = sorted({sec for sec, _ in h.sectors.values() if sec})
     out: dict[str, Any] = {
         "portfolio_change_pct": _dec(impact),
         "positions_hit": sorted(
@@ -360,6 +389,12 @@ def scenario(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], st
         "targets_that_matched_nothing": ignored,
         "note": "linear, valued holdings only, no correlations",
     }
+    if not rows:
+        out["warning"] = (
+            "no holding matched any target, so the change is zero by construction. Targets: an "
+            "ISIN, one of the sectors below, STOCK, FUND, CRYPTO or all."
+        )
+        out["available_sectors"] = sectors
     if not ctx.anonymise:
         out["portfolio_change_eur"] = _dec(total * impact / 100)
     return out, f"portfolio {out['portfolio_change_pct']}% for {len(parsed)} shock(s)"
@@ -412,9 +447,7 @@ def get_fx(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], str]
 
 
 def list_my_picks(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    limit = args.get("limit", 10)
-    limit = limit if isinstance(limit, int) and not isinstance(limit, bool) else 10
-    limit = max(1, min(limit, 30))
+    limit = _int_arg(args, "limit", 10, 1, 30)
     picks = ctx.session.scalars(
         select(AiPick)
         .where(AiPick.user_id == ctx.user_id)
@@ -445,6 +478,22 @@ def list_my_picks(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any
     return {"picks": items}, f"{len(items)} earlier pick(s)"
 
 
+def _shrink(out: dict[str, Any]) -> str:
+    """Cut the longest list until the result fits, and say so inside the JSON, so the model gets
+    valid, honest partial data."""
+    out = dict(out)
+    out["truncated"] = True
+    while True:
+        text = json.dumps(out, ensure_ascii=False, default=str)
+        lists = [k for k, v in out.items() if isinstance(v, list) and len(v) > 1]
+        if len(text) <= MAX_RESULT_CHARS:
+            return text
+        if not lists:  # nothing to cut by rows: a flagged excerpt, still valid JSON
+            return json.dumps({"truncated": True, "excerpt": text[: MAX_RESULT_CHARS - 100]})
+        longest = max(lists, key=lambda k: len(json.dumps(out[k], default=str)))
+        out[longest] = out[longest][: max(1, len(out[longest]) // 2)]
+
+
 RUNNERS = {
     "get_position": get_position,
     "get_prices": get_prices,
@@ -459,6 +508,10 @@ def run(ctx: ToolContext, name: str, args: dict[str, Any]) -> tuple[str, ToolTra
     """Run one tool. Returns the text for the model and the trace for the page. An error is text
     the model can read; it never raises."""
     shown = json.dumps(args, ensure_ascii=False, default=str)[:300]
+    if not isinstance(args, dict):
+        return "error: the input must be an object", ToolTrace(
+            name, shown, "error: bad input", True
+        )
     try:
         # A savepoint: a database error inside a tool must not abort the user's transaction.
         with ctx.session.begin_nested():
@@ -471,6 +524,5 @@ def run(ctx: ToolContext, name: str, args: dict[str, Any]) -> tuple[str, ToolTra
         )
     text = json.dumps(out, ensure_ascii=False, default=str)
     if len(text) > MAX_RESULT_CHARS:
-        # Still valid JSON, with a flag, so the model knows the data is partial.
-        text = json.dumps({"truncated": True, "partial_text": text[:MAX_RESULT_CHARS]})
+        text = _shrink(out)
     return text, ToolTrace(name, shown, summary[:200])

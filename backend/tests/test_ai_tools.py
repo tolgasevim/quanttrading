@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal as D
 from typing import Any
@@ -218,13 +219,20 @@ def test_a_broken_tool_is_an_error_not_a_crash(
     assert trace.error and "secret detail" not in text + trace.summary
 
 
-def test_a_long_result_is_cut(db: Session, admin: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(tools.RUNNERS, "get_fx", lambda c, a: ({"x": "y" * 20000}, "big"))
-    text, _ = call(ctx(db, admin), "get_fx", currency="USD")
+def test_a_long_result_is_cut_into_valid_json(
+    db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import json
 
-    out = json.loads(text)  # still valid JSON, and it says it is partial
-    assert out["truncated"] is True and len(out["partial_text"]) == tools.MAX_RESULT_CHARS
+    big = {"rows": [{"n": i, "text": "y" * 50} for i in range(500)], "keep": "me"}
+    monkeypatch.setitem(tools.RUNNERS, "get_fx", lambda c, a: (big, "big"))
+    text, _ = call(ctx(db, admin), "get_fx", currency="USD")
+    out = json.loads(text)
+    assert len(text) <= tools.MAX_RESULT_CHARS and out["truncated"] is True and out["keep"] == "me"
+    assert 0 < len(out["rows"]) < 500 and out["rows"][0]["n"] == 0  # the head of the list
+    monkeypatch.setitem(tools.RUNNERS, "get_fx", lambda c, a: ({"x": "y" * 20000}, "big"))
+    text, _ = call(ctx(db, admin), "get_fx", currency="USD")
+    assert json.loads(text)["truncated"] is True and len(text) <= tools.MAX_RESULT_CHARS
 
 
 # --- through the chat endpoint ------------------------------------------------------------------
@@ -509,3 +517,89 @@ def test_the_last_round_of_tools_asks_for_an_answer(
     last = fake.requests[2]["messages"][-1]["content"]
     assert last[-1]["type"] == "text" and "last round" in last[-1]["text"]
     assert all(b["type"] != "text" for b in fake.requests[1]["messages"][-1]["content"])
+
+
+def test_numeric_arguments_are_read_or_refused_never_silently_replaced(
+    db: Session, two: User
+) -> None:
+    text, trace = call(ctx(db, two), "get_prices", query="NVIDIA Corp", days=30.0)
+    assert not trace.error and '"high_30d"' in text
+    text, trace = call(ctx(db, two), "get_prices", query="NVIDIA Corp", days="365")
+    assert not trace.error and '"high_365d"' in text
+    for bad in (30.5, "abc", True, [1]):
+        text, trace = call(ctx(db, two), "get_prices", query="NVIDIA Corp", days=bad)
+        assert trace.error and "whole number" in text
+    assert call(ctx(db, two), "list_my_picks", limit="x")[1].error
+
+
+def test_a_non_object_input_is_a_clear_error(db: Session, admin: User) -> None:
+    text, trace = tools.run(ctx(db, admin), "get_fx", "USD")  # type: ignore[arg-type]
+    assert trace.error and "object" in text
+
+
+def test_two_sold_holdings_that_fit_are_reported_as_ambiguous(db: Session, two: User) -> None:
+    rls.bypass(db)
+    for n, (isin, name) in enumerate(
+        [("US0378331005", "Alpha One"), ("US5949181045", "Alpha Two")]
+    ):
+        for k, (kind, shares, amount) in enumerate([("BUY", "1", "-10"), ("SELL", "-1", "12")]):
+            db.add(
+                Transaction(
+                    user_id=two.id, broker="tr", external_id=f"s{n}{k}", name=name, isin=isin,
+                    executed_at=datetime(2025, 1 + k, 2, tzinfo=UTC), date=date(2025, 1 + k, 2),
+                    kind="trade", category="TRADING", type=kind, asset_class="STOCK",
+                    shares=D(shares), price=D("10"), amount=D(amount), currency="EUR",
+                )
+            )  # fmt: skip
+    db.commit()
+    text, trace = call(ctx(db, two), "get_position", query="alpha")
+    assert trace.error and "several sold" in text
+
+
+def test_an_old_close_is_flagged_and_an_empty_scenario_explains_itself(
+    db: Session, two: User
+) -> None:
+    import json
+
+    rls.bypass(db)
+    old = Instrument(code="OLDIE", isin=None, name="Oldie", asset_class="stock", currency="EUR")
+    db.add(old)
+    db.flush()
+    db.add(PriceEOD(instrument_id=old.id, date=RECENT - timedelta(days=30), close=D("5"), currency="EUR", source="t"))  # fmt: skip
+    db.commit()
+    assert "not recent" in call(ctx(db, two), "get_prices", query="oldie")[0]
+    assert "warning" not in call(ctx(db, two), "get_prices", query="NVIDIA Corp")[0]
+    out = json.loads(call(ctx(db, two), "scenario", shocks=[{"target": "stocks", "pct": -10}])[0])
+    assert out["portfolio_change_pct"] == "0.00" and "no holding matched" in out["warning"]
+    assert out["available_sectors"] == ["Software", "Technology"]
+
+
+def test_hide_amounts_sends_the_earlier_questions_but_not_the_earlier_answers(
+    owner: TestClient, fake: Fake
+) -> None:
+    accept(owner, anonymise=True)
+    fake.replies = [reply("ok")]
+    history = [
+        {"role": "user", "content": "How is my NVIDIA doing?"},
+        {"role": "assistant", "content": "You hold 1,500 EUR of NVIDIA."},
+    ]
+    owner.post("/api/ai/ask", json={"question": "And SAP?", "history": history})
+    sent = fake.requests[0]["messages"]
+    text = json.dumps(sent)
+    assert "1,500" not in text and "How is my NVIDIA doing?" in text
+    assert [m["role"] for m in sent] == ["user", "assistant", "user"]
+
+
+def test_the_history_window_is_cut_after_the_roles_are_repaired(
+    owner: TestClient, fake: Fake
+) -> None:
+    accept(owner)
+    fake.replies = [reply("ok")]
+    history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(11)
+    ]
+    history[-1] = {"role": "assistant", "content": "m10"}
+    history = [{"role": "assistant", "content": "orphan"}, *history]
+    owner.post("/api/ai/ask", json={"question": "Next?", "history": history})
+    sent = fake.requests[0]["messages"]
+    assert sent[0]["role"] == "user" and len(sent) <= 11
