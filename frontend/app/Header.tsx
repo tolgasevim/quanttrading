@@ -32,6 +32,7 @@ export function Header({ user }: { user: User }) {
         <Link href="/tax">Tax</Link>
         <Link href="/costs">Costs</Link>
         <Link href="/prices">Prices</Link>
+        <Link href="/ai">AI</Link>
         <Link href="/notifications">Alerts{unread > 0 ? ` (${unread})` : ""}</Link>
         {user.role === "admin" && <Link href="/admin/invites">Invites</Link>}
         <Link href="/settings">Settings</Link>

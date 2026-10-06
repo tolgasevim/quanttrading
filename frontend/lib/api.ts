@@ -295,3 +295,47 @@ export type AlertSettings = {
   quiet_start: string | null;
   quiet_end: string | null;
 };
+
+export type AiBudget = {
+  month: string;
+  user_eur: string;
+  user_cap_eur: string;
+  total_eur: string | null;
+  total_cap_eur: string | null;
+};
+
+export type AiStatus = {
+  configured: boolean;
+  accepted: boolean;
+  anonymise_amounts: boolean;
+  disclaimer: string;
+  disclaimer_version: number;
+  label: string;
+  budget: AiBudget;
+};
+
+export type AiPick = {
+  id: string;
+  created_at: string;
+  question: string;
+  name: string;
+  isin: string | null;
+  ticker: string | null;
+  direction: "buy" | "sell" | "hold";
+  horizon_months: number;
+  rationale: string;
+  held: boolean;
+  price: string | null;
+  price_currency: string | null;
+  price_date: string | null;
+};
+
+export type AiAnswer = {
+  answer: string;
+  label: string;
+  model: string;
+  fallback_used: boolean;
+  refused: boolean;
+  picks: AiPick[];
+  data_points: string[];
+};

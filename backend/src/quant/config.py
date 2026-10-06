@@ -1,6 +1,7 @@
 """Runtime configuration, read from environment variables (see .env.example)."""
 
 import json
+from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated, Any
 
@@ -59,6 +60,22 @@ class Settings(BaseSettings):
     backfill_days: int = 400
 
     instruments_file: str = "seed/instruments.yaml"
+
+    # AI layer (FR-50..FR-57). Without a key the AI pages answer "not set up". The key is never
+    # logged or returned by the API. Prices are US dollars per million tokens (Opus 5.5 list).
+    anthropic_api_key: str | None = None
+    llm_model: str = "claude-opus-5-5"
+    llm_effort: str = "medium"
+    llm_max_tokens: int = 16000
+    llm_price_input: Decimal = Decimal("4")
+    llm_price_output: Decimal = Decimal("20")
+    llm_price_cache_read: Decimal = Decimal("0.20")
+    llm_price_cache_write: Decimal = Decimal("5")
+    # Server-side fallbacks let the API answer with another model when the first is overloaded
+    # or unavailable. The answer says which model replied (the usage ledger keeps it too).
+    llm_fallbacks: bool = True
+    llm_monthly_cap_eur: Decimal = Decimal("2000")  # all users together (D36, FR-56)
+    llm_user_monthly_cap_eur: Decimal = Decimal("500")  # one user, so one person cannot use it all
 
     @field_validator("price_providers", "isin_resolvers", mode="before")
     @classmethod

@@ -29,6 +29,9 @@ USER_TABLES = (
     "unit_costs",
     "notifications",
     "alert_settings",
+    "ai_consents",
+    "llm_usage",
+    "ai_picks",
 )
 
 

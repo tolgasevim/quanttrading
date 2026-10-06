@@ -350,3 +350,71 @@ class AlertSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class AiConsent(Base):
+    """A user's consent to the AI layer (FR-57) and the disclaimer they accepted (FR-4). One row
+    per user. `version` is the disclaimer version accepted: after a change to the text it no
+    longer equals the current one, and the user is asked again."""
+
+    __tablename__ = "ai_consents"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Send weights only: no quantities, values or costs reach the model (FR-57).
+    anonymise_amounts: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class LlmUsage(Base):
+    """One call to the language model: what it used and what it cost (FR-56). The ledger the
+    spend caps are checked against."""
+
+    __tablename__ = "llm_usage"
+    __table_args__ = (
+        Index("ix_llm_usage_user_created", "user_id", "created_at"),
+        Index("ix_llm_usage_created", "created_at"),  # the month's total across all users
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    purpose: Mapped[str] = mapped_column(String(30))  # ask
+    model: Mapped[str] = mapped_column(String(60))
+    input_tokens: Mapped[int] = mapped_column(Integer)
+    output_tokens: Mapped[int] = mapped_column(Integer)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[Decimal] = mapped_column(Numeric(14, 6))
+    cost_eur: Mapped[Decimal] = mapped_column(Numeric(14, 6))
+    stop_reason: Mapped[str | None] = mapped_column(String(30))
+    request_id: Mapped[str | None] = mapped_column(String(100))
+
+
+class AiPick(Base):
+    """The pick log (FR-52): every AI recommendation that names an instrument and a direction,
+    with the time, the price then, the horizon and the reason. Scored later against a benchmark."""
+
+    __tablename__ = "ai_picks"
+    __table_args__ = (Index("ix_ai_picks_user_created", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    usage_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("llm_usage.id", ondelete="SET NULL")
+    )
+    question: Mapped[str] = mapped_column(String(1000))  # what the user asked
+    name: Mapped[str] = mapped_column(String(200))
+    isin: Mapped[str | None] = mapped_column(String(20))
+    ticker: Mapped[str | None] = mapped_column(String(30))
+    direction: Mapped[str] = mapped_column(String(10))  # buy | sell | hold
+    horizon_months: Mapped[int] = mapped_column(Integer)
+    rationale: Mapped[str] = mapped_column(String(2000))
+    held: Mapped[bool] = mapped_column(Boolean, default=False)  # in the user's portfolio then
+    # The price when the pick was made, from the stored prices. None when the instrument has none.
+    price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    price_currency: Mapped[str | None] = mapped_column(String(3))
+    price_date: Mapped[date | None] = mapped_column(Date)

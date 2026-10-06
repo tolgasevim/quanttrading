@@ -166,33 +166,13 @@ def _finding(f: Finding) -> FindingOut:
     )
 
 
-def _value(mark: service.Mark) -> Decimal:
-    """What a mark says a position is worth: the price times the quantity it applies to."""
-    return mark.price * mark.quantity
-
-
-def _weights(holdings: service.Holdings) -> tuple[dict[str, Decimal], Decimal, int]:
-    """Each valued position's share of the total market value, in percent, with that total and
-    the number of positions in it. Positions without a market value are left out of both, and so
-    is anything not worth more than nothing, so the shares always add up to 100."""
-    values = {
-        p.isin: value
-        for p in holdings.positions
-        if (m := holdings.marks.get(p.isin)) and (value := _value(m)) >= 0
-    }
-    total = sum(values.values(), Decimal(0))
-    if total <= 0:
-        return {}, total, 0
-    return {isin: value / total * 100 for isin, value in values.items()}, total, len(values)
-
-
 def _position(p: Position, holdings: service.Holdings, weights: dict[str, Decimal]) -> PositionOut:
     cost = holdings.costs.get(p.isin)
     mark = holdings.marks.get(p.isin)
     value = pnl = pct = None
     if mark is not None:
         # Price, quantity and cost all belong to the statement date.
-        value = _value(mark)
+        value = service.mark_value(mark)
         known = mark.cost is not None and not mark.cost.flags & COST_MISSING
         if mark.cost is not None and known:
             pnl = value - mark.cost.total_cost
@@ -272,7 +252,7 @@ def _realised(holdings: service.Holdings) -> RealisedOut:
 
 def _out(holdings: service.Holdings) -> HoldingsOut:
     coins_priced = "coingecko" in get_settings().price_providers
-    weights, valued_total, valued_positions = _weights(holdings)
+    weights, valued_total, valued_positions = service.weights(holdings)
     by_class: dict[str, int] = {}
     for p in holdings.positions:
         key = p.asset_class or "UNKNOWN"

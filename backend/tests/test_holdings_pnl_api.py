@@ -275,9 +275,9 @@ def test_a_position_that_includes_units_the_history_never_bought_says_so(
 def test_only_values_of_zero_or_more_count_towards_the_weights() -> None:
     from datetime import date
 
-    from quant.api.holdings import _weights
     from quant.portfolio.positions import Position
     from quant.portfolio.service import Holdings, Mark
+    from quant.portfolio.service import weights as _weights
 
     def position(isin: str) -> Position:
         return Position(isin, isin, "STOCK", D("1"), "2024-01-01", "2025-01-01")
