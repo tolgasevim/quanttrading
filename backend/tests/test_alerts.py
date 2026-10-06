@@ -792,3 +792,15 @@ def test_a_failed_job_alert_step_makes_the_run_partial_when_other_work_succeeded
     assert result.errors == {"job alerts": "RuntimeError"}
     assert result.rows_written == 1  # the price move was stored
     assert result.status == JobStatus.PARTIAL  # not a clean run, and not a failed one
+
+
+def test_a_run_that_failed_on_every_item_is_one_alert_a_day_whichever_tickers_it_names(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=10)
+    for hours, tickers in ((2, ("US1", "US2")), (4, ("US7", "US9"))):
+        db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED,
+                      finished_at=admin.created_at + timedelta(hours=hours),
+                      details={"attempted": 2, "errors": {t: "no data" for t in tickers}}))  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 1

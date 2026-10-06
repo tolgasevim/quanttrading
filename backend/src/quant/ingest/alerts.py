@@ -288,11 +288,10 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
         # One alert per job, outcome and local day. A failed or stuck run adds its reason, so a
         # different failure the same day still arrives; a partial run's text changes with the
         # count and must not make a second alert.
-        digest = (
-            ""
-            if run.status in (JobStatus.PARTIAL, JobStatus.RUNNING)  # their text has times, counts
-            else hashlib.sha256(_normalise(reason).encode()).hexdigest()[:8]
-        )
+        # Only a crash's own message tells one failure from another. A list of failed items names
+        # tickers that vary from run to run, and a stuck or partial run's text has times and counts.
+        crash = str(details.get("error") or "") if run.status == JobStatus.FAILED else ""
+        digest = hashlib.sha256(_normalise(crash).encode()).hexdigest()[:8] if crash else ""
         day = happened.astimezone(tz).date().isoformat()
         events.append(
             (
