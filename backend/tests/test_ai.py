@@ -1010,3 +1010,26 @@ def test_flipping_hide_amounts_keeps_the_time_of_acceptance(
     accept(owner, anonymise=True)
     again = consent.get(db, admin.id)
     assert again is not None and again.accepted_at == at and again.anonymise_amounts is True
+
+
+def test_a_repeated_pick_is_not_counted_as_a_failure(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    same = [pick_call("t1"), pick_call("t2")]
+    fake.replies = [
+        reply("a", [pick_call("t0", isin="US0000000201")]),
+        reply("b", [pick_call("t1", isin="US0000000201")]),  # a repeat of the first
+        reply("c", [pick_call("t2", isin="US0000000201")]),
+        reply("d", same),
+    ]
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert len(body["picks"]) == 2 and body["notes"] == []
+
+
+def test_a_refusal_keeps_the_notes(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    cut = reply("Half", [pick_call()])
+    cut.stop_reason = "max_tokens"
+    fake.replies = [cut, reply("", refused=True)]
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert body["refused"] is True and len(body["picks"]) == 1
+    assert any("cut off" in n for n in body["notes"])

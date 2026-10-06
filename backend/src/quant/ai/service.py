@@ -217,9 +217,11 @@ def ask(
         models.add(reply.model)
         usage = budget.record(session, user_id, "ask", reply, settings)
         if reply.refused:
-            return _result(
+            declined = _result(
                 "The AI declined to answer this question.", saved, points, models, settings, True
             )
+            declined.notes.extend(notes)
+            return declined
         if reply.stop_reason == "max_tokens":
             notes.append("The answer was cut off at the length limit.")
         # A reply to the follow-up, or a short "Recorded." after the tool results, is not the
@@ -228,7 +230,6 @@ def ask(
         if not followed_up and (len(reply.text) >= SUBSTANTIAL or len(reply.text) > len(answer)):
             answer = reply.text
         if reply.tool_calls:
-            before = len(saved)
             results = _handle_tools(
                 session,
                 user_id,
@@ -240,7 +241,7 @@ def ask(
             )
             messages.append({"role": "assistant", "content": reply.raw_content})
             messages.append({"role": "user", "content": results})
-            failed = len(reply.tool_calls) - (len(saved) - before)
+            failed = sum(1 for r in results if r.get("is_error"))  # not repeats, which are fine
             continue
         failed = 0
         if not saved and not followed_up and RECOMMENDS.search(reply.text):

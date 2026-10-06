@@ -313,7 +313,7 @@ class Notification(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    kind: Mapped[str] = mapped_column(String(30))  # daily_move | job_failed
+    kind: Mapped[str] = mapped_column(String(30))  # daily_move | job_failed | ai_budget
     severity: Mapped[str] = mapped_column(String(10))  # info | warning
     title: Mapped[str] = mapped_column(String(200))
     body: Mapped[str] = mapped_column(String(1000))
