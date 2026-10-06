@@ -555,3 +555,17 @@ def test_the_resolver_limits_fit_the_columns() -> None:
 
     assert Instrument.__table__.c.sector.type.length == SECTOR_LIMIT  # type: ignore[attr-defined]
     assert Instrument.__table__.c.industry.type.length == INDUSTRY_LIMIT  # type: ignore[attr-defined]
+
+
+def test_a_source_saying_no_sector_settles_it_even_when_another_source_is_down(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    down = FakeResolver("openfigi", {}, fail=True)
+    yahoo = FakeResolver("yahoo", {A: with_sector("ALPH", None)})
+    result = fill_sectors(db, [down, yahoo], NOW, isins=held)
+    assert sector_of(db, A) == (None, None, NOW)  # not asked again every night
+    assert result.warnings == {}
+    yahoo.asked.clear()
+    fill_sectors(db, [down, yahoo], NOW + timedelta(days=2), isins=held)
+    assert yahoo.asked == []

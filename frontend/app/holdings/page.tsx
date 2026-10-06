@@ -418,8 +418,10 @@ export default function HoldingsPage() {
               <p className="muted">
                 Weight is the share of the {data.valued_positions} positions that have a value
                 (together {eur(data.valued_total)}); a position without a price is not in it, and
-                the weights add up to 100% of those. Sector and industry are the names Yahoo
-                Finance gives a share. Funds and coins have none.
+                the weights add up to about 100% of those (they are rounded). Each value is as of
+                the day shown under it, so the total mixes days when prices are not from the same
+                day. Sector and industry are the names Yahoo Finance gives a share. Funds and
+                coins have none.
               </p>
             </div>
           </>

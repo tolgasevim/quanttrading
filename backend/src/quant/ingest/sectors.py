@@ -58,6 +58,7 @@ def fill_sectors(
             continue
         result.attempted += 1
         found = None
+        no_sector = False  # a source that reports sectors answered: this one has none
         failures: list[str] = []
         for resolver in resolvers:
             try:
@@ -68,8 +69,10 @@ def fill_sectors(
             if listing is not None and listing.sector:
                 found = listing
                 break
-        if found is None and failures:
-            # A source could not be asked: it may know, so try again next run and say why.
+            no_sector = no_sector or (listing is not None and listing.sector_known)
+        if found is None and failures and not no_sector:
+            # A source could not be asked and none answered "no sector": it may know, so try again
+            # next run and say why.
             result.warnings[isin] = f"sector not looked up: {'; '.join(failures)}"
             continue
         current = session.scalar(
