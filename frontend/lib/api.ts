@@ -134,6 +134,9 @@ export type Position = {
   market_value: string | null;
   unrealised_pnl: string | null;
   unrealised_pct: string | null;
+  weight_pct: string | null;
+  sector: string | null;
+  industry: string | null;
 };
 
 export type Finding = {
@@ -199,6 +202,8 @@ export type UnattributedCash = {
 export type Holdings = {
   positions: Position[];
   by_class: Record<string, number>;
+  valued_total: string;
+  valued_positions: number;
   verified: number;
   reconciliations: Reconciliation[];
   realised: Realised;

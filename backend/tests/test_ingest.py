@@ -163,3 +163,19 @@ def test_an_empty_resolver_list_is_a_clear_failed_run(
     assert run.status == JobStatus.FAILED and "QT_ISIN_RESOLVERS is empty" in str(
         run.details["error"]
     )
+
+
+def test_a_crash_in_the_sector_step_leaves_the_mapping_run_successful(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant import worker
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("yahoo sent junk")
+
+    monkeypatch.setattr(worker, "fill_sectors", boom)
+    worker.run_mapping()
+    run = db.query(JobRun).filter_by(job=worker.MAP_JOB).one()
+    assert run.status == JobStatus.SUCCESS  # the tickers were saved
+    warnings = run.details["warnings"]
+    assert isinstance(warnings, dict) and "yahoo sent junk" in warnings["sectors"]

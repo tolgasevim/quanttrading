@@ -144,6 +144,11 @@ def map_isins(
         instrument.mapped_at = now
         if listing is not None:
             instrument.symbols = {listing.provider: listing.symbol}
+            if listing.sector_known and held.asset_class == "stock":
+                # The answer that found the ticker also said which sector the share is in.
+                if listing.sector:  # a lookup that gives none never wipes one that was found
+                    instrument.sector, instrument.industry = listing.sector, listing.industry
+                instrument.sector_checked_at = now
             instrument.mapping_source = listing.source
             instrument.active = True
         else:

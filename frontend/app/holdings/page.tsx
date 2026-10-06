@@ -337,10 +337,12 @@ export default function HoldingsPage() {
                   <tr>
                     <th>Instrument</th>
                     <th>Type</th>
+                    <th>Sector</th>
                     <th className="num">Quantity</th>
                     <th className="num">Avg cost</th>
                     <th className="num">Cost</th>
                     <th className="num">Value</th>
+                    <th className="num">Weight</th>
                     <th className="num">Unrealised</th>
                     <th>Status</th>
                   </tr>
@@ -358,6 +360,10 @@ export default function HoldingsPage() {
                         <div className="mono muted">{p.isin}</div>
                       </td>
                       <td>{CLASS_LABELS[p.asset_class ?? ""] ?? p.asset_class ?? "—"}</td>
+                      <td>
+                        {p.sector ?? "—"}
+                        {p.industry && <div className="muted">{p.industry}</div>}
+                      </td>
                       <td className="num">{qty(p.quantity)}</td>
                       <td className="num">{partial ? "—" : eur(p.average_cost)}</td>
                       <td className="num">
@@ -374,6 +380,9 @@ export default function HoldingsPage() {
                               : ""}
                           </div>
                         )}
+                      </td>
+                      <td className="num">
+                        {p.weight_pct !== null ? `${Number(p.weight_pct).toLocaleString("en-GB", { minimumFractionDigits: 2 })}%` : "—"}
                       </td>
                       <td className={`num ${tone(p.unrealised_pnl)}`}>
                         {eur(p.unrealised_pnl)}
@@ -406,6 +415,16 @@ export default function HoldingsPage() {
                 price is known: a market price (see <a href="/prices">Prices</a>) or a broker
                 statement, whichever is newer.
               </p>
+              {data.valued_positions > 0 && (
+              <p className="muted">
+                Weight is the share of the {data.valued_positions} positions that have a value
+                (together {eur(data.valued_total)}); a position without a price is not in it, and
+                the weights add up to about 100% of those (they are rounded). Each value is as of
+                the day shown under it, so the total mixes days when prices are not from the same
+                day. Sector and industry are the names Yahoo Finance gives a share. Funds and
+                coins have none.
+              </p>
+              )}
             </div>
           </>
         )}
