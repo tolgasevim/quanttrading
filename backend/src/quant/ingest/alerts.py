@@ -120,16 +120,16 @@ def _user_moves(
         move = daily_move(bars.get(instrument.id, []), today)
         if move is None or not breaches(move, limit):
             continue
-        if position.asset_class == "STOCK" and looks_like_split(move):
-            log.info("no alert for %s on %s: the move looks like a split", position.isin, move.day)
-            continue
+        split = position.asset_class == "STOCK" and looks_like_split(move)
         name = position.name or instrument.name or position.isin
-        title, body = move_text(name, position.asset_class or "", move, limit, instrument.currency)
+        title, body = move_text(
+            name, position.asset_class or "", move, limit, instrument.currency, split
+        )
         rows.append(
             {
                 "user_id": user.id,
                 "kind": "daily_move",
-                "severity": "warning" if abs(move.pct) >= 2 * limit else "info",
+                "severity": "warning" if abs(move.pct) >= 2 * limit and not split else "info",
                 "title": title[:200],
                 "body": body[:1000],
                 "isin": position.isin,
@@ -162,6 +162,7 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
         if run.status == JobStatus.PARTIAL and not reason:
             continue  # nothing went wrong that a person could act on
         failed = run.status == JobStatus.FAILED
+        day = (run.finished_at or now).date().isoformat()  # one alert per job, status and day
         rows.append(
             {
                 "user_id": admin.id,
@@ -170,7 +171,7 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
                 "title": f"Job {run.job} {'failed' if failed else 'finished with errors'}",
                 "body": (reason or "The run failed with no message.")[:900],
                 "isin": None,
-                "dedupe_key": f"job_failed:{run.id}",
+                "dedupe_key": f"job_failed:{run.job}:{run.status.value}:{day}",
             }
         )
     return rows
@@ -199,8 +200,15 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
         if i.isin
     }
     bars = _newest_bars(session, [i.id for i in instruments.values()])
+    wanted = {
+        u.id
+        for u in users
+        if u.id in positions or u.role == Role.ADMIN or str(u.id) in result.errors
+    }
+    result.attempted = len(wanted)  # the users that have something to check
     for user in users:
-        result.attempted += 1
+        if user.id not in wanted:
+            continue
         mine = settings.get(user.id, DEFAULTS)
         try:
             rows: list[dict[str, object]] = []

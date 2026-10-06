@@ -76,7 +76,8 @@ class SettingsIn(BaseModel):
             parsed = time.fromisoformat(value)
         except ValueError as exc:
             raise ValueError("a time is HH:MM") from exc
-        if len(value) != 5 or parsed.second or parsed.microsecond:
+        # Some browsers send "22:00:00"; seconds are accepted when zero and are not kept.
+        if len(value) not in (5, 8) or parsed.second or parsed.microsecond:
             raise ValueError("a time is HH:MM")
         return parsed
 
@@ -120,13 +121,14 @@ def list_notifications(
     user: CurrentUser,
     db: UserDb,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
     unread_only: bool = False,
 ) -> NotificationsOut:
     query = select(Notification).where(Notification.user_id == user.id)
     if unread_only:
         query = query.where(Notification.read_at.is_(None))
     rows = db.scalars(
-        query.order_by(Notification.created_at.desc(), Notification.id).limit(limit)
+        query.order_by(Notification.created_at.desc(), Notification.id).limit(limit).offset(offset)
     ).all()
     return NotificationsOut(items=[_out(n) for n in rows], unread=_unread(db, user.id))
 

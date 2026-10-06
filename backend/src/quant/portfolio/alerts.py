@@ -43,9 +43,9 @@ def daily_move(
 
 
 # Share splits and reverse splits change the price by a simple ratio. For a share, a move that is
-# one of these, to within SPLIT_TOLERANCE, is far more likely a split the data has not caught up
-# with than a crash or a jump, so it raises no alert (the job logs it). Funds and coins are not
-# checked: they have no splits, and a fall of half is exactly what an alert is for.
+# one of these, to within SPLIT_TOLERANCE, may be a split the data has not caught up with rather
+# than a crash or a jump. The alert is still raised, with a note, as an info and never a warning.
+# Funds and coins are not checked: they have no splits.
 SPLIT_RATIOS = (2, 3, 4, 5, 8, 10, 20, 50)
 SPLIT_TOLERANCE = Decimal("0.02")
 
@@ -83,7 +83,12 @@ def in_quiet_hours(start: time | None, end: time | None, now: time) -> bool:
 
 
 def move_text(
-    name: str, asset_class: str, move: Move, limit: Decimal, currency: str | None
+    name: str,
+    asset_class: str,
+    move: Move,
+    limit: Decimal,
+    currency: str | None,
+    possible_split: bool = False,
 ) -> tuple[str, str]:
     """The title and body of a daily-move notification."""
     sign = "+" if move.pct > 0 else "-"
@@ -95,6 +100,8 @@ def move_text(
         f"{sign}{pct}% from {plain(move.previous)}{money} on {move.previous_day.isoformat()}. "
         f"Your limit for a {MOVE_CLASSES.get(asset_class, 'holding')} is {plain(limit)}%."
     )
+    if possible_split:
+        body += " This is the size of a share split. Check that before you act on it."
     return title, body
 
 

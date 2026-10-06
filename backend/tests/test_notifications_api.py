@@ -164,6 +164,7 @@ def test_saving_twice_updates_the_same_row(owner: TestClient, db: Session, admin
         {"quiet_start": "7:00", "quiet_end": "08:00"},
         {"quiet_start": "24:00", "quiet_end": "08:00"},
         {"quiet_start": "22:00:30", "quiet_end": "08:00"},
+        {"quiet_start": "22:00:00:00", "quiet_end": "08:00"},
         {"quiet_start": "late", "quiet_end": "08:00"},
     ],
 )
@@ -206,3 +207,23 @@ def test_a_new_users_settings_equal_the_defaults_the_job_uses(owner: TestClient)
         str(DEFAULTS.move_fund_pct),
         str(DEFAULTS.move_crypto_pct),
     )
+
+
+def test_a_browser_that_sends_seconds_is_understood(owner: TestClient) -> None:
+    body = owner.put(
+        "/api/alerts/settings", json={**GOOD, "quiet_start": "22:00:00", "quiet_end": "07:00:00"}
+    ).json()
+    assert (body["quiet_start"], body["quiet_end"]) == ("22:00", "07:00")
+
+
+def test_older_alerts_can_be_reached_with_an_offset(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    for n in range(1, 8):
+        add(db, admin, n)
+    first = owner.get("/api/notifications?limit=3").json()["items"]
+    second = owner.get("/api/notifications?limit=3&offset=3").json()["items"]
+    third = owner.get("/api/notifications?limit=3&offset=6").json()["items"]
+    titles = [i["title"] for i in first + second + third]
+    assert titles == [f"Title {n}" for n in range(7, 0, -1)]  # newest first, no gaps or repeats
+    assert owner.get("/api/notifications?offset=-1").status_code == 422

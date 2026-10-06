@@ -8,6 +8,8 @@ import { useUser } from "../useUser";
 // Tells the header to read the unread count again.
 const changed = () => window.dispatchEvent(new Event("qt-notifications"));
 
+const PAGE = 100;
+
 const KIND_TEXT: Record<string, string> = {
   daily_move: "Price move",
   job_failed: "Data job failed",
@@ -120,19 +122,44 @@ function SettingsCard() {
 export default function NotificationsPage() {
   const user = useUser();
   const [data, setData] = useState<Notifications | null>(null);
+  const [more, setMore] = useState(false); // the last page was full, so there may be older alerts
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!user) return;
-    api<Notifications>("/api/notifications?limit=100")
-      .then(setData)
+    api<Notifications>(`/api/notifications?limit=${PAGE}`)
+      .then((body) => {
+        setData(body);
+        setMore(body.items.length === PAGE);
+      })
       .catch((err) => setError(err instanceof ApiError ? err.detail : "Could not load."));
   }, [user]);
   if (!user) return null;
 
+  const showOlder = async () => {
+    if (!data) return;
+    try {
+      const older = await api<Notifications>(
+        `/api/notifications?limit=${PAGE}&offset=${data.items.length}`,
+      );
+      setData({ ...older, items: [...data.items, ...older.items] });
+      setMore(older.items.length === PAGE);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.detail : "Could not load.");
+    }
+  };
+
   const mutate = async (path: string) => {
     try {
-      setData(await post<Notifications>(path));
+      // Keep the alerts already on the page: the answer carries only the newest ones.
+      const body = await post<Notifications>(path);
+      const read = new Set(body.items.filter((n) => n.read).map((n) => n.id));
+      setData((old) => ({
+        unread: body.unread,
+        items: (old?.items ?? body.items).map((n) =>
+          path.endsWith("read-all") || read.has(n.id) ? { ...n, read: true } : n,
+        ),
+      }));
       changed();
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "Could not save.");
@@ -183,6 +210,13 @@ export default function NotificationsPage() {
                 </div>
               </div>
             ))}
+            {more && (
+              <p>
+                <button className="link" onClick={showOlder}>
+                  Show older alerts
+                </button>
+              </p>
+            )}
           </div>
         )}
         <SettingsCard />

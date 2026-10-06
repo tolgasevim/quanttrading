@@ -104,11 +104,14 @@ def run_prices() -> None:
 
 def run_evening() -> None:
     """The evening run: prices, then the alerts that need them. Chained, so a slow or late price
-    run can never leave the alerts to work on yesterday's bars."""
+    run can never leave the alerts to work on yesterday's bars. A failed price run is recorded
+    in job_runs (and logged here if it fails before it can be); the alerts still run, so the
+    admins hear about it."""
     try:
         run_prices()
-    finally:
-        run_alerts()
+    except Exception:  # noqa: BLE001 - the alerts must still run
+        log.exception("the price run failed")
+    run_alerts()
 
 
 def run_alerts() -> None:
@@ -160,18 +163,27 @@ def main() -> None:
 
     with get_sessionmaker()() as session:
         now = datetime.now(UTC)
-        for job, fn in (
-            (FX_JOB, run_fx),
-            (MAP_JOB, run_mapping),
-            (PRICES_JOB, run_prices),
-            (ALERT_JOB, run_alerts),
-        ):
+        for job, fn in ((FX_JOB, run_fx), (MAP_JOB, run_mapping)):
             if needs_catch_up(session, job, now):
                 log.info("catching up on %s", job)
                 try:
                     fn()
                 except Exception:  # noqa: BLE001 - one broken job must not stop the scheduler
                     log.exception("catch-up of %s failed", job)
+        # Prices and alerts go together, as in the evening run.
+        late = (
+            run_evening
+            if needs_catch_up(session, PRICES_JOB, now)
+            else run_alerts
+            if needs_catch_up(session, ALERT_JOB, now)
+            else None
+        )
+        if late is not None:
+            log.info("catching up on %s", late.__name__)
+            try:
+                late()
+            except Exception:  # noqa: BLE001 - the scheduler must still start
+                log.exception("catch-up failed")
 
     scheduler = BlockingScheduler(timezone=tz)
     common = {"misfire_grace_time": 3600, "coalesce": True, "max_instances": 1}

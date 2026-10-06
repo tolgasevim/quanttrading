@@ -293,13 +293,16 @@ def test_one_users_failure_does_not_stop_the_others(
     assert len(alerts(db)) == 1  # the owner still got theirs
 
 
-def test_a_move_that_is_a_split_ratio_is_not_an_alert_for_a_share(
+def test_a_move_that_is_a_split_ratio_is_an_info_alert_with_a_note_for_a_share(
     owner: TestClient, db: Session
 ) -> None:
-    price(db, A, ("50", "100"))  # a 2-for-1 split not yet in the earlier close
-    price(db, SPIN, ("40", "100"))  # a real fall of 60%: not a simple ratio
+    price(db, A, ("50", "100"))  # -50%: the size of a 2-for-1 split, but also of a crash
+    price(db, SPIN, ("40", "100"))  # a fall of 60%: not a simple ratio
     run(db)
-    assert [n.isin for n in alerts(db)] == [SPIN]
+    rows = {n.isin: n for n in alerts(db)}
+    assert set(rows) == {A, SPIN}
+    assert rows[A].severity == "info" and "size of a share split" in rows[A].body
+    assert rows[SPIN].severity == "warning" and "split" not in rows[SPIN].body
 
 
 def test_a_fall_of_half_is_an_alert_for_a_fund_or_a_coin(owner: TestClient, db: Session) -> None:
@@ -379,7 +382,7 @@ def test_an_admin_whose_positions_cannot_be_read_still_gets_the_failed_job_alert
 
 
 def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from quant import worker
 
@@ -391,10 +394,36 @@ def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
 
     monkeypatch.setattr(worker, "run_prices", prices_fail)
     monkeypatch.setattr(worker, "run_alerts", lambda: order.append("alerts"))
-    with pytest.raises(RuntimeError):
-        worker.run_evening()
+    worker.run_evening()  # the failure is logged, and the alerts still run
     assert order == ["prices", "alerts"]
+    assert "the price run failed" in caplog.text
     order.clear()
     monkeypatch.setattr(worker, "run_prices", lambda: order.append("prices"))
     worker.run_evening()
     assert order == ["prices", "alerts"]
+
+
+def test_a_job_that_is_partial_every_night_is_one_alert_a_day(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=30)
+    for hours in (3, 5):  # two runs on the same day
+        db.add(JobRun(job="ingest_prices", status=JobStatus.PARTIAL,
+                      finished_at=admin.created_at + timedelta(hours=hours),
+                      details={"errors": {"US1": "no data"}}))  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 1
+    assert run(db, now=now) == 0
+
+
+def test_users_with_nothing_to_check_are_not_counted_as_attempted(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    for name in ("a", "b"):
+        user = make_user(db, f"{name}@example.com")
+        rls.bypass(db)
+        db.add(AlertSettings(user_id=user.id, daily_moves_enabled=False))
+        db.commit()
+    rls.bypass(db)
+    result = create_alerts(db, TODAY, NOW)
+    assert result.attempted == 1  # the admin: the two members switched alerts off
