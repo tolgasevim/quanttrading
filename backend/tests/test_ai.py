@@ -246,7 +246,7 @@ def test_a_recommendation_without_a_pick_gets_one_follow_up(
     ]
     body = owner.post("/api/ai/ask", json={"question": "Sell anything?"}).json()
     assert [p["direction"] for p in body["picks"]] == ["sell"]
-    assert body["answer"] == "Recorded." or "sell" in body["answer"].lower()
+    assert body["answer"] == "You should sell Alpha Corp."  # not the follow-up's "Recorded."
     follow_up = fake.requests[1]["messages"][-1]["content"]
     assert "record_pick" in follow_up
 
@@ -258,6 +258,7 @@ def test_the_follow_up_happens_once_and_none_is_accepted(
     fake.replies = [reply("Hold your shares."), reply("none")]
     body = owner.post("/api/ai/ask", json={"question": "Anything?"}).json()
     assert body["picks"] == [] and len(fake.requests) == 2
+    assert body["answer"] == "Hold your shares."  # not the follow-up's "none"
 
 
 def test_an_answer_with_no_advice_is_one_call(owner: TestClient, fake: Fake) -> None:
@@ -328,6 +329,8 @@ def test_question_length_is_checked(owner: TestClient, fake: Fake) -> None:
     accept(owner)
     assert owner.post("/api/ai/ask", json={"question": "x" * 1001}).status_code == 422
     assert owner.post("/api/ai/ask", json={"question": "hi"}).status_code == 422
+    assert owner.post("/api/ai/ask", json={"question": "      "}).status_code == 422
+    assert fake.requests == []
 
 
 def test_picks_are_private_to_their_owner(
@@ -677,3 +680,110 @@ def test_the_new_tables_are_row_level_secured(db: Session, admin: User) -> None:
     db.info.pop(rls.BYPASS_KEY, None)
     assert db.scalars(select(AiPick)).all() == []
     assert db.scalars(select(LlmUsage)).all() == []
+
+
+def test_a_dated_name_of_the_configured_model_is_not_a_fallback(
+    owner: TestClient, fake: Fake
+) -> None:
+    accept(owner)
+    fake.replies = [reply("Fine.", model=f"{MODEL}-20261001")]
+    assert (
+        owner.post("/api/ai/ask", json={"question": "Hello there"}).json()["fallback_used"] is False
+    )
+
+
+def test_a_pick_the_model_cannot_fix_in_time_is_reported(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    good = [reply("again", [pick_call(f"t{i}")]) for i in range(3)]
+    fake.replies = [*good, reply("last", [pick_call("t9", horizon_months=0)])]
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert len(body["picks"]) == 3
+    assert body["notes"] and "could not be recorded" in body["notes"][0]
+
+
+def test_a_pick_fixed_on_the_next_turn_has_no_note(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    fake.replies = [
+        reply("", [pick_call(horizon_months=0)]),
+        reply("", [pick_call("t2")]),
+        reply("Done."),
+    ]
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert len(body["picks"]) == 1 and body["notes"] == []
+
+
+def test_profit_is_left_out_when_the_cost_is_unknown(
+    owner: TestClient, fake: Fake, db: Session, admin: User
+) -> None:
+    # A free receipt has no cost, so the position must not carry a profit figure.
+    rls.bypass(db)
+    db.add(
+        Transaction(
+            user_id=admin.id, broker="tr", external_id="gift",
+            executed_at=datetime(2025, 1, 2, tzinfo=UTC), date=date(2025, 1, 2), kind="delivery",
+            category="DELIVERY", type="FREE_RECEIPT", asset_class="CRYPTO", isin="XF000BTC0017",
+            name="Bitcoin", shares=D("0.1"), currency="EUR",
+        )
+    )  # fmt: skip
+    db.commit()
+    accept(owner)
+    fake.replies = [reply("Fine.")]
+    owner.post("/api/ai/ask", json={"question": "How am I doing?"})
+    assert "unrealised_pct" not in fake.requests[0]["messages"][0]["content"]
+
+
+def test_a_pick_finds_its_price_by_ticker_when_the_isin_is_unknown(db: Session) -> None:
+    instrument = Instrument(
+        code="ALPHA", isin=None, name="Alpha", asset_class="stock", currency="EUR"
+    )
+    db.add(instrument)
+    db.flush()
+    db.add(
+        PriceEOD(
+            instrument_id=instrument.id,
+            date=date(2026, 10, 1),
+            close=D("5"),
+            currency="EUR",
+            source="yahoo",
+        )
+    )
+    db.commit()  # fmt: skip
+    assert picks.latest_price(db, "XX0000000000", "alpha") == (D("5"), "EUR", date(2026, 10, 1))
+    assert picks.latest_price(db, "XX0000000000", None) is None
+
+
+def test_a_threshold_is_checked_only_when_a_call_crosses_it(
+    db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "llm_monthly_cap_eur", D("100"))
+    put_usage(db, admin, "60")
+    assert budget.alert_thresholds(added=D("1")) == 0  # 59 -> 60: nothing crossed
+    assert budget.alert_thresholds(added=D("20")) == 1  # 40 -> 60 crosses 50
+
+
+def test_the_app_cannot_change_the_ledger_or_the_pick_log(db: Session, admin: User) -> None:
+    from sqlalchemy import text
+    from sqlalchemy.exc import ProgrammingError
+
+    put_usage(db, admin, "1")
+    db.add(
+        AiPick(
+            user_id=admin.id,
+            question="q",
+            name="n",
+            direction="buy",
+            horizon_months=1,
+            rationale="r",
+            held=False,
+        )
+    )
+    db.commit()  # fmt: skip
+    for sql in (
+        "DELETE FROM llm_usage",
+        "UPDATE llm_usage SET cost_eur = 0",
+        "DELETE FROM ai_picks",
+        "UPDATE ai_picks SET name = 'x'",
+    ):
+        with pytest.raises(ProgrammingError):
+            db.execute(text(sql))
+        db.rollback()

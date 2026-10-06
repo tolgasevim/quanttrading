@@ -21,6 +21,7 @@ from quant.ai.client import LlmClient, LlmReply, default_client
 from quant.config import get_settings
 from quant.models import AiPick
 from quant.portfolio import service
+from quant.portfolio.lots import COST_MISSING
 
 MAX_TURNS = 3
 MAX_POSITIONS = 60
@@ -79,7 +80,13 @@ def build_context(
         if not anonymise:
             cost = mark.cost if mark else None
             row["value_eur"] = _money(value)
-            if value is not None and cost is not None and cost.total_cost:
+            # Like the holdings table: no profit when the cost is unknown or the history is short.
+            if (
+                value is not None
+                and cost is not None
+                and not cost.flags & COST_MISSING
+                and cost.total_cost
+            ):
                 row["unrealised_pct"] = _money((value - cost.total_cost) / cost.total_cost * 100)
         rows.append((value or Decimal(0), row))
     rows.sort(key=lambda r: r[0], reverse=True)
@@ -156,8 +163,11 @@ def ask(
     models: set[str] = set()
     answer = ""
     followed_up = False
+    failed = 0  # picks the model got wrong on the last turn, with no turn left to fix them
 
-    for _ in range(MAX_TURNS + 1):
+    for _turn in range(MAX_TURNS + 1):
+        # No transaction stays open while the model thinks: the connection goes back to the pool.
+        session.commit()
         reply = client.send(system=SYSTEM, messages=messages, tools=[picks.TOOL])
         models.add(reply.model)
         usage = budget.record(session, user_id, "ask", reply, settings)
@@ -165,24 +175,24 @@ def ask(
             return _result(
                 "The AI declined to answer this question.", saved, points, models, settings, True
             )
-        answer = reply.text or answer
+        if not followed_up:  # a reply to the follow-up is bookkeeping, not the answer
+            answer = reply.text or answer
         if reply.tool_calls:
-            messages.append({"role": "assistant", "content": reply.raw_content})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": _handle_tools(
-                        session,
-                        user_id,
-                        reply,
-                        question=question,
-                        held=held,
-                        usage_id=usage.id,
-                        saved=saved,
-                    ),
-                }
+            before = len(saved)
+            results = _handle_tools(
+                session,
+                user_id,
+                reply,
+                question=question,
+                held=held,
+                usage_id=usage.id,
+                saved=saved,
             )
+            messages.append({"role": "assistant", "content": reply.raw_content})
+            messages.append({"role": "user", "content": results})
+            failed = len(reply.tool_calls) - (len(saved) - before)
             continue
+        failed = 0
         if not saved and not followed_up and RECOMMENDS.search(reply.text):
             followed_up = True
             messages.append({"role": "assistant", "content": reply.raw_content})
@@ -198,7 +208,13 @@ def ask(
             )
             continue
         break
-    return _result(answer, saved, points, models, settings, False)
+    result = _result(answer, saved, points, models, settings, False)
+    if failed:
+        result.notes.append(
+            f"{failed} pick(s) in this answer could not be recorded in the pick log. "
+            "Ask again, or note them yourself."
+        )
+    return result
 
 
 def _result(
@@ -209,7 +225,10 @@ def _result(
     settings: Any,
     refused: bool,
 ) -> AskResult:
-    fallback = bool(models - {settings.llm_model})
+    # The API may report a dated name for the configured model, e.g. "claude-opus-5-5-2026...".
+    fallback = any(
+        m != settings.llm_model and not m.startswith(settings.llm_model + "-") for m in models
+    )
     return AskResult(
         answer=answer,
         label=consent.LABEL,

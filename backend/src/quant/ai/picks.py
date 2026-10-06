@@ -56,14 +56,13 @@ def latest_price(
     session: Session, isin: str | None, ticker: str | None
 ) -> tuple[Decimal, str, date] | None:
     """The newest stored close for the security, from the shared market data."""
-    query = select(Instrument)
+    instrument = None
     if isin:
-        query = query.where(Instrument.isin == isin)
-    elif ticker:
-        query = query.where(Instrument.code == ticker.upper())
-    else:
-        return None
-    instrument = session.scalars(query.limit(1)).first()
+        instrument = session.scalars(select(Instrument).where(Instrument.isin == isin)).first()
+    if instrument is None and ticker:  # also when the model gave an ISIN the app does not know
+        instrument = session.scalars(
+            select(Instrument).where(Instrument.code == ticker.upper())
+        ).first()
     if instrument is None:
         return None
     row = session.scalar(

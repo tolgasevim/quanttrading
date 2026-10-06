@@ -338,4 +338,5 @@ export type AiAnswer = {
   refused: boolean;
   picks: AiPick[];
   data_points: string[];
+  notes: string[];
 };

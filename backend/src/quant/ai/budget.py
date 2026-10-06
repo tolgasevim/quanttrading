@@ -120,21 +120,34 @@ def record(
     session.add(row)
     session.commit()
     try:
-        alert_thresholds(settings)
+        alert_thresholds(settings, added=row.cost_eur)
     except Exception:  # an alert problem must not fail the user's request
         log.exception("could not store the AI budget alerts")
     return row
 
 
-def alert_thresholds(settings: Settings | None = None, now: datetime | None = None) -> int:
-    """Tell every admin once a month at each threshold of the total cap. Returns rows stored."""
+def alert_thresholds(
+    settings: Settings | None = None,
+    now: datetime | None = None,
+    added: Decimal | None = None,
+) -> int:
+    """Tell every admin once a month at each threshold of the total cap. Returns rows stored.
+
+    With `added` (what the latest call cost), only a threshold that call crossed is considered, so
+    a month already past the cap does no more work per call. Without it, every threshold the spend
+    has reached is (the dedupe key still stores each alert once)."""
     settings = settings or get_settings()
     cap = settings.llm_monthly_cap_eur
     if cap <= 0:
         return 0
     spent = total_spend(now)
     _, month = month_bounds(now)
-    crossed = [pct for pct in THRESHOLDS if spent >= cap * pct / 100]
+    before = spent - added if added is not None else None
+    crossed = [
+        pct
+        for pct in THRESHOLDS
+        if spent >= cap * pct / 100 and (before is None or before < cap * pct / 100)
+    ]
     if not crossed:
         return 0
     stored = 0

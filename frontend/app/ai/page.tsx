@@ -161,6 +161,11 @@ export default function AiPage() {
               <p className="muted">A backup model answered this ({answer.model}).</p>
             )}
             <p className="muted">Data used: {answer.data_points.join("; ")}.</p>
+            {answer.notes.map((n) => (
+              <p key={n} className="notice status-failed">
+                {n}
+              </p>
+            ))}
             {answer.picks.length > 0 && (
               <p className="muted">
                 {answer.picks.length} pick{answer.picks.length === 1 ? "" : "s"} added to the log

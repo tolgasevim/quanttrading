@@ -73,8 +73,16 @@ def upgrade() -> None:
     )
     op.create_index("ix_ai_picks_user_created", "ai_picks", ["user_id", "created_at"])
     # Same access model as the other user-owned tables (see migration 0002).
+    # The spend ledger and the pick log are append-only for the app: no UPDATE, no DELETE, so a
+    # bug cannot reset a cap or rewrite the track record. Deleting a user still removes the rows
+    # (the foreign keys cascade as the owner).
+    # Migration 0002 sets default privileges that give the app all four on every new table, so
+    # the two append-only tables take the extra ones back.
     for table in ("ai_consents", "llm_usage", "ai_picks"):
         op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO {APP_ROLE}")
+    for table in ("llm_usage", "ai_picks"):
+        op.execute(f"REVOKE UPDATE, DELETE ON {table} FROM {APP_ROLE}")
+    for table in ("ai_consents", "llm_usage", "ai_picks"):
         for statement in policy_sql(table):
             op.execute(statement)
 

@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from quant.ai import budget, consent
@@ -60,7 +60,15 @@ class ConsentIn(BaseModel):
 
 
 class AskIn(BaseModel):
-    question: str = Field(min_length=3, max_length=ai_service.MAX_QUESTION_CHARS)
+    question: str = Field(max_length=ai_service.MAX_QUESTION_CHARS)
+
+    @field_validator("question")
+    @classmethod
+    def _not_empty(cls, value: str) -> str:
+        value = " ".join(value.split())  # the same normalising the service does
+        if len(value) < 3:
+            raise ValueError("the question is too short")
+        return value
 
 
 class PickOut(BaseModel):
@@ -87,6 +95,7 @@ class AskOut(BaseModel):
     refused: bool
     picks: list[PickOut]
     data_points: list[str]
+    notes: list[str]
 
 
 def _pick(p: AiPick) -> PickOut:
@@ -162,6 +171,7 @@ def post_ask(body: AskIn, db: UserDb, user: CurrentUser, client: Llm) -> AskOut:
         refused=result.refused,
         picks=[_pick(p) for p in result.picks],
         data_points=result.data_points,
+        notes=result.notes,
     )
 
 
