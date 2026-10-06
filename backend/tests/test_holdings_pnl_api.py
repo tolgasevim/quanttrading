@@ -270,3 +270,26 @@ def test_a_position_that_includes_units_the_history_never_bought_says_so(
     assert "incomplete_history" in new_co["cost_flags"]
     assert "cost_unknown" not in new_co["cost_flags"]  # the Costs page cannot fix this one
     assert body["review"]["cost_unknown"] == 1  # only the spin-off, not the history gap
+
+
+def test_only_positive_values_count_towards_the_weights() -> None:
+    from datetime import date
+
+    from quant.api.holdings import _weights
+    from quant.portfolio.positions import Position
+    from quant.portfolio.service import Holdings, Mark
+
+    def position(isin: str) -> Position:
+        return Position(isin, isin, "STOCK", D("1"), "2024-01-01", "2025-01-01")
+
+    def mark(price: str) -> Mark:
+        return Mark(D(price), date(2026, 10, 2), "x", D("1"), None)
+
+    holdings = Holdings(
+        positions=[position("A"), position("B"), position("C"), position("D")],
+        marks={"A": mark("300"), "B": mark("100"), "C": mark("-50"), "D": mark("0")},
+    )
+    weights, total, count = _weights(holdings)
+    assert (total, count) == (D(400), 2)
+    assert weights == {"A": D(75), "B": D(25)}  # a negative or zero value is not in the total
+    assert _weights(Holdings(positions=[position("C")], marks={"C": mark("-5")})) == ({}, D(0), 0)

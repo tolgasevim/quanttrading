@@ -64,6 +64,11 @@ class YahooSearchResolver:
         return parse_yahoo_search(body)
 
 
+# The widths of `instruments.sector` and `instruments.industry` (a test keeps them equal).
+SECTOR_LIMIT = 60
+INDUSTRY_LIMIT = 100
+
+
 def _label(value: object, limit: int) -> str | None:
     """A sector or industry name, or None when the source gives none or something else."""
     if not isinstance(value, str):
@@ -88,8 +93,8 @@ def parse_yahoo_search(body: str) -> Listing | None:
                 name=quote.get("longname") or quote.get("shortname"),
                 exchange=quote.get("exchange"),
                 source="yahoo",
-                sector=_label(quote.get("sector"), 60),
-                industry=_label(quote.get("industry"), 100),
+                sector=_label(quote.get("sector"), SECTOR_LIMIT),
+                industry=_label(quote.get("industry"), INDUSTRY_LIMIT),
                 sector_known=True,
             )
     return None

@@ -9,7 +9,7 @@ again until `retry_days` have passed; a source that could not be reached is aske
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
@@ -45,7 +45,8 @@ def fill_sectors(
             Instrument.isin.in_(shares),
             Instrument.active.is_(True),
             Instrument.sector.is_(None),
-            Instrument.mapping_source != NO_TICKER,
+            # Seeded instruments have no mapping source; "!=" alone would leave them out.
+            or_(Instrument.mapping_source.is_(None), Instrument.mapping_source != NO_TICKER),
         )
         .order_by(Instrument.code)
     ).all()
@@ -83,5 +84,6 @@ def fill_sectors(
             current.sector, current.industry = found.sector, found.industry
         session.add(current)
         session.commit()
-        result.rows_written += 1
+        if found is not None:
+            result.rows_written += 1  # a share checked and found to have none writes no sector
     return result

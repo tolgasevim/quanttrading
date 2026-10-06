@@ -18,7 +18,7 @@ from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
 from quant.ingest.fx import ingest_fx
 from quant.ingest.jobs import JobResult, run_job
-from quant.ingest.mapping import map_isins
+from quant.ingest.mapping import held_isins, map_isins
 from quant.ingest.prices import ingest_prices
 from quant.ingest.runtime import make_fetcher, today_local
 from quant.ingest.sectors import fill_sectors
@@ -42,15 +42,24 @@ def _map_and_fill(session: Session, settings: Settings, fetcher: Fetcher) -> Job
         else []
     )
     now = datetime.now(UTC)
+    held = held_isins(session)
     result = map_isins(
         session,
         shares,
         now,
         settings.isin_retry_days,
+        isins=held,
         crypto=crypto_resolvers(settings.price_providers, fetcher, settings.coingecko_api_key),
     )
-    # A failed sector lookup is a warning, never a failed run: the ticker is what matters.
-    sectors = fill_sectors(session, shares, now, settings.isin_retry_days)
+    # A failed sector lookup is a warning, never a failed run: the tickers are what matter, and
+    # they are already saved.
+    try:
+        sectors = fill_sectors(session, shares, now, settings.isin_retry_days, isins=held)
+    except Exception as exc:  # noqa: BLE001 - whatever it was, the mapping above must stand
+        session.rollback()
+        log.exception("sector lookup failed")
+        result.warnings["sectors"] = f"sector lookup failed: {type(exc).__name__}: {exc}"
+        return result
     result.rows_written += sectors.rows_written
     result.warnings.update({k: v for k, v in sectors.warnings.items() if k not in result.warnings})
     return result

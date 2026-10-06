@@ -393,7 +393,7 @@ def with_sector(
 
 
 def mapped(
-    db: Session, isin: str, cls: str = "stock", source: str = "yahoo", active: bool = True
+    db: Session, isin: str, cls: str = "stock", source: str | None = "yahoo", active: bool = True
 ) -> Instrument:
     inst = Instrument(
         code=isin, isin=isin, name=isin, asset_class=cls, currency="EUR",
@@ -516,3 +516,42 @@ def test_a_provider_error_in_one_share_does_not_stop_the_others(
     result = fill_sectors(db, [Half("yahoo", {})], datetime(2026, 10, 6, tzinfo=UTC), isins=held)
     assert sector_of(db, GAMMA)[0] == "Industrials" and sector_of(db, A)[0] is None
     assert set(result.warnings) == {A} and result.rows_written == 1
+
+
+def test_a_seeded_share_with_no_mapping_source_gets_its_sector_too(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A, source=None)
+    resolver = FakeResolver("yahoo", {A: with_sector("ALPH", "Technology")})
+    result = fill_sectors(db, [resolver], NOW, isins=held)
+    assert sector_of(db, A)[0] == "Technology" and result.rows_written == 1
+
+
+def test_a_share_checked_and_found_to_have_no_sector_is_not_counted_as_written(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    result = fill_sectors(
+        db, [FakeResolver("yahoo", {A: with_sector("ALPH", None)})], NOW, isins=held
+    )
+    assert (result.attempted, result.rows_written) == (1, 0)
+    assert sector_of(db, A) == (None, None, NOW)
+
+
+def test_a_later_lookup_without_a_sector_never_wipes_the_one_found(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    inst = mapped(db, A, source="none", active=False)
+    inst.sector, inst.industry = "Technology", "Software"
+    db.commit()
+    again = FakeResolver("yahoo", {A: with_sector("ALPH", None)})
+    map_isins(db, [again], NOW + timedelta(days=40), isins=held)
+    assert sector_of(db, A)[:2] == ("Technology", "Software")  # kept
+    assert db.scalar(select(Instrument.active).where(Instrument.isin == A)) is True  # mapped now
+
+
+def test_the_resolver_limits_fit_the_columns() -> None:
+    from quant.providers.resolvers import INDUSTRY_LIMIT, SECTOR_LIMIT
+
+    assert Instrument.__table__.c.sector.type.length == SECTOR_LIMIT  # type: ignore[attr-defined]
+    assert Instrument.__table__.c.industry.type.length == INDUSTRY_LIMIT  # type: ignore[attr-defined]

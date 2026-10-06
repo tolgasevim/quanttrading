@@ -166,17 +166,23 @@ def _finding(f: Finding) -> FindingOut:
     )
 
 
+def _value(mark: service.Mark) -> Decimal:
+    """What a mark says a position is worth: the price times the quantity it applies to."""
+    return mark.price * mark.quantity
+
+
 def _weights(holdings: service.Holdings) -> tuple[dict[str, Decimal], Decimal, int]:
     """Each valued position's share of the total market value, in percent, with that total and
-    the number of positions in it. Positions without a market value are left out of both."""
+    the number of positions in it. Positions without a market value are left out of both, and so
+    is anything not worth more than nothing, so the shares always add up to 100."""
     values = {
-        p.isin: m.price * m.quantity
+        p.isin: value
         for p in holdings.positions
-        if (m := holdings.marks.get(p.isin))
+        if (m := holdings.marks.get(p.isin)) and (value := _value(m)) > 0
     }
     total = sum(values.values(), Decimal(0))
     if total <= 0:
-        return {}, total, len(values)
+        return {}, total, 0
     return {isin: value / total * 100 for isin, value in values.items()}, total, len(values)
 
 
@@ -186,12 +192,13 @@ def _position(p: Position, holdings: service.Holdings, weights: dict[str, Decima
     value = pnl = pct = None
     if mark is not None:
         # Price, quantity and cost all belong to the statement date.
-        value = mark.price * mark.quantity
+        value = _value(mark)
         known = mark.cost is not None and not mark.cost.flags & COST_MISSING
         if mark.cost is not None and known:
             pnl = value - mark.cost.total_cost
             pct = pnl / mark.cost.total_cost * 100 if mark.cost.total_cost else None
     average = cost.average_cost if cost else None
+    sector, industry = holdings.sectors.get(p.isin, (None, None))
     return PositionOut(
         isin=p.isin,
         name=p.name,
@@ -214,8 +221,8 @@ def _position(p: Position, holdings: service.Holdings, weights: dict[str, Decima
         unrealised_pnl=_money(pnl),
         unrealised_pct=pct.quantize(Decimal("0.01")) if pct is not None else None,
         weight_pct=weights[p.isin].quantize(Decimal("0.01")) if p.isin in weights else None,
-        sector=holdings.sectors.get(p.isin, (None, None))[0],
-        industry=holdings.sectors.get(p.isin, (None, None))[1],
+        sector=sector,
+        industry=industry,
     )
 
 
