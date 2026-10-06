@@ -321,6 +321,7 @@ def _store_job_alerts(
         return
     try:
         events = _job_events(session, now)
+        stored = 0
         for admin in admins:
             # Nothing about the time before the account existed.
             rows = [
@@ -328,8 +329,9 @@ def _store_job_alerts(
                 for happened, event in events
                 if happened >= admin.created_at
             ]
-            result.rows_written += _store(session, rows)
+            stored += _store(session, rows)
         session.commit()
+        result.rows_written += stored  # counted once they are safe
     except Exception as exc:  # noqa: BLE001 - the moves below must still run
         session.rollback()
         log.exception("job alerts failed")

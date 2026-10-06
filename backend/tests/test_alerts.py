@@ -396,7 +396,7 @@ def test_an_admin_whose_positions_cannot_be_read_still_gets_the_failed_job_alert
 
 
 def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     from quant import worker
 
@@ -411,6 +411,9 @@ def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
     worker.run_evening()  # the failure is logged, and the alerts still run
     assert order == ["prices", "alerts"]
     assert "the price run failed" in caplog.text
+    # A crash before the job could write its own row leaves a failed one, so the admins hear of it.
+    crashed = db.query(JobRun).filter_by(job=worker.PRICES_JOB).one()
+    assert crashed.status == JobStatus.FAILED and crashed.details == {"error": "RuntimeError"}
     order.clear()
     monkeypatch.setattr(worker, "run_prices", lambda: order.append("prices"))
     worker.run_evening()
@@ -734,3 +737,28 @@ def test_a_holding_bought_back_after_the_move_is_not_alerted_for_it(
     # +8% from 5 to 6 October: the new holding began on 5 October, so it went through the move.
     set_bars((date(2026, 10, 5), "100"), (date(2026, 10, 6), "108"))
     assert run(db, today=date(2026, 10, 6)) == 1
+
+
+def test_rows_are_counted_only_when_the_job_alerts_are_stored(
+    owner: TestClient, db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.ingest import alerts as module
+
+    second = make_user(db, "second@example.com", Role.ADMIN)
+    now = max(admin.created_at, second.created_at) + timedelta(hours=10)
+    db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+                  details={"error": "boom"}))  # fmt: skip
+    db.commit()
+    real, calls = module._store, []
+
+    def second_fails(session: Session, rows: list[dict[str, object]]) -> int:
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("insert failed")
+        return real(session, rows)
+
+    monkeypatch.setattr(module, "_store", second_fails)
+    rls.bypass(db)
+    result = create_alerts(db, TODAY, now)
+    assert "job alerts" in result.errors and result.rows_written == 0  # nothing was stored
+    assert alerts(db) == []

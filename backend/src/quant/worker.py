@@ -102,6 +102,25 @@ def run_prices() -> None:
             fetcher.close()
 
 
+def _record_crash(job: str, exc: Exception) -> None:
+    """A job that crashes before `run_job` can write its row (a bad setting, a database error at
+    start) leaves nothing in job_runs, and the admin alerts are built from job_runs. Leave a failed
+    row, so they hear about it. Only the kind of error is kept."""
+    try:
+        with get_sessionmaker()() as session:
+            session.add(
+                JobRun(
+                    job=job,
+                    status=JobStatus.FAILED,
+                    finished_at=datetime.now(UTC),
+                    details={"error": type(exc).__name__},
+                )
+            )
+            session.commit()
+    except Exception:  # noqa: BLE001 - the log already has the crash
+        log.exception("could not record the crash of %s", job)
+
+
 def run_evening() -> None:
     """The evening run: prices, then the alerts that need them. Chained, so a slow or late price
     run can never leave the alerts to work on yesterday's bars. A failed price run is recorded
@@ -109,8 +128,9 @@ def run_evening() -> None:
     admins hear about it."""
     try:
         run_prices()
-    except Exception:  # noqa: BLE001 - the alerts must still run
+    except Exception as exc:  # noqa: BLE001 - the alerts must still run
         log.exception("the price run failed")
+        _record_crash(PRICES_JOB, exc)
     run_alerts()
 
 
