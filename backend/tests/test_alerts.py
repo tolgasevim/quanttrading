@@ -289,19 +289,19 @@ def test_one_users_failure_does_not_stop_the_others(
 ) -> None:
     from quant.ingest import alerts as module
 
-    make_user(db, "member@example.com")
+    member = make_user(db, "member@example.com")
     price(db, A, ("108", "100"))
     real = module._open_positions
 
     def flaky(session: Session, user: Person):  # type: ignore[no-untyped-def]
-        if user.email == "member@example.com":
+        if user.id == member.id:
             raise RuntimeError("bad data")
         return real(session, user)
 
     monkeypatch.setattr(module, "_open_positions", flaky)
     rls.bypass(db)
     result = create_alerts(db, TODAY, NOW)
-    assert len(result.errors) == 1 and "bad data" in next(iter(result.errors.values()))
+    assert result.errors == {str(member.id): "RuntimeError"}  # the kind only, never the text
     assert len(alerts(db)) == 1  # the owner still got theirs
 
 
@@ -390,7 +390,7 @@ def test_an_admin_whose_positions_cannot_be_read_still_gets_the_failed_job_alert
     db.commit()
     rls.bypass(db)
     result = create_alerts(db, TODAY, now)
-    assert "bad ledger" in result.errors[str(admin.id)]  # the run is not clean...
+    assert result.errors[str(admin.id)] == "RuntimeError"  # the run is not clean...
     assert [n.title for n in alerts(db)] == ["Job ingest_prices failed"]  # ...but the news arrives
 
 

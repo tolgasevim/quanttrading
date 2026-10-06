@@ -65,7 +65,6 @@ class Person:
     user, which would otherwise expire the ORM rows and re-read them at each access."""
 
     id: uuid.UUID
-    email: str
     is_admin: bool
     created_at: datetime
 
@@ -122,6 +121,12 @@ def _newest_bars(
     for instrument_id, day, close in rows:
         bars.setdefault(instrument_id, []).append((day, close))
     return bars
+
+
+def _kind(exc: Exception) -> str:
+    """Only the kind of error goes to job_runs, which the admins read: the text of a database
+    error can carry a user's data. The log has the whole story."""
+    return type(exc).__name__
 
 
 def _open_positions(session: Session, user: Person) -> list[Position]:
@@ -280,7 +285,7 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
 def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     result = JobResult()
     users = [
-        Person(u.id, u.email, u.role == Role.ADMIN, u.created_at)
+        Person(u.id, u.role == Role.ADMIN, u.created_at)
         for u in session.scalars(select(User).order_by(User.created_at))
     ]
     settings: dict[uuid.UUID, Effective] = {
@@ -298,7 +303,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
                 session.rollback()
                 log.exception("positions of user %s failed", user.id)
-                result.errors[str(user.id)] = f"{type(exc).__name__}: {exc}"
+                result.errors[str(user.id)] = _kind(exc)
     held = {p.isin for mine in positions.values() for p in mine if p.asset_class in MOVE_CLASSES}
     instruments = {
         i.isin: i
@@ -333,5 +338,5 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
         except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
             session.rollback()
             log.exception("alerts for user %s failed", user.id)
-            result.errors[str(user.id)] = f"{type(exc).__name__}: {exc}"
+            result.errors[str(user.id)] = _kind(exc)
     return result
