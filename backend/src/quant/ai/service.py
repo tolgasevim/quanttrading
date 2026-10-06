@@ -14,6 +14,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from quant.ai import budget, consent, picks
@@ -140,9 +141,17 @@ def _handle_tools(
                 block["content"] = "recorded"
             except picks.PickInvalid as exc:
                 block.update(content=str(exc), is_error=True)
+            except SQLAlchemyError:  # the savepoint is rolled back; the answer is not lost
+                block.update(content="the pick could not be stored", is_error=True)
         results.append(block)
     session.commit()
     return results
+
+
+def _warn_if_unlogged(answer: str, saved: list[AiPick], notes: list[str]) -> None:
+    """The loop stopped early. If the answer reads like advice and nothing is logged, say so."""
+    if not saved and RECOMMENDS.search(answer):
+        notes.append("This answer may name a recommendation that is not in the pick log.")
 
 
 def ask(
@@ -176,6 +185,7 @@ def ask(
                 budget.check(session, user_id, settings)
             except budget.BudgetExceeded:
                 notes.append("The AI budget ran out, so the answer stops here.")
+                _warn_if_unlogged(answer, saved, notes)
                 break
         try:
             reply = client.send(system=SYSTEM, messages=messages, tools=[picks.TOOL])
@@ -184,6 +194,7 @@ def ask(
                 raise
             # The earlier calls were paid for and their picks are stored: keep what we have.
             notes.append("The AI service failed part way, so the answer may be incomplete.")
+            _warn_if_unlogged(answer, saved, notes)
             break
         models.add(reply.model)
         usage = budget.record(session, user_id, "ask", reply, settings)

@@ -86,7 +86,8 @@ def check(
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> None:
-    """Raise `BudgetExceeded` when the user's or the household's cap is reached."""
+    """Raise `BudgetExceeded` when the user's or the household's cap is reached. It commits the
+    caller's transaction, so the connection is free while the total is read on another one."""
     settings = settings or get_settings()
     over_user = user_spend(session, user_id, now) >= settings.llm_user_monthly_cap_eur
     session.commit()  # give the connection back before total_spend takes another one
@@ -122,42 +123,43 @@ def record(
     session.add(row)
     session.commit()
     try:
-        alert_thresholds(settings, added=row.cost_eur)
+        alert_thresholds(settings)
     except Exception:  # an alert problem must not fail the user's request
         log.exception("could not store the AI budget alerts")
     return row
 
 
-def alert_thresholds(
-    settings: Settings | None = None,
-    now: datetime | None = None,
-    added: Decimal | None = None,
-) -> int:
+def alert_thresholds(settings: Settings | None = None, now: datetime | None = None) -> int:
     """Tell every admin once a month at each threshold of the total cap. Returns rows stored.
 
-    With `added` (what the latest call cost), only a threshold that call crossed is considered, so
-    a month already past the cap does no more work per call. Without it, every threshold the spend
-    has reached is (the dedupe key still stores each alert once)."""
+    Every threshold the month's spend has reached is considered on each call, and only the alerts
+    not yet stored are inserted, so a failed attempt is retried by the next call and two calls at
+    once store each alert once (the dedupe key also guards that)."""
     settings = settings or get_settings()
     cap = settings.llm_monthly_cap_eur
     if cap <= 0:
         return 0
     spent = total_spend(now)
     _, month = month_bounds(now)
-    before = spent - added if added is not None else None
-    crossed = [
-        pct
-        for pct in THRESHOLDS
-        if spent >= cap * pct / 100 and (before is None or before < cap * pct / 100)
-    ]
+    crossed = [pct for pct in THRESHOLDS if spent >= cap * pct / 100]
     if not crossed:
         return 0
     stored = 0
     with get_sessionmaker()() as session:
         rls.bypass(session)
         admins = session.scalars(select(User.id).where(User.role == Role.ADMIN)).all()
+        have = set(
+            session.execute(
+                select(Notification.user_id, Notification.dedupe_key).where(
+                    Notification.kind == "ai_budget",
+                    Notification.dedupe_key.like(f"llm_cap:{month}:%"),
+                )
+            ).all()
+        )
         for pct in crossed:
             for admin_id in admins:
+                if (admin_id, f"llm_cap:{month}:{pct}") in have:
+                    continue
                 inserted = session.scalars(
                     insert(Notification)
                     .values(

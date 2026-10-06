@@ -17,6 +17,7 @@ from quant.models import AiPick, Instrument, PriceEOD
 
 DIRECTIONS = ("buy", "sell", "hold")
 MAX_HORIZON_MONTHS = 120
+MAX_PRICE_AGE_DAYS = 7  # an older close is not "the price on that day"
 TOOL_NAME = "record_pick"
 
 TOOL: dict[str, Any] = {
@@ -48,7 +49,9 @@ class PickInvalid(ValueError):
 def _text(value: Any, limit: int) -> str | None:
     if not isinstance(value, str):
         return None
-    cleaned = " ".join(value.split())
+    # Control characters (a NUL byte, for one) would make the database refuse the row.
+    printable = "".join(ch for ch in value if ch.isprintable() or ch.isspace())
+    cleaned = " ".join(printable.split())
     return cleaned[:limit] or None
 
 
@@ -74,7 +77,7 @@ def latest_price(
             .order_by(PriceEOD.date.desc())
             .limit(1)
         )
-        if row is not None:
+        if row is not None and (date.today() - row.date).days <= MAX_PRICE_AGE_DAYS:
             return row.close, row.currency, row.date
     return None
 

@@ -2,7 +2,7 @@ import json
 import sys
 import types
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal as D
 from typing import Any
 
@@ -43,6 +43,7 @@ from .conftest import login, make_user
 
 ISIN = "US0000000001"
 MODEL = get_settings().llm_model
+RECENT = date.today() - timedelta(days=1)  # a price must be fresh to count
 
 
 def reply(
@@ -178,7 +179,7 @@ def test_a_recommendation_goes_into_the_pick_log(
     db.add(
         PriceEOD(
             instrument_id=instrument.id,
-            date=date(2026, 10, 1),
+            date=RECENT,
             close=D("123.45"),
             currency="EUR",
             source="yahoo",
@@ -198,7 +199,7 @@ def test_a_recommendation_goes_into_the_pick_log(
     [pick] = body["picks"]
     assert (pick["direction"], pick["horizon_months"], pick["held"]) == ("buy", 12, True)
     assert pick["question"] == "What should I buy?"
-    assert pick["price"] == "123.450000" and pick["price_date"] == "2026-10-01"
+    assert pick["price"] == "123.450000" and pick["price_date"] == RECENT.isoformat()
     listed = owner.get("/api/ai/picks").json()
     assert [p["id"] for p in listed] == [pick["id"]]
     # The tool result went back with the model's own content block.
@@ -741,24 +742,25 @@ def test_a_pick_finds_its_price_by_ticker_when_the_isin_is_unknown(db: Session) 
     db.add(
         PriceEOD(
             instrument_id=instrument.id,
-            date=date(2026, 10, 1),
+            date=RECENT,
             close=D("5"),
             currency="EUR",
             source="yahoo",
         )
     )
     db.commit()  # fmt: skip
-    assert picks.latest_price(db, "XX0000000000", "alpha") == (D("5"), "EUR", date(2026, 10, 1))
+    assert picks.latest_price(db, "XX0000000000", "alpha") == (D("5"), "EUR", RECENT)
     assert picks.latest_price(db, "XX0000000000", None) is None
 
 
-def test_a_threshold_is_checked_only_when_a_call_crosses_it(
+def test_a_failed_alert_is_stored_by_the_next_call(
     db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(get_settings(), "llm_monthly_cap_eur", D("100"))
     put_usage(db, admin, "60")
-    assert budget.alert_thresholds(added=D("1")) == 0  # 59 -> 60: nothing crossed
-    assert budget.alert_thresholds(added=D("20")) == 1  # 40 -> 60 crosses 50
+    # Nothing stored yet (the first attempt failed); the next call finds the threshold reached.
+    assert budget.alert_thresholds() == 1
+    assert budget.alert_thresholds() == 0
 
 
 def test_the_app_cannot_change_the_ledger_or_the_pick_log(db: Session, admin: User) -> None:
@@ -864,7 +866,7 @@ def test_a_pick_with_only_a_ticker_still_counts_as_held_and_priced(
     db.add(
         PriceEOD(
             instrument_id=instrument.id,
-            date=date(2026, 10, 1),
+            date=RECENT,
             close=D("10"),
             currency="USD",
             source="yahoo",
@@ -889,3 +891,80 @@ def test_wider_recommendation_words_trigger_the_follow_up(owner: TestClient, fak
     fake.replies = [reply("I would overweight Alpha."), reply("none")]
     owner.post("/api/ai/ask", json={"question": "Any ideas?"})
     assert len(fake.requests) == 2
+
+
+def test_a_stale_price_is_not_the_price_on_the_day(db: Session) -> None:
+    instrument = Instrument(code="OLD", isin=None, name="Old", asset_class="stock", currency="EUR")
+    db.add(instrument)
+    db.flush()
+    db.add(
+        PriceEOD(
+            instrument_id=instrument.id,
+            date=date.today() - timedelta(days=30),
+            close=D("5"),
+            currency="EUR",
+            source="yahoo",
+        )
+    )
+    db.commit()  # fmt: skip
+    assert picks.latest_price(db, None, "OLD") is None
+
+
+def test_control_characters_in_a_pick_do_not_break_the_answer(
+    owner: TestClient, fake: Fake, db: Session
+) -> None:
+    accept(owner)
+    fake.replies = [
+        reply("", [pick_call(name="Alpha\x00 Corp", rationale="Good\x00 growth.")]),
+        reply("Done."),
+    ]
+    [pick] = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()["picks"]
+    assert pick["name"] == "Alpha Corp" and pick["rationale"] == "Good growth."
+
+
+def test_a_database_error_on_a_pick_is_a_tool_error(
+    owner: TestClient, fake: Fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy.exc import DataError
+
+    def refuse(*a: Any, **k: Any) -> AiPick:
+        raise DataError("insert", {}, Exception("bad"))
+
+    monkeypatch.setattr(picks, "record_pick", refuse)
+    accept(owner)
+    fake.replies = [reply("Alpha.", [pick_call()]), reply("Sorry.")]
+    r = owner.post("/api/ai/ask", json={"question": "Buy what?"})
+    assert r.status_code == 200 and r.json()["picks"] == []
+    assert fake.requests[1]["messages"][-1]["content"][0]["is_error"] is True
+
+
+def test_an_early_stop_warns_when_advice_is_not_in_the_log(owner: TestClient, db: Session) -> None:
+    accept(owner)
+    boom = Boom(reply("You should buy Alpha."), LlmUnavailable("down"))
+    # The first reply has a recommendation word, so the safety net sends a follow-up; it fails.
+    app.dependency_overrides[llm_client] = lambda: boom
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert body["answer"] == "You should buy Alpha."
+    assert any("not in the pick log" in n for n in body["notes"])
+
+
+def test_consent_can_be_withdrawn(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    body = owner.delete("/api/ai/consent").json()
+    assert body["accepted"] is False
+    assert owner.post("/api/ai/ask", json={"question": "Hello there"}).status_code == 403
+    assert owner.delete("/api/ai/consent").status_code == 200  # nothing to withdraw is fine
+    assert fake.requests == []
+
+
+def test_the_client_is_shared_and_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk = FakeSdk(sdk_response())
+    monkeypatch.setitem(sys.modules, "anthropic", sdk)
+    monkeypatch.setattr(get_settings(), "anthropic_api_key", "sk-x")
+    llm._shared.clear()
+    try:
+        first = llm.default_client()
+        assert llm.default_client() is first
+        assert sdk.client_args["max_retries"] == 1
+    finally:
+        llm._shared.clear()

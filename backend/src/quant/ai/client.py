@@ -100,7 +100,7 @@ class AnthropicLlm:
         effort: str,
         max_tokens: int,
         fallbacks: bool,
-        timeout: float = 120.0,
+        timeout: float = 90.0,
     ) -> None:
         if not api_key:
             raise LlmNotConfigured("the AI is not set up: no API key (QT_ANTHROPIC_API_KEY)")
@@ -110,7 +110,8 @@ class AnthropicLlm:
             raise LlmNotConfigured(
                 "the AI is not set up: the anthropic package is missing"
             ) from exc
-        self._client = self._sdk.Anthropic(api_key=api_key, timeout=timeout)
+        # One retry, not the default two: a question makes up to four calls, and the page waits.
+        self._client = self._sdk.Anthropic(api_key=api_key, timeout=timeout, max_retries=1)
         self._model = model
         self._effort = effort
         self._max_tokens = max_tokens
@@ -187,14 +188,21 @@ class AnthropicLlm:
         )
 
 
+_shared: dict[tuple[Any, ...], LlmClient] = {}
+
+
 def default_client() -> LlmClient:
+    """One client per setting, reused: each holds a connection pool."""
     from quant.config import get_settings
 
     s = get_settings()
-    return AnthropicLlm(
-        api_key=s.anthropic_api_key,
-        model=s.llm_model,
-        effort=s.llm_effort,
-        max_tokens=s.llm_max_tokens,
-        fallbacks=s.llm_fallbacks,
-    )
+    key = (s.anthropic_api_key, s.llm_model, s.llm_effort, s.llm_max_tokens, s.llm_fallbacks)
+    if key not in _shared:
+        _shared[key] = AnthropicLlm(
+            api_key=s.anthropic_api_key,
+            model=s.llm_model,
+            effort=s.llm_effort,
+            max_tokens=s.llm_max_tokens,
+            fallbacks=s.llm_fallbacks,
+        )
+    return _shared[key]

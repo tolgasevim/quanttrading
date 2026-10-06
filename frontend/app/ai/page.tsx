@@ -176,6 +176,22 @@ export default function AiPage() {
             <details>
               <summary className="muted">Disclaimer</summary>
               <p className="muted">{status.disclaimer}</p>
+              <button
+                type="button"
+                className="link"
+                disabled={busy}
+                onClick={async () => {
+                  setError("");
+                  try {
+                    setStatus(await api<AiStatus>("/api/ai/consent", { method: "DELETE" }));
+                    setAnswer(null);
+                  } catch (err) {
+                    setError(err instanceof ApiError ? err.detail : "Could not save.");
+                  }
+                }}
+              >
+                Withdraw my consent
+              </button>
             </details>
           </form>
         )}

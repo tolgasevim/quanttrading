@@ -51,3 +51,11 @@ def require(session: Session, user_id: uuid.UUID) -> AiConsent:
     if row is None:
         raise ConsentRequired("accept the AI disclaimer first")
     return row
+
+
+def withdraw(session: Session, user_id: uuid.UUID) -> None:
+    """Take the consent back (FR-57): nothing is sent again until the user accepts anew."""
+    row = session.scalar(select(AiConsent).where(AiConsent.user_id == user_id))
+    if row is not None:
+        session.delete(row)
+        session.commit()

@@ -153,6 +153,12 @@ def post_consent(body: ConsentIn, db: UserDb, user: CurrentUser) -> StatusOut:
     return get_status(db, user)
 
 
+@router.delete("/consent", response_model=StatusOut)
+def delete_consent(db: UserDb, user: CurrentUser) -> StatusOut:
+    consent.withdraw(db, user.id)
+    return get_status(db, user)
+
+
 @router.post("/ask", response_model=AskOut)
 def post_ask(body: AskIn, db: UserDb, user: CurrentUser, client: Llm) -> AskOut:
     try:
