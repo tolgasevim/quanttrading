@@ -339,6 +339,7 @@ export type AiAnswer = {
   picks: AiPick[];
   data_points: string[];
   notes: string[];
+  tool_calls: { name: string; input: string; summary: string; error: boolean }[];
 };
 
 export type AiScore = {

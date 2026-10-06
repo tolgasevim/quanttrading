@@ -9,6 +9,7 @@ os.environ["QT_COOKIE_SECURE"] = "false"  # TestClient talks plain http
 
 from collections.abc import Iterator  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
@@ -81,3 +82,23 @@ def login(client: TestClient, email: str, password: str = PASSWORD, totp: str | 
         body["totp_code"] = totp
     status: int = client.post("/api/auth/login", json=body).status_code
     return status
+
+
+@pytest.fixture
+def owner(client: TestClient, admin: User) -> TestClient:
+    """A client signed in as the admin."""
+    login(client, admin.email)
+    return client
+
+
+@pytest.fixture
+def fake() -> Iterator[Any]:  # a tests.test_ai.Fake, imported inside to keep conftest light
+    """A scripted language model that replaces the real one in the API."""
+    from quant.api.ai import llm_client
+
+    from .test_ai import Fake
+
+    f = Fake()
+    app.dependency_overrides[llm_client] = lambda: f
+    yield f
+    app.dependency_overrides.pop(llm_client, None)

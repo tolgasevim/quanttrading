@@ -8,7 +8,7 @@ import importlib.util
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
@@ -59,8 +59,16 @@ class ConsentIn(BaseModel):
     anonymise_amounts: bool = False
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    # Long messages are cut by the service, not refused: a long answer must not end the chat.
+    content: str = Field(max_length=20_000)
+
+
 class AskIn(BaseModel):
     question: str = Field(max_length=ai_service.MAX_QUESTION_CHARS)
+    # The earlier messages of a chat, as plain text. The server keeps no chat state.
+    history: list[ChatMessage] = Field(default_factory=list, max_length=100)
 
     @field_validator("question")
     @classmethod
@@ -87,6 +95,13 @@ class PickOut(BaseModel):
     price_date: date | None
 
 
+class ToolCallOut(BaseModel):
+    name: str
+    input: str
+    summary: str
+    error: bool
+
+
 class AskOut(BaseModel):
     answer: str
     label: str
@@ -96,6 +111,7 @@ class AskOut(BaseModel):
     picks: list[PickOut]
     data_points: list[str]
     notes: list[str]
+    tool_calls: list[ToolCallOut]
 
 
 def _pick(p: AiPick) -> PickOut:
@@ -162,7 +178,13 @@ def delete_consent(db: UserDb, user: CurrentUser) -> StatusOut:
 @router.post("/ask", response_model=AskOut)
 def post_ask(body: AskIn, db: UserDb, user: CurrentUser, client: Llm) -> AskOut:
     try:
-        result = ai_service.ask(db, user.id, body.question, client)
+        result = ai_service.ask(
+            db,
+            user.id,
+            body.question,
+            client,
+            [m.model_dump() for m in body.history],
+        )
     except consent.ConsentRequired as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
     except budget.BudgetExceeded as exc:
@@ -178,6 +200,10 @@ def post_ask(body: AskIn, db: UserDb, user: CurrentUser, client: Llm) -> AskOut:
         picks=[_pick(p) for p in result.picks],
         data_points=result.data_points,
         notes=result.notes,
+        tool_calls=[
+            ToolCallOut(name=t.name, input=t.input, summary=t.summary, error=t.error)
+            for t in result.tool_calls
+        ],
     )
 
 

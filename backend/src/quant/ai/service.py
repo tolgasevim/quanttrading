@@ -17,14 +17,16 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from quant.ai import budget, consent, picks
+from quant.ai import budget, consent, picks, tools
 from quant.ai.client import LlmClient, LlmError, LlmReply, default_client
 from quant.config import get_settings
 from quant.models import AiPick
 from quant.portfolio import service
 from quant.portfolio.lots import COST_MISSING
 
-MAX_TURNS = 3
+MAX_TURNS = 5  # model calls after the first; read tools need a turn each
+MAX_HISTORY = 10  # earlier messages of a chat that are sent again
+MAX_HISTORY_CHARS = 4000
 MAX_POSITIONS = 60
 MAX_QUESTION_CHARS = 1000
 SUBSTANTIAL = 80  # characters: a reply this long counts as an answer, not as "Done."
@@ -38,9 +40,13 @@ SYSTEM = """You are a careful investing guide for a private investor in Germany.
 guidance only. You never place trades. You are not a financial adviser and you say so when it \
 matters.
 
-The user message holds a summary of the user's portfolio and a question. You have no live market \
-data and no news: say when an answer depends on facts you cannot see, and do not invent prices \
-or figures. Use the portfolio data you are given, and name which data you used.
+The user message holds a summary of the user's portfolio and a question. You can call read-only \
+tools for a holding's details, stored prices, a price-shock scenario, the tax estimate, ECB \
+rates and the user's earlier picks. You have no news, no macro data, no live quotes and no \
+fundamentals: say when an answer depends on facts you cannot see, and never invent prices or \
+figures. Use tools for numbers instead of guessing, and name which data you used. For a \
+scenario such as "what if oil rises 30%", call the scenario tool with sensible targets and say \
+that it is linear and ignores correlations.
 
 Be short and concrete. Give the main risk next to every recommendation. For every security you \
 recommend to buy, sell or hold, call the tool record_pick once, with a time horizon in months. \
@@ -57,17 +63,15 @@ class AskResult:
     fallback_used: bool
     refused: bool = False
     notes: list[str] = field(default_factory=list)
+    tool_calls: list[tools.ToolTrace] = field(default_factory=list)
 
 
 def _money(value: Decimal | None) -> str | None:
     return None if value is None else f"{value:.2f}"
 
 
-def build_context(
-    session: Session, user_id: uuid.UUID, anonymise: bool
-) -> tuple[str, list[str], set[str]]:
+def build_context(holdings: service.Holdings, anonymise: bool) -> tuple[str, list[str], set[str]]:
     """The portfolio as compact JSON for the prompt, what it contains, and the held ISINs."""
-    holdings = service.build_holdings(session, user_id)
     weights, total, valued = service.weights(holdings)
     rows = []
     for p in holdings.positions:
@@ -133,11 +137,22 @@ def _handle_tools(
     held: set[str],
     usage_id: uuid.UUID,
     saved: list[AiPick],
-) -> list[dict[str, Any]]:
+    ctx: tools.ToolContext,
+    traces: list[tools.ToolTrace],
+) -> tuple[list[dict[str, Any]], int]:
+    """Run the tool calls of one reply. Returns the tool_result blocks and how many record_pick
+    calls failed (the other tools' errors are for the model to read, not for the user)."""
     results: list[dict[str, Any]] = []
+    failed = 0
     for call in reply.tool_calls:
         block: dict[str, Any] = {"type": "tool_result", "tool_use_id": call.id}
-        if call.name != picks.TOOL_NAME:
+        if call.name in tools.NAMES:
+            text, trace = tools.run(ctx, call.name, call.input)
+            traces.append(trace)
+            block["content"] = text
+            if trace.error:
+                block["is_error"] = True
+        elif call.name != picks.TOOL_NAME:
             block.update(content="unknown tool", is_error=True)
         else:
             key = _pick_key(call.input)
@@ -159,11 +174,50 @@ def _handle_tools(
                 block["content"] = "recorded"
             except picks.PickInvalid as exc:
                 block.update(content=str(exc), is_error=True)
+                failed += 1
             except SQLAlchemyError:  # the savepoint is rolled back; the answer is not lost
                 block.update(content="the pick could not be stored", is_error=True)
+                failed += 1
         results.append(block)
     session.commit()
-    return results
+    return results, failed
+
+
+def _history_messages(
+    history: list[dict[str, str]] | None, anonymise: bool
+) -> list[dict[str, Any]]:
+    """The earlier messages of a chat, cleaned. The history comes from the browser, so it is
+    trusted for nothing but wording: roles are checked, text is cut, and the turns must start
+    with the user and alternate.
+
+    With "hide amounts" the earlier answers are not sent at all (they may hold euro amounts from
+    before the user switched it on, and the server cannot tell): the questions go along as one
+    message instead."""
+    rows = [
+        {"role": m["role"], "content": m["content"][:MAX_HISTORY_CHARS]}
+        for m in (history or [])
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
+    if anonymise:
+        asked = [m["content"] for m in rows if m["role"] == "user"][-MAX_HISTORY // 2 :]
+        if not asked:
+            return []
+        return [
+            {"role": "user", "content": "Earlier questions in this chat: " + " | ".join(asked)},
+            {"role": "assistant", "content": "Understood."},
+        ]
+    merged: list[dict[str, Any]] = []
+    for m in rows:  # two of one role in a row (a turn never recorded): the later one is kept
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1] = m
+        elif merged or m["role"] == "user":
+            merged.append(m)
+    merged = merged[-MAX_HISTORY:]
+    while merged and merged[0]["role"] != "user":
+        merged.pop(0)
+    if merged and merged[-1]["role"] == "user":
+        merged.pop()
+    return merged
 
 
 def _warn_if_unlogged(answer: str, saved: list[AiPick], notes: list[str]) -> None:
@@ -177,23 +231,31 @@ def ask(
     user_id: uuid.UUID,
     question: str,
     client: LlmClient | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> AskResult:
+    """One question, or the next message of a chat: `history` holds the earlier messages as plain
+    text (role user or assistant). The portfolio summary goes with the newest question only."""
     question = " ".join(question.split())[:MAX_QUESTION_CHARS]
     agreed = consent.require(session, user_id)
     settings = get_settings()
     budget.check(session, user_id, settings)
     client = client or default_client()
 
-    context, points, held = build_context(session, user_id, agreed.anonymise_amounts)
-    messages: list[dict[str, Any]] = [
+    holdings = service.build_holdings(session, user_id)
+    context, points, held = build_context(holdings, agreed.anonymise_amounts)
+    ctx = tools.ToolContext(session, user_id, agreed.anonymise_amounts, holdings)
+    messages = _history_messages(history, agreed.anonymise_amounts)
+    messages.append(
         {"role": "user", "content": f"Portfolio summary:\n{context}\n\nQuestion: {question}"}
-    ]
+    )
+    traces: list[tools.ToolTrace] = []
     saved: list[AiPick] = []
     models: set[str] = set()
     answer = ""
     notes: list[str] = []
     followed_up = False
     failed = 0  # picks the model got wrong on the last turn, with no turn left to fix them
+    asked_tools = False  # the last reply was a tool call: if the loop ends on it, no answer came
 
     for _turn in range(MAX_TURNS + 1):
         # No transaction stays open while the model thinks: the connection goes back to the pool.
@@ -204,15 +266,19 @@ def ask(
             except budget.BudgetExceeded:
                 notes.append("The AI budget ran out, so the answer stops here.")
                 _warn_if_unlogged(answer, saved, notes)
+                asked_tools = False  # the stop has its own note
                 break
         try:
-            reply = client.send(system=SYSTEM, messages=messages, tools=[picks.TOOL])
+            reply = client.send(
+                system=SYSTEM, messages=messages, tools=[picks.TOOL, *tools.SCHEMAS]
+            )
         except LlmError:
             if _turn == 0:
                 raise
             # The earlier calls were paid for and their picks are stored: keep what we have.
             notes.append("The AI service failed part way, so the answer may be incomplete.")
             _warn_if_unlogged(answer, saved, notes)
+            asked_tools = False
             break
         models.add(reply.model)
         usage = budget.record(session, user_id, "ask", reply, settings)
@@ -221,6 +287,7 @@ def ask(
                 "The AI declined to answer this question.", saved, points, models, settings, True
             )
             declined.notes.extend(notes)
+            declined.tool_calls = traces
             return declined
         if reply.stop_reason == "max_tokens":
             notes.append("The answer was cut off at the length limit.")
@@ -230,7 +297,7 @@ def ask(
         if not followed_up and (len(reply.text) >= SUBSTANTIAL or len(reply.text) > len(answer)):
             answer = reply.text
         if reply.tool_calls:
-            results = _handle_tools(
+            results, failed = _handle_tools(
                 session,
                 user_id,
                 reply,
@@ -238,11 +305,22 @@ def ask(
                 held=held,
                 usage_id=usage.id,
                 saved=saved,
+                ctx=ctx,
+                traces=traces,
             )
             messages.append({"role": "assistant", "content": reply.raw_content})
+            if _turn == MAX_TURNS - 1:  # the next call is the last: ask for the answer now
+                results.append(
+                    {
+                        "type": "text",
+                        "text": "That was the last round of tool calls. Answer now, from what "
+                        "you have. Do not call more tools.",
+                    }
+                )
             messages.append({"role": "user", "content": results})
-            failed = sum(1 for r in results if r.get("is_error"))  # not repeats, which are fine
+            asked_tools = True
             continue
+        asked_tools = False
         failed = 0
         if not saved and not followed_up and RECOMMENDS.search(reply.text):
             followed_up = True
@@ -259,8 +337,11 @@ def ask(
             )
             continue
         break
+    if asked_tools:
+        notes.append("The AI used all its tool turns and gave no final answer. Ask again, shorter.")
     result = _result(answer or "The AI gave no answer.", saved, points, models, settings, False)
     result.notes.extend(notes)
+    result.tool_calls = traces
     if failed:
         result.notes.append(
             f"{failed} pick(s) in this answer could not be recorded in the pick log. "
