@@ -101,6 +101,21 @@ class Holdings:
     book: LotBook = field(default_factory=LotBook)
     costs: dict[str, PositionCost] = field(default_factory=dict)
     marks: dict[str, Mark] = field(default_factory=dict)
+    # (sector, industry) by ISIN, for the shares a data source has classified.
+    sectors: dict[str, tuple[str | None, str | None]] = field(default_factory=dict)
+
+
+def load_sectors(session: Session, isins: list[str]) -> dict[str, tuple[str | None, str | None]]:
+    """The sector and industry of each ISIN that has one. The instrument list is shared market
+    data, so this reads no personal data."""
+    if not isins:
+        return {}
+    rows = session.execute(
+        select(Instrument.isin, Instrument.sector, Instrument.industry).where(
+            Instrument.isin.in_(isins), Instrument.sector.is_not(None)
+        )
+    )
+    return {isin: (sector, industry) for isin, sector, industry in rows if isin}
 
 
 def load_movements(session: Session, user_id: uuid.UUID) -> list[Transaction]:
@@ -291,6 +306,7 @@ def build_holdings(session: Session, user_id: uuid.UUID) -> Holdings:
         everything=everything,
         book=book,
         costs=position_costs(book),
+        sectors=load_sectors(session, [p.isin for p in current]),
     )
     current_by_isin = {p.isin: p for p in current}
     for snapshot in latest_snapshots(session, user_id):

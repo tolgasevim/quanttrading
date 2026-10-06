@@ -600,3 +600,51 @@ def test_a_long_coin_id_is_accepted(owner: TestClient, monkeypatch: pytest.Monke
     response = owner.put(f"/api/prices/{BTC}", json={"symbol": long_id})
     assert response.status_code == 200, response.text
     assert {i["isin"]: i for i in response.json()["items"]}[BTC]["symbol"] == long_id
+
+
+# --- weight and sector ---------------------------------------------------------------------
+
+
+def test_weights_are_each_positions_share_of_the_valued_total(
+    owner: TestClient, db: Session
+) -> None:
+    add_price(db, add_instrument(db, A), date(2026, 10, 2), "120")  # 6 x 120 = 720
+    add_price(db, add_instrument(db, SPIN, symbol="OTHER"), date(2026, 10, 2), "5")  # 30
+    bitcoin = add_instrument(db, BTC, symbol="BTC")
+    add_price(db, bitcoin, date(2026, 10, 2), "50000")  # 0.1 x 50,000 = 5,000
+    body = owner.get("/api/holdings").json()
+    by = by_name(body)
+    assert (by["Alpha Corp"]["weight_pct"], by["Spin Co"]["weight_pct"]) == ("12.52", "0.52")
+    assert by["Bitcoin"]["weight_pct"] == "86.96"
+    assert by["Ethereum"]["weight_pct"] is None  # no price, so no value and no weight
+    assert (body["valued_total"], body["valued_positions"]) == ("5750.00", 3)
+    total = sum((D(p["weight_pct"]) for p in body["positions"] if p["weight_pct"]), D(0))
+    assert abs(total - 100) <= D("0.02")  # rounding to two places
+
+
+def test_with_nothing_valued_there_is_no_weight(owner: TestClient) -> None:
+    body = owner.get("/api/holdings").json()
+    assert all(p["weight_pct"] is None for p in body["positions"])
+    assert (body["valued_total"], body["valued_positions"]) == ("0.00", 0)
+
+
+def test_a_statement_price_gives_a_weight_too(owner: TestClient, db: Session) -> None:
+    upload(owner)  # the crypto statement values both coins at 5,000
+    body = owner.get("/api/holdings").json()
+    assert {p["name"]: p["weight_pct"] for p in body["positions"] if p["weight_pct"]} == {
+        "Bitcoin": "50.00",
+        "Ethereum": "50.00",
+    }
+
+
+def test_the_sector_of_a_share_is_shown_and_the_rest_have_none(
+    owner: TestClient, db: Session
+) -> None:
+    alpha = add_instrument(db, A)
+    alpha.sector, alpha.industry = "Technology", "Software"
+    add_instrument(db, SPIN, symbol="OTHER")  # a share no source classified
+    db.commit()
+    by = by_name(owner.get("/api/holdings").json())
+    assert (by["Alpha Corp"]["sector"], by["Alpha Corp"]["industry"]) == ("Technology", "Software")
+    assert (by["Spin Co"]["sector"], by["Spin Co"]["industry"]) == (None, None)
+    assert by["Bitcoin"]["sector"] is None  # a coin has none

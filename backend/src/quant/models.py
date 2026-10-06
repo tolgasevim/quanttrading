@@ -107,6 +107,12 @@ class Instrument(Base):
     # "none" when no resolver knew the ISIN (the row is inactive until a symbol is entered, FR-12).
     mapping_source: Mapped[str | None] = mapped_column(String(20))
     mapped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The sector and industry a data source gives a share (Yahoo's names). Funds and coins have
+    # none. `sector_checked_at` is when a source was last asked, so a share it does not know is not
+    # asked about every night.
+    sector: Mapped[str | None] = mapped_column(String(60))
+    industry: Mapped[str | None] = mapped_column(String(100))
+    sector_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PriceEOD(Base):

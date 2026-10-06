@@ -14,14 +14,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from quant import rls
-from quant.config import get_settings
+from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
 from quant.ingest.fx import ingest_fx
-from quant.ingest.jobs import run_job
+from quant.ingest.jobs import JobResult, run_job
 from quant.ingest.mapping import map_isins
 from quant.ingest.prices import ingest_prices
 from quant.ingest.runtime import make_fetcher, today_local
+from quant.ingest.sectors import fill_sectors
 from quant.models import JobRun, JobStatus
+from quant.providers.base import Fetcher
 from quant.providers.registry import crypto_resolvers, fx_provider, isin_resolvers, price_providers
 
 log = logging.getLogger(__name__)
@@ -29,6 +31,29 @@ log = logging.getLogger(__name__)
 PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
+
+
+def _map_and_fill(session: Session, settings: Settings, fetcher: Fetcher) -> JobResult:
+    """Find tickers for the ISINs people hold, then the sector of their shares."""
+    # An empty list is allowed when coins are priced: shares then get an error each.
+    shares = (
+        isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key)
+        if settings.isin_resolvers
+        else []
+    )
+    now = datetime.now(UTC)
+    result = map_isins(
+        session,
+        shares,
+        now,
+        settings.isin_retry_days,
+        crypto=crypto_resolvers(settings.price_providers, fetcher, settings.coingecko_api_key),
+    )
+    # A failed sector lookup is a warning, never a failed run: the ticker is what matters.
+    sectors = fill_sectors(session, shares, now, settings.isin_retry_days)
+    result.rows_written += sectors.rows_written
+    result.warnings.update({k: v for k, v in sectors.warnings.items() if k not in result.warnings})
+    return result
 
 
 def run_mapping() -> None:
@@ -40,22 +65,7 @@ def run_mapping() -> None:
         try:
             # Built inside the job, so a bad setting (an unknown name) is recorded in job_runs
             # as a failed run instead of crashing the worker at start.
-            run_job(
-                session,
-                MAP_JOB,
-                lambda s: map_isins(
-                    s,
-                    # An empty list is allowed when coins are priced: shares then get an error each.
-                    isin_resolvers(settings.isin_resolvers, fetcher, settings.openfigi_api_key)
-                    if settings.isin_resolvers
-                    else [],
-                    datetime.now(UTC),
-                    settings.isin_retry_days,
-                    crypto=crypto_resolvers(
-                        settings.price_providers, fetcher, settings.coingecko_api_key
-                    ),
-                ),
-            )
+            run_job(session, MAP_JOB, lambda s: _map_and_fill(s, settings, fetcher))
         finally:
             fetcher.close()
 

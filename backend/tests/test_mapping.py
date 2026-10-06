@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.ingest.mapping import HeldIsin, held_isins, map_isins
 from quant.ingest.prices import ingest_prices
+from quant.ingest.sectors import fill_sectors
 from quant.models import Instrument, PriceEOD, User
 from quant.providers.base import Bar, PriceSeries, ProviderError
 from quant.providers.resolvers import Listing
@@ -372,3 +373,146 @@ def test_with_no_share_resolvers_coins_are_still_mapped_and_each_share_says_why(
     assert set(result.errors) == {A, GAMMA, SPIN, FUND}
     assert all("QT_ISIN_RESOLVERS is empty" in e for e in result.errors.values())
     assert db.scalar(select(Instrument).where(Instrument.isin == A)) is None  # nothing guessed
+
+
+# --- sectors --------------------------------------------------------------------------
+
+
+def with_sector(
+    symbol: str, sector: str | None, industry: str | None = None, known: bool = True
+) -> Listing:
+    return Listing(
+        symbol=symbol,
+        name=None,
+        exchange=None,
+        source="yahoo",
+        sector=sector,
+        industry=industry,
+        sector_known=known,
+    )
+
+
+def mapped(
+    db: Session, isin: str, cls: str = "stock", source: str = "yahoo", active: bool = True
+) -> Instrument:
+    inst = Instrument(
+        code=isin, isin=isin, name=isin, asset_class=cls, currency="EUR",
+        symbols={"yahoo": "SYM"}, active=active, mapping_source=source,
+    )  # fmt: skip
+    db.add(inst)
+    db.commit()
+    return inst
+
+
+def sector_of(db: Session, isin: str) -> tuple[str | None, str | None, datetime | None]:
+    inst = db.scalar(select(Instrument).where(Instrument.isin == isin))
+    assert inst is not None
+    db.refresh(inst)
+    return inst.sector, inst.industry, inst.sector_checked_at
+
+
+def test_the_answer_that_finds_a_share_also_gives_its_sector(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    resolver = FakeResolver(
+        "yahoo",
+        {
+            A: with_sector("ALPH", "Technology", "Software"),
+            FUND: with_sector("WRLD.DE", "Technology"),  # a fund: no sector kept
+            GAMMA: listing("GAM", "openfigi"),  # a source that gives no sectors
+        },
+    )
+    map_isins(db, [resolver], NOW, isins=held)
+    assert sector_of(db, A) == ("Technology", "Software", NOW)
+    assert sector_of(db, FUND) == (None, None, None)
+    assert sector_of(db, GAMMA) == (None, None, None)  # not asked about sectors yet
+
+
+def test_a_share_mapped_earlier_gets_its_sector_and_is_not_asked_again(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    resolver = FakeResolver("yahoo", {A: with_sector("ALPH", "Healthcare", "Drug Makers")})
+    result = fill_sectors(db, [resolver], NOW, isins=held)
+    assert result.rows_written == 1 and result.errors == {}
+    assert sector_of(db, A) == ("Healthcare", "Drug Makers", NOW)
+    resolver.asked.clear()
+    fill_sectors(db, [resolver], NOW + timedelta(days=60), isins=held)
+    assert resolver.asked == []  # it has a sector now
+
+
+def test_a_share_the_source_has_no_sector_for_is_asked_again_only_after_the_retry_time(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    resolver = FakeResolver("yahoo", {A: with_sector("ALPH", None)})
+    fill_sectors(db, [resolver], NOW, isins=held)
+    assert sector_of(db, A) == (None, None, NOW)  # answered: no sector, remembered
+    resolver.asked.clear()
+    fill_sectors(db, [resolver], NOW + timedelta(days=5), isins=held)
+    assert resolver.asked == []
+    fill_sectors(db, [resolver], NOW + timedelta(days=31), isins=held)
+    assert resolver.asked == [A]
+
+
+def test_a_source_that_cannot_be_asked_is_tried_again_at_once_and_only_warns(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    down = FakeResolver("yahoo", {}, fail=True)
+    result = fill_sectors(db, [down], NOW, isins=held)
+    assert result.errors == {} and "yahoo: down" in result.warnings[A]  # a warning, not a failure
+    assert sector_of(db, A) == (None, None, None)  # not marked as checked
+    fill_sectors(db, [FakeResolver("yahoo", {A: with_sector("ALPH", "Energy")})], NOW, isins=held)
+    assert sector_of(db, A)[0] == "Energy"
+
+
+def test_the_next_source_is_tried_when_the_first_gives_no_sector(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    figi = FakeResolver("openfigi", {A: listing("ALPH", "openfigi")})
+    yahoo = FakeResolver("yahoo", {A: with_sector("ALPH", "Utilities")})
+    fill_sectors(db, [figi, yahoo], NOW, isins=held)
+    assert sector_of(db, A)[0] == "Utilities"
+
+
+def test_only_held_active_mapped_shares_are_asked(db: Session, held: list[HeldIsin]) -> None:
+    mapped(db, FUND, cls="etf")
+    mapped(db, GAMMA, source="none", active=False)  # no ticker
+    mapped(db, SPIN, active=False)  # switched off
+    resolver = FakeResolver("yahoo", {})
+    fill_sectors(db, [resolver], NOW, isins=held)
+    assert resolver.asked == []  # a fund, an unmapped share, a switched-off one
+    assert fill_sectors(db, [], NOW, isins=held).attempted == 0  # no source, nothing to do
+    assert fill_sectors(db, [resolver], NOW, isins=[]).attempted == 0  # nothing held
+
+
+def test_a_sector_set_meanwhile_is_not_overwritten(db: Session, held: list[HeldIsin]) -> None:
+    inst = mapped(db, A)
+
+    class Racing(FakeResolver):
+        def resolve(self, isin: str) -> Listing | None:
+            inst.sector = "Set by someone else"  # another writer got there during the lookup
+            db.commit()
+            return with_sector("ALPH", "Technology")
+
+    fill_sectors(db, [Racing("yahoo", {})], NOW, isins=held)
+    assert sector_of(db, A)[0] == "Set by someone else"
+
+
+def test_a_provider_error_in_one_share_does_not_stop_the_others(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    mapped(db, GAMMA)
+
+    class Half(FakeResolver):
+        def resolve(self, isin: str) -> Listing | None:
+            if isin == A:
+                raise ProviderError("yahoo: rate limit")
+            return with_sector("GAM", "Industrials")
+
+    result = fill_sectors(db, [Half("yahoo", {})], datetime(2026, 10, 6, tzinfo=UTC), isins=held)
+    assert sector_of(db, GAMMA)[0] == "Industrials" and sector_of(db, A)[0] is None
+    assert set(result.warnings) == {A} and result.rows_written == 1

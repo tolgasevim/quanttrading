@@ -53,6 +53,13 @@ class PositionOut(BaseModel):
     market_value: Decimal | None
     unrealised_pnl: Decimal | None  # market value less purchase value and acquisition costs
     unrealised_pct: Decimal | None
+    # Share of the portfolio value, in percent: this position's market value over the total of all
+    # positions that have one. None when it has no value.
+    weight_pct: Decimal | None
+    # The sector and industry a data source gives a share (Yahoo's names). Funds and coins have
+    # none.
+    sector: str | None
+    industry: str | None
 
 
 class FindingOut(BaseModel):
@@ -126,6 +133,8 @@ class ReviewSummaryOut(BaseModel):
 class HoldingsOut(BaseModel):
     positions: list[PositionOut]
     by_class: dict[str, int]
+    valued_total: Decimal  # market value of the positions that have one, in EUR
+    valued_positions: int  # how many positions that is
     verified: int
     reconciliations: list[ReconciliationOut]
     realised: RealisedOut
@@ -157,7 +166,21 @@ def _finding(f: Finding) -> FindingOut:
     )
 
 
-def _position(p: Position, holdings: service.Holdings) -> PositionOut:
+def _weights(holdings: service.Holdings) -> tuple[dict[str, Decimal], Decimal, int]:
+    """Each valued position's share of the total market value, in percent, with that total and
+    the number of positions in it. Positions without a market value are left out of both."""
+    values = {
+        p.isin: m.price * m.quantity
+        for p in holdings.positions
+        if (m := holdings.marks.get(p.isin))
+    }
+    total = sum(values.values(), Decimal(0))
+    if total <= 0:
+        return {}, total, len(values)
+    return {isin: value / total * 100 for isin, value in values.items()}, total, len(values)
+
+
+def _position(p: Position, holdings: service.Holdings, weights: dict[str, Decimal]) -> PositionOut:
     cost = holdings.costs.get(p.isin)
     mark = holdings.marks.get(p.isin)
     value = pnl = pct = None
@@ -190,6 +213,9 @@ def _position(p: Position, holdings: service.Holdings) -> PositionOut:
         market_value=_money(value),
         unrealised_pnl=_money(pnl),
         unrealised_pct=pct.quantize(Decimal("0.01")) if pct is not None else None,
+        weight_pct=weights[p.isin].quantize(Decimal("0.01")) if p.isin in weights else None,
+        sector=holdings.sectors.get(p.isin, (None, None))[0],
+        industry=holdings.sectors.get(p.isin, (None, None))[1],
     )
 
 
@@ -239,13 +265,16 @@ def _realised(holdings: service.Holdings) -> RealisedOut:
 
 def _out(holdings: service.Holdings) -> HoldingsOut:
     coins_priced = "coingecko" in get_settings().price_providers
+    weights, valued_total, valued_positions = _weights(holdings)
     by_class: dict[str, int] = {}
     for p in holdings.positions:
         key = p.asset_class or "UNKNOWN"
         by_class[key] = by_class.get(key, 0) + 1
     return HoldingsOut(
-        positions=[_position(p, holdings) for p in holdings.positions],
+        positions=[_position(p, holdings, weights) for p in holdings.positions],
         by_class=dict(sorted(by_class.items())),
+        valued_total=_cents(valued_total),
+        valued_positions=valued_positions,
         verified=len(holdings.verified),
         reconciliations=[
             ReconciliationOut(

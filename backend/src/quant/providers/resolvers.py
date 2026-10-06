@@ -30,6 +30,9 @@ class Listing:
     exchange: str | None
     source: str  # the resolver's name
     provider: str = "yahoo"  # the price provider the symbol is for: the key in `Instrument.symbols`
+    sector: str | None = None
+    industry: str | None = None
+    sector_known: bool = False  # the source reports sectors, so a missing one means "none"
 
 
 class CryptoResolver(Protocol):
@@ -61,6 +64,14 @@ class YahooSearchResolver:
         return parse_yahoo_search(body)
 
 
+def _label(value: object, limit: int) -> str | None:
+    """A sector or industry name, or None when the source gives none or something else."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    return text[:limit] or None
+
+
 def parse_yahoo_search(body: str) -> Listing | None:
     try:
         quotes = json.loads(body).get("quotes", [])
@@ -77,6 +88,9 @@ def parse_yahoo_search(body: str) -> Listing | None:
                 name=quote.get("longname") or quote.get("shortname"),
                 exchange=quote.get("exchange"),
                 source="yahoo",
+                sector=_label(quote.get("sector"), 60),
+                industry=_label(quote.get("industry"), 100),
+                sector_known=True,
             )
     return None
 

@@ -212,3 +212,42 @@ def test_the_fetcher_can_release_its_connection() -> None:
     assert not client.is_closed
     fetcher.close()
     assert client.is_closed
+
+
+def test_yahoo_search_gives_the_sector_and_industry_of_a_share() -> None:
+    body = json.dumps(
+        {
+            "quotes": [
+                {
+                    "quoteType": "EQUITY",
+                    "symbol": "SAP.DE",
+                    "sector": "Technology",
+                    "industry": " Software—Application ",
+                }
+            ]
+        }
+    )
+    found = parse_yahoo_search(body)
+    assert found is not None
+    assert (found.sector, found.industry, found.sector_known) == (
+        "Technology",
+        "Software—Application",
+        True,
+    )
+
+
+def test_a_fund_or_an_odd_value_has_no_sector_but_the_source_still_answered() -> None:
+    etf = parse_yahoo_search(json.dumps({"quotes": [{"quoteType": "ETF", "symbol": "IWDA.L"}]}))
+    assert etf is not None and (etf.sector, etf.industry, etf.sector_known) == (None, None, True)
+    odd = parse_yahoo_search(
+        json.dumps(
+            {"quotes": [{"quoteType": "EQUITY", "symbol": "X", "sector": 5, "industry": "x" * 300}]}
+        )
+    )
+    assert odd is not None and odd.sector is None and odd.industry == "x" * 100  # cut to fit
+    assert odd.sector_known
+
+
+def test_openfigi_gives_no_sector() -> None:
+    found = parse_openfigi(figi(("AAPL", "US", "Equity")))
+    assert found is not None and found.sector is None and not found.sector_known
