@@ -581,3 +581,15 @@ def test_a_share_mapped_in_this_run_is_not_asked_about_its_sector_again_at_once(
     assert A not in figi.asked and result.attempted == 0  # the same run: no second call
     fill_sectors(db, [figi], NOW + timedelta(days=1), isins=held)
     assert A in figi.asked  # the next run asks
+
+
+def test_with_only_a_source_that_gives_no_sectors_a_share_is_settled_not_asked_every_night(
+    db: Session, held: list[HeldIsin]
+) -> None:
+    mapped(db, A)
+    figi = FakeResolver("openfigi", {A: listing("ALPH", "openfigi")})
+    result = fill_sectors(db, [figi], NOW, isins=held)
+    assert result.warnings == {} and sector_of(db, A) == (None, None, NOW)
+    figi.asked.clear()
+    fill_sectors(db, [figi], NOW + timedelta(days=5), isins=held)
+    assert figi.asked == []  # settled until the retry time

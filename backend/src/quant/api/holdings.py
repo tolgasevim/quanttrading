@@ -178,7 +178,7 @@ def _weights(holdings: service.Holdings) -> tuple[dict[str, Decimal], Decimal, i
     values = {
         p.isin: value
         for p in holdings.positions
-        if (m := holdings.marks.get(p.isin)) and (value := _value(m)) > 0
+        if (m := holdings.marks.get(p.isin)) and (value := _value(m)) >= 0
     }
     total = sum(values.values(), Decimal(0))
     if total <= 0:

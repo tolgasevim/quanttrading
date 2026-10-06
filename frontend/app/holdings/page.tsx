@@ -415,6 +415,7 @@ export default function HoldingsPage() {
                 price is known: a market price (see <a href="/prices">Prices</a>) or a broker
                 statement, whichever is newer.
               </p>
+              {data.valued_positions > 0 && (
               <p className="muted">
                 Weight is the share of the {data.valued_positions} positions that have a value
                 (together {eur(data.valued_total)}); a position without a price is not in it, and
@@ -423,6 +424,7 @@ export default function HoldingsPage() {
                 day. Sector and industry are the names Yahoo Finance gives a share. Funds and
                 coins have none.
               </p>
+              )}
             </div>
           </>
         )}
