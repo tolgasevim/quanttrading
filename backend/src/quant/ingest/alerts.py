@@ -36,6 +36,8 @@ from quant.models import (
 )
 from quant.portfolio import service
 from quant.portfolio.alerts import (
+    MAX_GAP_DAYS,
+    MAX_PRICE_AGE_DAYS,
     MOVE_CLASSES,
     breaches,
     daily_move,
@@ -49,6 +51,8 @@ log = logging.getLogger(__name__)
 
 FAILED_JOB_WINDOW_HOURS = 48
 STUCK_AFTER_HOURS = 6  # no job here runs this long
+PARTIAL_MIN_FAILURES = 5
+PARTIAL_MIN_SHARE = 0.25
 DEFAULTS = AlertSettings(
     daily_moves_enabled=True,
     move_stock_pct=DEFAULT_STOCK_PCT,
@@ -70,9 +74,9 @@ def _store(session: Session, rows: list[dict[str, object]]) -> int:
 
 
 def _newest_bars(
-    session: Session, instrument_ids: list[int]
+    session: Session, instrument_ids: list[int], since: date
 ) -> dict[int, list[tuple[date, Decimal]]]:
-    """The two newest closes of each instrument, newest first."""
+    """The two newest closes of each instrument since `since`, newest first."""
     if not instrument_ids:
         return {}
     ranked = (
@@ -84,7 +88,7 @@ def _newest_bars(
             .over(partition_by=PriceEOD.instrument_id, order_by=PriceEOD.date.desc())
             .label("rn"),
         )
-        .where(PriceEOD.instrument_id.in_(instrument_ids))
+        .where(PriceEOD.instrument_id.in_(instrument_ids), PriceEOD.date >= since)
         .subquery()
     )
     rows = session.execute(
@@ -181,16 +185,27 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
             continue
         stuck = run.status == JobStatus.RUNNING
         details = run.details or {}
-        reason = str(details.get("error") or "")
         errors = details.get("errors")
-        if not reason and isinstance(errors, dict) and errors:
-            reason = f"{len(errors)} items failed, for example: " + "; ".join(
-                f"{k}: {v}" for k, v in list(errors.items())[:2]
-            )
+        failures = len(errors) if isinstance(errors, dict) else 0
         if stuck:
             reason = f"The run started at {run.started_at:%Y-%m-%d %H:%M} UTC and never finished."
-        elif run.status == JobStatus.PARTIAL and not reason:
-            continue  # nothing went wrong that a person could act on
+        elif details.get("error"):
+            reason = str(details["error"])
+        elif isinstance(errors, dict) and errors:
+            reason = f"{failures} items failed, for example: " + "; ".join(
+                f"{k}: {v}" for k, v in list(errors.items())[:2]
+            )
+        else:
+            reason = ""
+        if run.status == JobStatus.PARTIAL:
+            if not reason:
+                continue  # nothing went wrong that a person could act on
+            # One delisted ticker is a Prices-page matter, not an alert every night: a partial run
+            # alerts when a few items failed, or a quarter of them.
+            attempted = details.get("attempted")
+            share = failures / attempted if isinstance(attempted, int) and attempted else 1
+            if failures < PARTIAL_MIN_FAILURES and share < PARTIAL_MIN_SHARE:
+                continue
         what = (
             "seems stuck"
             if stuck
@@ -198,9 +213,14 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
             if run.status == JobStatus.FAILED
             else "finished with errors"
         )
-        # One alert per job, outcome, local day and reason: a nightly repeat is one a day, a
-        # second and different failure the same day still gets its own.
-        digest = hashlib.sha256(reason.encode()).hexdigest()[:8]
+        # One alert per job, outcome and local day. A failed or stuck run adds its reason, so a
+        # different failure the same day still arrives; a partial run's text changes with the
+        # count and must not make a second alert.
+        digest = (
+            ""
+            if run.status == JobStatus.PARTIAL
+            else hashlib.sha256(reason.encode()).hexdigest()[:8]
+        )
         day = happened.astimezone(tz).date().isoformat()
         rows.append(
             {
@@ -210,7 +230,7 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
                 "title": f"Job {run.job} {what}",
                 "body": (reason or "The run failed with no message.")[:900],
                 "isin": None,
-                "dedupe_key": f"job_failed:{run.job}:{run.status.value}:{day}:{digest}",
+                "dedupe_key": f"job_failed:{run.job}:{run.status.value}:{day}:{digest}".rstrip(":"),
             }
         )
     return rows
@@ -238,7 +258,9 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
         )
         if i.isin
     }
-    bars = _newest_bars(session, [i.id for i in instruments.values()])
+    # A move needs a fresh bar and one at most MAX_GAP_DAYS before it: nothing older is read.
+    window = today - timedelta(days=MAX_PRICE_AGE_DAYS + MAX_GAP_DAYS + 1)
+    bars = _newest_bars(session, [i.id for i in instruments.values()], window)
     wanted = {
         u.id for u in users if u.id in positions or u.role == Role.ADMIN or u.email in result.errors
     }

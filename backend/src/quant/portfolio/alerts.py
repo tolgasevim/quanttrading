@@ -44,7 +44,7 @@ def daily_move(
 
 # Share splits and reverse splits change the price by a simple ratio. For a share, a move that is
 # one of these, to within SPLIT_TOLERANCE, may be a split the data has not caught up with rather
-# than a crash or a jump. The alert is still raised, with a note, as an info and never a warning.
+# than a crash or a jump. The alert is still raised, with a note, at the severity of its size.
 # Funds and coins are not checked: they have no splits.
 SPLIT_RATIOS = (2, 3, 4, 5, 8, 10, 20, 50)
 SPLIT_TOLERANCE = Decimal("0.02")

@@ -238,8 +238,10 @@ def test_failed_and_partly_failed_jobs_are_alerts_for_admins_only(
             JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=done,
                    details={"error": "RuntimeError: boom"}),
             JobRun(job="map_isins", status=JobStatus.PARTIAL, finished_at=done,
-                   details={"errors": {"US1": "yahoo: down", "US2": "yahoo: down", "US3": "x"}}),
+                   details={"attempted": 4, "errors": {"US1": "yahoo: down", "US2": "yahoo: down", "US3": "x"}}),
             JobRun(job="clean_partial", status=JobStatus.PARTIAL, finished_at=done, details={}),
+            JobRun(job="one_bad_ticker", status=JobStatus.PARTIAL, finished_at=done,
+                   details={"attempted": 40, "errors": {"US9": "no data"}}),
             JobRun(job="old", status=JobStatus.FAILED, finished_at=now - timedelta(hours=60),
                    details={"error": "long ago"}),
             JobRun(job="running", status=JobStatus.RUNNING, started_at=now - timedelta(hours=1),
@@ -412,7 +414,7 @@ def test_a_job_that_is_partial_every_night_is_one_alert_a_day(
     for hours in (3, 5):  # two runs on the same day
         db.add(JobRun(job="ingest_prices", status=JobStatus.PARTIAL,
                       finished_at=admin.created_at + timedelta(hours=hours),
-                      details={"errors": {"US1": "no data"}}))  # fmt: skip
+                      details={"attempted": 3, "errors": {"US1": "no data", "US2": "x"}}))  # fmt: skip
     db.commit()
     assert run(db, now=now) == 1
     assert run(db, now=now) == 0
@@ -482,3 +484,35 @@ def test_a_second_and_different_failure_the_same_day_is_its_own_alert(
     db.commit()
     assert run(db, now=now) == 2
     assert sorted(n.body for n in alerts(db)) == ["first reason", "second reason"]
+
+
+def test_a_partial_run_with_a_changing_count_is_still_one_alert_a_day(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=30)
+    for hours, count in ((3, 6), (5, 7)):  # 6, then 7 items failed the same day
+        db.add(JobRun(job="ingest_prices", status=JobStatus.PARTIAL,
+                      finished_at=admin.created_at + timedelta(hours=hours),
+                      details={"attempted": 50, "errors": {f"US{i}": "x" for i in range(count)}}))  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 1
+
+
+def test_the_job_reads_no_bar_older_than_it_can_use(owner: TestClient, db: Session) -> None:
+    from quant.ingest.alerts import _newest_bars
+
+    inst = price(db, A, ("108", "100"))
+    db.add(
+        PriceEOD(
+            instrument_id=inst,
+            date=TODAY - timedelta(days=400),
+            close=D(1),
+            currency="EUR",
+            source="x",
+        )
+    )
+    db.commit()
+    rls.bypass(db)
+    found = _newest_bars(db, [inst], TODAY - timedelta(days=12))
+    assert [d for d, _ in found[inst]] == [TODAY, TODAY - timedelta(1)]
+    assert _newest_bars(db, [], TODAY) == {}
