@@ -1,7 +1,6 @@
 import json
 import sys
 import types
-from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal as D
 from typing import Any
@@ -14,6 +13,7 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.ai import budget, consent, picks, pricing
 from quant.ai import client as llm
+from quant.ai import service as ai_service
 from quant.ai.client import (
     AnthropicLlm,
     LlmAuthError,
@@ -106,20 +106,6 @@ def hold(db: Session, user: User, isin: str = ISIN, name: str = "Alpha Corp") ->
         )
     )  # fmt: skip
     db.commit()
-
-
-@pytest.fixture
-def owner(client: TestClient, admin: User) -> TestClient:
-    login(client, admin.email)
-    return client
-
-
-@pytest.fixture
-def fake() -> Iterator[Fake]:
-    f = Fake()
-    app.dependency_overrides[llm_client] = lambda: f
-    yield f
-    app.dependency_overrides.pop(llm_client, None)
 
 
 def accept(owner: TestClient, anonymise: bool = False) -> None:
@@ -305,7 +291,7 @@ def test_the_loop_stops_after_a_few_turns(owner: TestClient, fake: Fake) -> None
     accept(owner)
     fake.replies = [reply("again", [pick_call(f"t{i}")]) for i in range(10)]
     assert owner.post("/api/ai/ask", json={"question": "Loop forever"}).status_code == 200
-    assert len(fake.requests) == 4  # MAX_TURNS + 1
+    assert len(fake.requests) == ai_service.MAX_TURNS + 1
 
 
 def test_a_refusal_is_reported_and_costs_are_kept(
@@ -693,7 +679,10 @@ def test_a_dated_name_of_the_configured_model_is_not_a_fallback(
     )
 
 
-def test_a_pick_the_model_cannot_fix_in_time_is_reported(owner: TestClient, fake: Fake) -> None:
+def test_a_pick_the_model_cannot_fix_in_time_is_reported(
+    owner: TestClient, fake: Fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ai_service, "MAX_TURNS", 3)
     accept(owner)
     good = [reply("again", [pick_call(f"t{i}", isin=f"US000000010{i}")]) for i in range(3)]
     fake.replies = [*good, reply("last", [pick_call("t9", horizon_months=0)])]
@@ -1012,7 +1001,10 @@ def test_flipping_hide_amounts_keeps_the_time_of_acceptance(
     assert again is not None and again.accepted_at == at and again.anonymise_amounts is True
 
 
-def test_a_repeated_pick_is_not_counted_as_a_failure(owner: TestClient, fake: Fake) -> None:
+def test_a_repeated_pick_is_not_counted_as_a_failure(
+    owner: TestClient, fake: Fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ai_service, "MAX_TURNS", 3)
     accept(owner)
     same = [pick_call("t1"), pick_call("t2")]
     fake.replies = [

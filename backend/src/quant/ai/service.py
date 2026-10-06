@@ -17,14 +17,16 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from quant.ai import budget, consent, picks
+from quant.ai import budget, consent, picks, tools
 from quant.ai.client import LlmClient, LlmError, LlmReply, default_client
 from quant.config import get_settings
 from quant.models import AiPick
 from quant.portfolio import service
 from quant.portfolio.lots import COST_MISSING
 
-MAX_TURNS = 3
+MAX_TURNS = 5  # model calls after the first; read tools need a turn each
+MAX_HISTORY = 10  # earlier messages of a chat that are sent again
+MAX_HISTORY_CHARS = 4000
 MAX_POSITIONS = 60
 MAX_QUESTION_CHARS = 1000
 SUBSTANTIAL = 80  # characters: a reply this long counts as an answer, not as "Done."
@@ -38,9 +40,13 @@ SYSTEM = """You are a careful investing guide for a private investor in Germany.
 guidance only. You never place trades. You are not a financial adviser and you say so when it \
 matters.
 
-The user message holds a summary of the user's portfolio and a question. You have no live market \
-data and no news: say when an answer depends on facts you cannot see, and do not invent prices \
-or figures. Use the portfolio data you are given, and name which data you used.
+The user message holds a summary of the user's portfolio and a question. You can call read-only \
+tools for a holding's details, stored prices, a price-shock scenario, the tax estimate, ECB \
+rates and the user's earlier picks. You have no news, no macro data, no live quotes and no \
+fundamentals: say when an answer depends on facts you cannot see, and never invent prices or \
+figures. Use tools for numbers instead of guessing, and name which data you used. For a \
+scenario such as "what if oil rises 30%", call the scenario tool with sensible targets and say \
+that it is linear and ignores correlations.
 
 Be short and concrete. Give the main risk next to every recommendation. For every security you \
 recommend to buy, sell or hold, call the tool record_pick once, with a time horizon in months. \
@@ -57,6 +63,7 @@ class AskResult:
     fallback_used: bool
     refused: bool = False
     notes: list[str] = field(default_factory=list)
+    tool_calls: list[tools.ToolTrace] = field(default_factory=list)
 
 
 def _money(value: Decimal | None) -> str | None:
@@ -64,10 +71,13 @@ def _money(value: Decimal | None) -> str | None:
 
 
 def build_context(
-    session: Session, user_id: uuid.UUID, anonymise: bool
+    session: Session,
+    user_id: uuid.UUID,
+    anonymise: bool,
+    holdings: service.Holdings | None = None,
 ) -> tuple[str, list[str], set[str]]:
     """The portfolio as compact JSON for the prompt, what it contains, and the held ISINs."""
-    holdings = service.build_holdings(session, user_id)
+    holdings = holdings or service.build_holdings(session, user_id)
     weights, total, valued = service.weights(holdings)
     rows = []
     for p in holdings.positions:
@@ -133,11 +143,22 @@ def _handle_tools(
     held: set[str],
     usage_id: uuid.UUID,
     saved: list[AiPick],
-) -> list[dict[str, Any]]:
+    ctx: tools.ToolContext,
+    traces: list[tools.ToolTrace],
+) -> tuple[list[dict[str, Any]], int]:
+    """Run the tool calls of one reply. Returns the tool_result blocks and how many record_pick
+    calls failed (the other tools' errors are for the model to read, not for the user)."""
     results: list[dict[str, Any]] = []
+    failed = 0
     for call in reply.tool_calls:
         block: dict[str, Any] = {"type": "tool_result", "tool_use_id": call.id}
-        if call.name != picks.TOOL_NAME:
+        if call.name in tools.NAMES:
+            text, trace = tools.run(ctx, call.name, call.input)
+            traces.append(trace)
+            block["content"] = text
+            if trace.error:
+                block["is_error"] = True
+        elif call.name != picks.TOOL_NAME:
             block.update(content="unknown tool", is_error=True)
         else:
             key = _pick_key(call.input)
@@ -159,11 +180,13 @@ def _handle_tools(
                 block["content"] = "recorded"
             except picks.PickInvalid as exc:
                 block.update(content=str(exc), is_error=True)
+                failed += 1
             except SQLAlchemyError:  # the savepoint is rolled back; the answer is not lost
                 block.update(content="the pick could not be stored", is_error=True)
+                failed += 1
         results.append(block)
     session.commit()
-    return results
+    return results, failed
 
 
 def _warn_if_unlogged(answer: str, saved: list[AiPick], notes: list[str]) -> None:
@@ -177,17 +200,34 @@ def ask(
     user_id: uuid.UUID,
     question: str,
     client: LlmClient | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> AskResult:
+    """One question, or the next message of a chat: `history` holds the earlier messages as plain
+    text (role user or assistant). The portfolio summary goes with the newest question only."""
     question = " ".join(question.split())[:MAX_QUESTION_CHARS]
     agreed = consent.require(session, user_id)
     settings = get_settings()
     budget.check(session, user_id, settings)
     client = client or default_client()
 
-    context, points, held = build_context(session, user_id, agreed.anonymise_amounts)
+    holdings = service.build_holdings(session, user_id)
+    context, points, held = build_context(session, user_id, agreed.anonymise_amounts, holdings)
+    ctx = tools.ToolContext(session, user_id, agreed.anonymise_amounts, holdings)
     messages: list[dict[str, Any]] = [
-        {"role": "user", "content": f"Portfolio summary:\n{context}\n\nQuestion: {question}"}
+        {"role": m["role"], "content": m["content"][:MAX_HISTORY_CHARS]}
+        for m in (history or [])[-MAX_HISTORY:]
+        if m.get("role") in ("user", "assistant") and m.get("content")
     ]
+    # The API wants the first message from the user and the roles to alternate.
+    while messages and messages[0]["role"] != "user":
+        messages.pop(0)
+    messages = [m for i, m in enumerate(messages) if i == 0 or m["role"] != messages[i - 1]["role"]]
+    if messages and messages[-1]["role"] == "user":
+        messages.pop()
+    messages.append(
+        {"role": "user", "content": f"Portfolio summary:\n{context}\n\nQuestion: {question}"}
+    )
+    traces: list[tools.ToolTrace] = []
     saved: list[AiPick] = []
     models: set[str] = set()
     answer = ""
@@ -206,7 +246,9 @@ def ask(
                 _warn_if_unlogged(answer, saved, notes)
                 break
         try:
-            reply = client.send(system=SYSTEM, messages=messages, tools=[picks.TOOL])
+            reply = client.send(
+                system=SYSTEM, messages=messages, tools=[picks.TOOL, *tools.SCHEMAS]
+            )
         except LlmError:
             if _turn == 0:
                 raise
@@ -221,6 +263,7 @@ def ask(
                 "The AI declined to answer this question.", saved, points, models, settings, True
             )
             declined.notes.extend(notes)
+            declined.tool_calls = traces
             return declined
         if reply.stop_reason == "max_tokens":
             notes.append("The answer was cut off at the length limit.")
@@ -230,7 +273,7 @@ def ask(
         if not followed_up and (len(reply.text) >= SUBSTANTIAL or len(reply.text) > len(answer)):
             answer = reply.text
         if reply.tool_calls:
-            results = _handle_tools(
+            results, failed = _handle_tools(
                 session,
                 user_id,
                 reply,
@@ -238,10 +281,11 @@ def ask(
                 held=held,
                 usage_id=usage.id,
                 saved=saved,
+                ctx=ctx,
+                traces=traces,
             )
             messages.append({"role": "assistant", "content": reply.raw_content})
             messages.append({"role": "user", "content": results})
-            failed = sum(1 for r in results if r.get("is_error"))  # not repeats, which are fine
             continue
         failed = 0
         if not saved and not followed_up and RECOMMENDS.search(reply.text):
@@ -261,6 +305,7 @@ def ask(
         break
     result = _result(answer or "The AI gave no answer.", saved, points, models, settings, False)
     result.notes.extend(notes)
+    result.tool_calls = traces
     if failed:
         result.notes.append(
             f"{failed} pick(s) in this answer could not be recorded in the pick log. "

@@ -84,7 +84,8 @@ export default function AiPage() {
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [picks, setPicks] = useState<AiPick[]>([]);
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<AiAnswer | null>(null);
+  // The chat: the server keeps no state, so the page sends the earlier messages with each one.
+  const [turns, setTurns] = useState<{ question: string; answer: AiAnswer }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -109,10 +110,15 @@ export default function AiPage() {
   const ask = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
-    setAnswer(null);
     setBusy(true);
     try {
-      setAnswer(await post<AiAnswer>("/api/ai/ask", { question }));
+      const history = turns.flatMap((t) => [
+        { role: "user", content: t.question },
+        { role: "assistant", content: t.answer.answer },
+      ]);
+      const answer = await post<AiAnswer>("/api/ai/ask", { question, history });
+      setTurns([...turns, { question, answer }]);
+      setQuestion("");
       await load(); // the pick log and the budget changed
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "The question failed.");
@@ -185,7 +191,7 @@ export default function AiPage() {
                   setError("");
                   try {
                     setStatus(await api<AiStatus>("/api/ai/consent", { method: "DELETE" }));
-                    setAnswer(null);
+                    setTurns([]);
                   } catch (err) {
                     setError(err instanceof ApiError ? err.detail : "Could not save.");
                   }
@@ -196,12 +202,29 @@ export default function AiPage() {
             </details>
           </form>
         )}
-        {answer && (
-          <div className="card">
+        {turns.map(({ question: q, answer }, i) => (
+          <div className="card" key={i}>
+            <p>
+              <strong>You:</strong> {q}
+            </p>
             <p className="muted">{answer.label}</p>
             <p style={{ whiteSpace: "pre-wrap" }}>{answer.answer}</p>
             {answer.fallback_used && (
               <p className="muted">A backup model answered this ({answer.model}).</p>
+            )}
+            {answer.tool_calls.length > 0 && (
+              <details>
+                <summary className="muted">
+                  Tools used ({answer.tool_calls.length})
+                </summary>
+                <ul className="muted">
+                  {answer.tool_calls.map((t, j) => (
+                    <li key={j}>
+                      {t.name} {t.input}: {t.summary}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
             <p className="muted">Data used: {answer.data_points.join("; ")}.</p>
             {answer.notes.map((n) => (
@@ -216,6 +239,13 @@ export default function AiPage() {
               </p>
             )}
           </div>
+        ))}
+        {turns.length > 0 && (
+          <p>
+            <button type="button" className="link" onClick={() => setTurns([])}>
+              Start a new chat
+            </button>
+          </p>
         )}
         {b && (
           <p className="muted">
