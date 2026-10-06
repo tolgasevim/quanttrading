@@ -174,7 +174,9 @@ export default function NotificationsPage() {
   // only, so the rows on the page are updated here, by id.
   const mutate = async (path: string, id?: string) => {
     try {
-      const body = await post<Notifications>(path);
+      // "All" means all the page has shown: an alert that arrived meanwhile stays unread.
+      const newest = data?.items[0]?.created_at;
+      const body = await post<Notifications>(path, id === undefined && newest ? { up_to: newest } : undefined);
       setData((old) => ({
         unread: body.unread,
         items: (old?.items ?? body.items).map((n) =>

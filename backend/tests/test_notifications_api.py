@@ -229,3 +229,20 @@ def test_older_alerts_can_be_reached_with_an_offset(
     titles = [i["title"] for i in first + second + third]
     assert titles == [f"Title {n}" for n in range(7, 0, -1)]  # newest first, no gaps or repeats
     assert owner.get("/api/notifications?offset=-1").status_code == 422
+
+
+def test_read_all_up_to_a_moment_leaves_newer_alerts_unread(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    rows = [add(db, admin, n) for n in range(1, 5)]  # created one hour apart
+    seen = rows[1].created_at  # the page showed alerts 1 and 2
+    body = owner.post("/api/notifications/read-all", json={"up_to": seen.isoformat()}).json()
+    assert {i["title"]: i["read"] for i in body["items"]} == {
+        "Title 4": False,
+        "Title 3": False,
+        "Title 2": True,
+        "Title 1": True,
+    }
+    assert body["unread"] == 2
+    assert owner.post("/api/notifications/read-all").json()["unread"] == 0  # no body: all
+    assert owner.post("/api/notifications/read-all", json={"up_to": "yesterday"}).status_code == 422

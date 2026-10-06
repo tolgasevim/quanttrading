@@ -187,7 +187,7 @@ def _user_moves(
 def _normalise(reason: str) -> str:
     """The reason without the parts that change from run to run (ids, ports, long counts), so the
     same outage hashes the same. Short numbers stay: HTTP 429 and HTTP 503 are different outages."""
-    return re.sub(r"[0-9a-fA-F]{6,}|\d{4,}", "#", reason)
+    return re.sub(r"\b(?=[0-9a-f]*\d)[0-9a-f]{6,}\b|\d{4,}", "#", reason, flags=re.IGNORECASE)
 
 
 def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[str, object]]]:

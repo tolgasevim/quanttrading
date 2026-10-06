@@ -607,3 +607,11 @@ def test_a_crash_of_the_alerts_job_shows_only_the_kind_of_error_to_the_admins(
     run(db, now=now)
     [n] = alerts(db)
     assert n.body == "IntegrityError" and "secret" not in n.body
+
+
+def test_ordinary_words_made_of_hex_letters_are_not_taken_for_ids() -> None:
+    from quant.ingest.alerts import _normalise
+
+    assert _normalise("defaced feed") == "defaced feed"  # words stay
+    assert _normalise("decade") != _normalise("facade")
+    assert _normalise("request 4f9ac2e1 failed") == "request # failed"  # an id has digits

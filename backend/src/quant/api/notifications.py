@@ -135,13 +135,20 @@ def list_notifications(
     return NotificationsOut(items=[_out(n) for n in rows], unread=_unread(db, user.id))
 
 
+class ReadAllIn(BaseModel):
+    # Mark only the alerts created up to this moment (the newest one the page has shown), so an
+    # alert that arrives while the page is open is not marked read unseen. Without it: all.
+    up_to: datetime | None = None
+
+
 @router.post("/notifications/read-all", response_model=NotificationsOut)
-def read_all(user: CurrentUser, db: UserDb) -> NotificationsOut:
-    db.execute(
-        update(Notification)
-        .where(Notification.user_id == user.id, Notification.read_at.is_(None))
-        .values(read_at=datetime.now(UTC))
+def read_all(user: CurrentUser, db: UserDb, body: ReadAllIn | None = None) -> NotificationsOut:
+    query = update(Notification).where(
+        Notification.user_id == user.id, Notification.read_at.is_(None)
     )
+    if body is not None and body.up_to is not None:
+        query = query.where(Notification.created_at <= body.up_to)
+    db.execute(query.values(read_at=datetime.now(UTC)))
     db.commit()
     return list_notifications(user, db)
 
