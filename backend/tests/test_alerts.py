@@ -418,8 +418,9 @@ def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
 
     monkeypatch.setattr(worker, "run_prices", prices_fail)
     monkeypatch.setattr(worker, "run_alerts", lambda: order.append("alerts"))
+    monkeypatch.setattr(worker, "run_scoring", lambda: order.append("scoring"))
     worker.run_evening()  # the failure is logged, and the alerts still run
-    assert order == ["prices", "alerts"]
+    assert order == ["prices", "alerts", "scoring"]
     assert "the price run failed" in caplog.text
     # A crash before the job could write its own row leaves a failed one, so the admins hear of it.
     crashed = db.query(JobRun).filter_by(job=worker.PRICES_JOB).one()
@@ -427,7 +428,7 @@ def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
     order.clear()
     monkeypatch.setattr(worker, "run_prices", lambda: order.append("prices"))
     worker.run_evening()
-    assert order == ["prices", "alerts"]
+    assert order == ["prices", "alerts", "scoring"]
 
 
 def test_a_job_that_is_partial_every_night_is_one_alert_a_day(
