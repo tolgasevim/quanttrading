@@ -7,11 +7,6 @@ from decimal import Decimal
 
 TENTH = Decimal("0.1")
 
-# The daily-move limits of decision D39, in percent. The model, the API and the job all use these.
-DEFAULT_STOCK_PCT = Decimal(5)
-DEFAULT_FUND_PCT = Decimal(3)
-DEFAULT_CRYPTO_PCT = Decimal(10)
-
 # The broker's asset classes that get a daily-move alert, and how an alert names them.
 MOVE_CLASSES: dict[str, str] = {"STOCK": "share", "FUND": "fund", "CRYPTO": "coin"}
 
@@ -47,9 +42,10 @@ def daily_move(
     return Move((close - previous) / previous * 100, close, previous, day, previous_day)
 
 
-# Share splits and reverse splits change the price by a simple ratio. A move that is one of
-# these, to within SPLIT_TOLERANCE, is far more likely a split the data has not caught up with
-# than a crash or a jump, so it raises no alert.
+# Share splits and reverse splits change the price by a simple ratio. For a share, a move that is
+# one of these, to within SPLIT_TOLERANCE, is far more likely a split the data has not caught up
+# with than a crash or a jump, so it raises no alert (the job logs it). Funds and coins are not
+# checked: they have no splits, and a fall of half is exactly what an alert is for.
 SPLIT_RATIOS = (2, 3, 4, 5, 8, 10, 20, 50)
 SPLIT_TOLERANCE = Decimal("0.02")
 
@@ -95,14 +91,13 @@ def move_text(
     title = f"{name} {sign}{pct}%"
     money = f" {currency}" if currency else ""
     body = (
-        f"{name} closed at {_plain(move.close)}{money} on {move.day.isoformat()}, "
-        f"{sign}{pct}% from {_plain(move.previous)}{money} on {move.previous_day.isoformat()}. "
-        f"Your limit for a {MOVE_CLASSES.get(asset_class, 'holding')} is {_plain(limit)}%."
+        f"{name} closed at {plain(move.close)}{money} on {move.day.isoformat()}, "
+        f"{sign}{pct}% from {plain(move.previous)}{money} on {move.previous_day.isoformat()}. "
+        f"Your limit for a {MOVE_CLASSES.get(asset_class, 'holding')} is {plain(limit)}%."
     )
     return title, body
 
 
-def _plain(value: Decimal) -> str:
-    """12.500000 -> 12.5, never scientific notation."""
-    text = format(value.normalize(), "f")
-    return text
+def plain(value: Decimal) -> str:
+    """12.500000 -> 12.5 and 100.00 -> 100, never scientific notation (1E+2)."""
+    return format(value.normalize(), "f")

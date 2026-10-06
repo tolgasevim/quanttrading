@@ -14,8 +14,14 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from quant.api.deps import CurrentUser, UserDb
-from quant.models import AlertSettings, Notification
-from quant.portfolio.alerts import DEFAULT_CRYPTO_PCT, DEFAULT_FUND_PCT, DEFAULT_STOCK_PCT
+from quant.models import (
+    DEFAULT_CRYPTO_PCT,
+    DEFAULT_FUND_PCT,
+    DEFAULT_STOCK_PCT,
+    AlertSettings,
+    Notification,
+)
+from quant.portfolio.alerts import plain
 
 router = APIRouter(prefix="/api", tags=["notifications"])
 
@@ -53,38 +59,32 @@ class SettingsIn(BaseModel):
     move_stock_pct: Pct
     move_fund_pct: Pct
     move_crypto_pct: Pct
-    quiet_start: str | None = None
-    quiet_end: str | None = None
+    quiet_start: time | None = None
+    quiet_end: time | None = None
 
     @field_validator("quiet_start", "quiet_end", mode="before")
     @classmethod
-    def _blank_is_none(cls, value: object) -> object:
-        """A cleared time input sends an empty string: that means no time."""
-        return None if isinstance(value, str) and not value.strip() else value
+    def _a_time_is_hh_mm(cls, value: object) -> object:
+        """ "22:00" is a time. A cleared time input sends "", which means no time."""
+        if value is None or isinstance(value, time):
+            return value
+        if not isinstance(value, str):
+            raise ValueError("a time is HH:MM")
+        if not value.strip():
+            return None
+        try:
+            parsed = time.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("a time is HH:MM") from exc
+        if len(value) != 5 or parsed.second or parsed.microsecond:
+            raise ValueError("a time is HH:MM")
+        return parsed
 
     @model_validator(mode="after")
     def _quiet_hours_are_a_pair(self) -> "SettingsIn":
         if (self.quiet_start is None) != (self.quiet_end is None):
             raise ValueError("set both quiet hours times, or neither")
-        for value in (self.quiet_start, self.quiet_end):
-            if value is not None:
-                _parse_time(value)
         return self
-
-
-def _parse_time(value: str) -> time:
-    try:
-        parsed = time.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError("a time is HH:MM") from exc
-    if len(value) != 5 or parsed.second or parsed.microsecond:
-        raise ValueError("a time is HH:MM")
-    return parsed
-
-
-def _plain(value: Decimal) -> Decimal:
-    """7.50 -> 7.5 and 100.00 -> 100, never 1E+2 (Decimal.normalize alone gives that)."""
-    return Decimal(format(value.normalize(), "f"))
 
 
 def _hhmm(value: time | None) -> str | None:
@@ -169,9 +169,9 @@ def _settings_out(row: AlertSettings | None) -> SettingsOut:
         )
     return SettingsOut(
         daily_moves_enabled=row.daily_moves_enabled,
-        move_stock_pct=_plain(row.move_stock_pct),
-        move_fund_pct=_plain(row.move_fund_pct),
-        move_crypto_pct=_plain(row.move_crypto_pct),
+        move_stock_pct=Decimal(plain(row.move_stock_pct)),
+        move_fund_pct=Decimal(plain(row.move_fund_pct)),
+        move_crypto_pct=Decimal(plain(row.move_crypto_pct)),
         quiet_start=_hhmm(row.quiet_start),
         quiet_end=_hhmm(row.quiet_end),
     )
@@ -190,8 +190,8 @@ def put_alert_settings(body: SettingsIn, user: CurrentUser, db: UserDb) -> Setti
         "move_stock_pct": body.move_stock_pct,
         "move_fund_pct": body.move_fund_pct,
         "move_crypto_pct": body.move_crypto_pct,
-        "quiet_start": _parse_time(body.quiet_start) if body.quiet_start else None,
-        "quiet_end": _parse_time(body.quiet_end) if body.quiet_end else None,
+        "quiet_start": body.quiet_start,
+        "quiet_end": body.quiet_end,
     }
     stmt = insert(AlertSettings).values(user_id=user.id, **values)
     # Two saves at the same moment must not fail on the primary key: the last one wins.

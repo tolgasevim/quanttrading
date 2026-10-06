@@ -293,11 +293,20 @@ def test_one_users_failure_does_not_stop_the_others(
     assert len(alerts(db)) == 1  # the owner still got theirs
 
 
-def test_a_move_that_is_a_split_ratio_is_not_an_alert(owner: TestClient, db: Session) -> None:
+def test_a_move_that_is_a_split_ratio_is_not_an_alert_for_a_share(
+    owner: TestClient, db: Session
+) -> None:
     price(db, A, ("50", "100"))  # a 2-for-1 split not yet in the earlier close
     price(db, SPIN, ("40", "100"))  # a real fall of 60%: not a simple ratio
     run(db)
     assert [n.isin for n in alerts(db)] == [SPIN]
+
+
+def test_a_fall_of_half_is_an_alert_for_a_fund_or_a_coin(owner: TestClient, db: Session) -> None:
+    price(db, FUND, ("50", "100"), cls="etf")  # funds and coins have no splits
+    price(db, BTC, ("50", "100"), cls="crypto")
+    run(db)
+    assert sorted(n.isin or "" for n in alerts(db)) == sorted([FUND, BTC])
 
 
 @pytest.mark.parametrize(
@@ -348,3 +357,44 @@ def test_the_alert_job_is_recorded_like_the_others(owner: TestClient, db: Sessio
     worker.run_alerts()
     run_ = db.query(JobRun).filter_by(job=worker.ALERT_JOB).one()
     assert run_.status == JobStatus.SUCCESS and run_.rows_written == 0
+
+
+def test_an_admin_whose_positions_cannot_be_read_still_gets_the_failed_job_alerts(
+    owner: TestClient, db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.ingest import alerts as module
+
+    def broken(session: Session, user: User):  # type: ignore[no-untyped-def]
+        raise RuntimeError("bad ledger")
+
+    monkeypatch.setattr(module, "_open_positions", broken)
+    now = admin.created_at + timedelta(hours=10)
+    db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+                  details={"error": "boom"}))  # fmt: skip
+    db.commit()
+    rls.bypass(db)
+    result = create_alerts(db, TODAY, now)
+    assert "bad ledger" in result.errors[str(admin.id)]  # the run is not clean...
+    assert [n.title for n in alerts(db)] == ["Job ingest_prices failed"]  # ...but the news arrives
+
+
+def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from quant import worker
+
+    order: list[str] = []
+
+    def prices_fail() -> None:
+        order.append("prices")
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(worker, "run_prices", prices_fail)
+    monkeypatch.setattr(worker, "run_alerts", lambda: order.append("alerts"))
+    with pytest.raises(RuntimeError):
+        worker.run_evening()
+    assert order == ["prices", "alerts"]
+    order.clear()
+    monkeypatch.setattr(worker, "run_prices", lambda: order.append("prices"))
+    worker.run_evening()
+    assert order == ["prices", "alerts"]

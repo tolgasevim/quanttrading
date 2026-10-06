@@ -29,8 +29,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from quant.portfolio.alerts import DEFAULT_CRYPTO_PCT, DEFAULT_FUND_PCT, DEFAULT_STOCK_PCT
-
 
 class Base(DeclarativeBase):
     pass
@@ -292,6 +290,13 @@ class UnitCost(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# The daily-move limits of decision D39, in percent. The columns below, the API and the alert job
+# all take their defaults from here.
+DEFAULT_STOCK_PCT = Decimal(5)
+DEFAULT_FUND_PCT = Decimal(3)
+DEFAULT_CRYPTO_PCT = Decimal(10)
 
 
 class Notification(Base):

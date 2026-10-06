@@ -3,7 +3,9 @@ jobs for the admins (FR-70, FR-72).
 
 Runs for all users, so it reads with row-level security bypassed (like the mapping job) and
 always writes the user explicitly. Every alert has a dedupe key, so a second run, or a catch-up
-after the Mac mini was off, never stores the same alert twice.
+after the Mac mini was off, never stores the same alert twice. An alert is a record of an event:
+once stored it is not rewritten, even if the user then changes a limit or the day's price is
+corrected.
 """
 
 import logging
@@ -17,6 +19,9 @@ from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
 from quant.models import (
+    DEFAULT_CRYPTO_PCT,
+    DEFAULT_FUND_PCT,
+    DEFAULT_STOCK_PCT,
     AlertSettings,
     Instrument,
     JobRun,
@@ -28,9 +33,6 @@ from quant.models import (
 )
 from quant.portfolio import service
 from quant.portfolio.alerts import (
-    DEFAULT_CRYPTO_PCT,
-    DEFAULT_FUND_PCT,
-    DEFAULT_STOCK_PCT,
     MOVE_CLASSES,
     breaches,
     daily_move,
@@ -116,7 +118,10 @@ def _user_moves(
         if limit is None or instrument is None or position.asset_class not in MOVE_CLASSES:
             continue
         move = daily_move(bars.get(instrument.id, []), today)
-        if move is None or not breaches(move, limit) or looks_like_split(move):
+        if move is None or not breaches(move, limit):
+            continue
+        if position.asset_class == "STOCK" and looks_like_split(move):
+            log.info("no alert for %s on %s: the move looks like a split", position.isin, move.day)
             continue
         name = position.name or instrument.name or position.isin
         title, body = move_text(name, position.asset_class or "", move, limit, instrument.currency)
@@ -196,8 +201,6 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     bars = _newest_bars(session, [i.id for i in instruments.values()])
     for user in users:
         result.attempted += 1
-        if str(user.id) in result.errors:
-            continue
         mine = settings.get(user.id, DEFAULTS)
         try:
             rows: list[dict[str, object]] = []

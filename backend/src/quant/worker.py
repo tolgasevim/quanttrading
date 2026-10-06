@@ -102,6 +102,15 @@ def run_prices() -> None:
             fetcher.close()
 
 
+def run_evening() -> None:
+    """The evening run: prices, then the alerts that need them. Chained, so a slow or late price
+    run can never leave the alerts to work on yesterday's bars."""
+    try:
+        run_prices()
+    finally:
+        run_alerts()
+
+
 def run_alerts() -> None:
     settings = get_settings()
     with get_sessionmaker()() as session:
@@ -176,15 +185,9 @@ def main() -> None:
         **common,
     )
     scheduler.add_job(
-        run_prices,
+        run_evening,
         CronTrigger.from_crontab(settings.prices_cron, timezone=tz),
         id=PRICES_JOB,
-        **common,
-    )
-    scheduler.add_job(
-        run_alerts,
-        CronTrigger.from_crontab(settings.alerts_cron, timezone=tz),
-        id=ALERT_JOB,
         **common,
     )
     log.info("scheduler started: fx=%r prices=%r (%s)", settings.fx_cron, settings.prices_cron, tz)
