@@ -263,6 +263,8 @@ export default function AiPage() {
         <h2>Pick log</h2>
         <p className="muted">
           <Link href="/ai/track-record">See how the picks did against the benchmark</Link>
+          {" · "}
+          <Link href="/ai/weekly">Weekly commentary</Link>
         </p>
         <Picks picks={picks} />
       </main>

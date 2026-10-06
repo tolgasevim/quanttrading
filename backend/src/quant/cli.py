@@ -249,6 +249,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("ingest-prices", help="run the EOD price job now")
     sub.add_parser("create-alerts", help="create the daily-move and failed-job alerts now")
     sub.add_parser("score-picks", help="score the AI picks against the benchmark now (FR-52)")
+    sub.add_parser("weekly-commentary", help="write this week's AI commentary now (FR-54)")
     sub.add_parser("ingest-fx", help="run the ECB FX job now")
     sub.add_parser("worker", help="run the scheduler")
 
@@ -281,6 +282,7 @@ def main(argv: list[str] | None = None) -> None:
             "ingest-fx": worker.run_fx,
             "create-alerts": worker.run_alerts,
             "score-picks": worker.run_scoring,
+            "weekly-commentary": worker.run_weekly_commentary,
             "worker": worker.main,
         }[args.command]()
 

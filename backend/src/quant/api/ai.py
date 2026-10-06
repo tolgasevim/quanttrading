@@ -14,12 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
-from quant.ai import budget, consent, scoring
+from quant.ai import budget, commentary, consent, scoring
 from quant.ai import service as ai_service
 from quant.ai.client import LlmClient, LlmError, default_client
 from quant.api.deps import CurrentUser, UserDb
 from quant.config import get_settings
-from quant.models import AiPick, AiPickScore, Role
+from quant.ingest.runtime import today_local
+from quant.models import AiCommentary, AiPick, AiPickScore, Role
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -34,6 +35,15 @@ def llm_client() -> LlmClient:
 
 
 Llm = Annotated[LlmClient, Depends(llm_client)]
+
+
+def optional_llm() -> LlmClient | None:
+    """The client for a commentary, or None: without a key the commentary is a template, not
+    an error."""
+    try:
+        return default_client()
+    except LlmError:
+        return None
 
 
 class BudgetOut(BaseModel):
@@ -329,3 +339,49 @@ def track_record(
             for p in picks
         ],
     )
+
+
+class CommentaryOut(BaseModel):
+    id: uuid.UUID
+    week_start: date
+    created_at: datetime
+    kind: str  # ai | template
+    why_template: str | None
+    text: str
+
+
+def _commentary(c: AiCommentary) -> CommentaryOut:
+    return CommentaryOut(
+        id=c.id,
+        week_start=c.week_start,
+        created_at=c.created_at,
+        kind=c.kind,
+        why_template=c.why_template,
+        text=c.text,
+    )
+
+
+@router.get("/commentaries", response_model=list[CommentaryOut])
+def list_commentaries(
+    db: UserDb, user: CurrentUser, limit: Annotated[int, Query(ge=1, le=52)] = 12
+) -> list[CommentaryOut]:
+    rows = db.scalars(
+        select(AiCommentary)
+        .where(AiCommentary.user_id == user.id)
+        .order_by(AiCommentary.week_start.desc())
+        .limit(limit)
+    ).all()
+    return [_commentary(c) for c in rows]
+
+
+@router.post("/commentaries/now", response_model=CommentaryOut)
+def make_commentary_now(
+    db: UserDb,
+    user: CurrentUser,
+    client: Annotated[LlmClient | None, Depends(optional_llm)],
+) -> CommentaryOut:
+    """This week's commentary, now. If the week already has one, that one is returned."""
+    made = commentary.create_commentary(db, user.id, today_local(get_settings()).date(), client)
+    if made is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "there are no holdings to write about")
+    return _commentary(made)

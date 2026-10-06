@@ -441,3 +441,20 @@ class AiPickScore(Base):
     benchmark_return_pct: Mapped[Decimal] = mapped_column(Numeric(14, 4))
     excess_pct: Mapped[Decimal] = mapped_column(Numeric(14, 4))  # pick minus benchmark
     hit: Mapped[bool] = mapped_column(Boolean)  # buy/hold beat the benchmark; sell trailed it
+
+
+class AiCommentary(Base):
+    """A user's weekly commentary (FR-54): written by the AI, or a template-only text built from
+    the data when the AI is off, not allowed or over its budget. One per user and week."""
+
+    __tablename__ = "ai_commentaries"
+    __table_args__ = (UniqueConstraint("user_id", "week_start", name="uq_ai_commentaries_week"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    week_start: Mapped[date] = mapped_column(Date)  # the Monday of the week it covers
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    kind: Mapped[str] = mapped_column(String(10))  # ai | template
+    why_template: Mapped[str | None] = mapped_column(String(200))  # why no AI text, if template
+    model: Mapped[str | None] = mapped_column(String(60))
+    text: Mapped[str] = mapped_column(String(10000))

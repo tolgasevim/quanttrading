@@ -232,6 +232,9 @@ def ask(
     question: str,
     client: LlmClient | None = None,
     history: list[dict[str, str]] | None = None,
+    *,
+    purpose: str = "ask",
+    extra: str | None = None,
 ) -> AskResult:
     """One question, or the next message of a chat: `history` holds the earlier messages as plain
     text (role user or assistant). The portfolio summary goes with the newest question only."""
@@ -246,7 +249,12 @@ def ask(
     ctx = tools.ToolContext(session, user_id, agreed.anonymise_amounts, holdings)
     messages = _history_messages(history, agreed.anonymise_amounts)
     messages.append(
-        {"role": "user", "content": f"Portfolio summary:\n{context}\n\nQuestion: {question}"}
+        {
+            "role": "user",
+            "content": f"Portfolio summary:\n{context}\n\n"
+            + (f"{extra}\n\n" if extra else "")
+            + f"Question: {question}",
+        }
     )
     traces: list[tools.ToolTrace] = []
     saved: list[AiPick] = []
@@ -281,7 +289,7 @@ def ask(
             asked_tools = False
             break
         models.add(reply.model)
-        usage = budget.record(session, user_id, "ask", reply, settings)
+        usage = budget.record(session, user_id, purpose, reply, settings)
         if reply.refused:
             declined = _result(
                 "The AI declined to answer this question.", saved, points, models, settings, True
