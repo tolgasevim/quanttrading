@@ -124,8 +124,18 @@ def start_price(
     if (
         pick.price is not None
         and pick.price_date is not None
-        and day - timedelta(days=MAX_GAP_DAYS) <= pick.price_date < day
+        and day - timedelta(days=MAX_GAP_DAYS) <= pick.price_date <= day
         and pick.price_currency
+        # The stored price counts only when this very instrument has that close on that day. The
+        # pick's price may have come from another listing with other prices.
+        and session.scalar(
+            select(PriceEOD.id).where(
+                PriceEOD.instrument_id == instrument.id,
+                PriceEOD.date == pick.price_date,
+                PriceEOD.close == pick.price,
+            )
+        )
+        is not None
     ):
         value = to_eur(session, pick.price, pick.price_currency, pick.price_date)
         if value is not None and value > 0:
@@ -205,10 +215,11 @@ def score_picks(session: Session, today: date) -> JobResult:
     }
     waiting = unscorable = 0
     for pick in session.scalars(select(AiPick).order_by(AiPick.created_at)).all():
+        pick_id = pick.id  # kept, so an error handler never has to reload an expired row
         due = [
             w
             for w in WINDOWS
-            if (pick.id, w) not in done and add_months(pick_day(pick), w) <= today
+            if (pick_id, w) not in done and add_months(pick_day(pick), w) <= today
         ]
         if not due:
             continue
@@ -244,8 +255,8 @@ def score_picks(session: Session, today: date) -> JobResult:
             session.commit()
         except Exception as exc:  # noqa: BLE001 - one bad pick must not stop the others
             session.rollback()
-            log.exception("could not score pick %s", pick.id)
-            result.errors[str(pick.id)] = type(exc).__name__
+            log.exception("could not score pick %s", pick_id)
+            result.errors[str(pick_id)] = type(exc).__name__
     if waiting:
         result.warnings["waiting"] = f"{waiting} window(s) wait for prices"
     if unscorable:

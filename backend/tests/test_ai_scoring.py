@@ -320,19 +320,59 @@ def test_a_day_without_an_exchange_rate_waits(db: Session, admin: User) -> None:
 def test_the_price_stored_on_the_pick_is_the_start(
     db: Session, admin: User, market: tuple[Instrument, Instrument]
 ) -> None:
+    alpha, bench = market
+    bars(db, alpha, {date(2026, 4, 30): "80"})
+    bars(db, bench, {date(2026, 4, 30): "200"})
     pick(
         db,
         admin,
         date(2026, 5, 4),
         price=D("80"),
         price_currency="EUR",
-        price_date=date(2026, 5, 1),
+        price_date=date(2026, 4, 30),
     )
     rls.bypass(db)
     scoring.score_picks(db, TODAY)
     one = db.scalars(select(AiPickScore).where(AiPickScore.window_months == 1)).one()
     assert one.pick_return_pct == D("50.0000")  # 80 -> 120, not 100 -> 120
-    assert one.start_date == date(2026, 5, 1)
+    assert one.start_date == date(2026, 4, 30)
+
+
+def test_a_price_stored_from_another_listing_is_not_the_start(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    # The stored price (80) is not a close of ALPHA on that day, so ALPHA's own close is used.
+    pick(
+        db,
+        admin,
+        date(2026, 5, 4),
+        price=D("80"),
+        price_currency="USD",
+        price_date=date(2026, 5, 1),
+    )
+    rls.bypass(db)
+    scoring.score_picks(db, TODAY)
+    one = db.scalars(select(AiPickScore).where(AiPickScore.window_months == 1)).one()
+    assert one.pick_return_pct == D("20.0000")
+
+
+def test_a_price_stamped_on_the_day_of_the_pick_is_the_start(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    alpha, _ = market
+    bars(db, alpha, {date(2026, 5, 4): "110"})  # the close that existed when the pick was made
+    pick(
+        db,
+        admin,
+        date(2026, 5, 4),
+        price=D("110"),
+        price_currency="EUR",
+        price_date=date(2026, 5, 4),
+    )
+    rls.bypass(db)
+    scoring.score_picks(db, TODAY)
+    one = db.scalars(select(AiPickScore).where(AiPickScore.window_months == 1)).one()
+    assert one.start_date == date(2026, 5, 4)
 
 
 def test_the_close_of_the_pick_day_is_not_the_start(
@@ -410,6 +450,7 @@ def test_the_benchmark_starts_with_the_pick(
     db: Session, admin: User, market: tuple[Instrument, Instrument]
 ) -> None:
     alpha, bench = market
+    bars(db, alpha, {date(2026, 4, 30): "100"})
     bars(db, bench, {date(2026, 5, 4): "400", date(2026, 4, 30): "190"})  # 4 May must not be used
     pick(
         db,
