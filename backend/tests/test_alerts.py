@@ -443,7 +443,9 @@ def test_users_with_nothing_to_check_are_not_counted_as_attempted(
         db.commit()
     rls.bypass(db)
     result = create_alerts(db, TODAY, NOW)
-    assert result.attempted == 1  # the admin: the two members switched alerts off
+    # The admin holds shares (one user to check) and has job alerts (one step); the two members
+    # switched alerts off and count for nothing.
+    assert result.attempted == 2
 
 
 def test_a_run_stuck_in_running_is_an_alert_once_it_is_old_enough(
@@ -637,7 +639,7 @@ def test_users_holding_nothing_are_not_counted_as_attempted(
     make_user(db, "empty@example.com")  # daily moves on by default, but nothing held
     rls.bypass(db)
     result = create_alerts(db, TODAY, NOW)
-    assert result.attempted == 1  # the admin, who also gets the job alerts
+    assert result.attempted == 2  # the admin as a holder, and the job-alerts step
 
 
 def test_a_partial_run_without_a_count_of_attempts_alerts_on_failures_alone(
@@ -760,6 +762,33 @@ def test_rows_are_counted_only_when_the_job_alerts_are_stored(
     monkeypatch.setattr(module, "_store", second_fails)
     rls.bypass(db)
     result = create_alerts(db, TODAY, now)
-    assert result.errors == {}  # not a user failure: it must not skew the status of the run
-    assert "RuntimeError" in result.warnings["job alerts"] and result.rows_written == 0
+    assert result.errors == {"job alerts": "RuntimeError"} and result.rows_written == 0
+    # The owner holds shares (that part ran) and the job-alerts step failed: partial.
+    assert result.status == JobStatus.PARTIAL
     assert alerts(db) == []
+
+
+def test_a_failed_job_alert_step_makes_the_run_partial_when_other_work_succeeded(
+    owner: TestClient, db: Session, admin: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from quant.ingest import alerts as module
+
+    price(db, A, ("108", "100"))  # the admin holds Alpha: a move to store
+    now = admin.created_at + timedelta(hours=10)
+    db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=now - timedelta(hours=1),
+                  details={"error": "boom"}))  # fmt: skip
+    db.commit()
+    real, calls = module._store, []
+
+    def first_fails(session: Session, rows: list[dict[str, object]]) -> int:
+        calls.append(1)
+        if len(calls) == 1:  # the job-alerts step stores first
+            raise RuntimeError("insert failed")
+        return real(session, rows)
+
+    monkeypatch.setattr(module, "_store", first_fails)
+    rls.bypass(db)
+    result = create_alerts(db, TODAY, now)
+    assert result.errors == {"job alerts": "RuntimeError"}
+    assert result.rows_written == 1  # the price move was stored
+    assert result.status == JobStatus.PARTIAL  # not a clean run, and not a failed one

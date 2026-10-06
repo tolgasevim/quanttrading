@@ -59,6 +59,7 @@ log = logging.getLogger(__name__)
 
 FAILED_JOB_WINDOW_HOURS = 48
 ALERT_JOB_NAME = "create_alerts"  # the job that runs this module
+JOB_ALERTS_STEP = "job alerts"  # the step that stores the admins' job alerts; counted as one unit
 STUCK_AFTER_HOURS = 6  # no job here runs this long
 PARTIAL_MIN_FAILURES = 5
 PARTIAL_MIN_SHARE = 0.25
@@ -335,10 +336,7 @@ def _store_job_alerts(
     except Exception as exc:  # noqa: BLE001 - the moves below must still run
         session.rollback()
         log.exception("job alerts failed")
-        # A warning, not an error: errors are counted against the users (attempted), and this step
-        # is not a user. A failure here would otherwise turn a run whose price-move alerts were all
-        # stored into a failed one.
-        result.warnings["job alerts"] = f"the job alerts could not be stored: {_kind(exc)}"
+        result.errors[JOB_ALERTS_STEP] = _kind(exc)
 
 
 def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
@@ -387,8 +385,9 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
         for u in users
         if bool(positions.get(u.id) and positions[u.id].positions) or str(u.id) in result.errors
     }
-    # The users that have something to check: the admins (job alerts) and the holders.
-    result.attempted = len(wanted | {u.id for u in users if u.is_admin})
+    # What the job tried: each user with positions to check, and the job-alerts step when there is
+    # an admin. A failure of either counts against this, so the status tells how much failed.
+    result.attempted = len(wanted) + (1 if any(u.is_admin for u in users) else 0)
     for user in users:
         if user.id not in wanted:
             continue
