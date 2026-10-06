@@ -36,6 +36,16 @@ NOW = datetime(2026, 10, 6, 21, 0, tzinfo=UTC)
 FUND = "IE0000000030"
 
 
+def next_berlin_midnight(after: datetime) -> datetime:
+    """The first midnight in Europe/Berlin after `after`, in UTC. Alert days are Berlin days, so
+    tests that put two runs on one day start from here and cannot straddle a day edge."""
+    from zoneinfo import ZoneInfo
+
+    local = after.astimezone(ZoneInfo("Europe/Berlin"))
+    midnight = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight.astimezone(UTC)
+
+
 def bars(*closes: str, last: date = TODAY, step: int = 1) -> list[tuple[date, D]]:
     """Closes newest first, one bar `step` days apart."""
     return [(last - timedelta(days=step * i), D(c)) for i, c in enumerate(closes)]
@@ -423,10 +433,11 @@ def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
 def test_a_job_that_is_partial_every_night_is_one_alert_a_day(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    now = admin.created_at + timedelta(hours=30)
+    day0 = next_berlin_midnight(admin.created_at)  # a fixed day edge, whatever the clock says
+    now = day0 + timedelta(hours=30)
     for hours in (3, 5):  # two runs on the same day
         db.add(JobRun(job="ingest_prices", status=JobStatus.PARTIAL,
-                      finished_at=admin.created_at + timedelta(hours=hours),
+                      finished_at=day0 + timedelta(hours=hours),
                       details={"attempted": 3, "errors": {"US1": "no data", "US2": "x"}}))  # fmt: skip
     db.commit()
     assert run(db, now=now) == 1
@@ -491,10 +502,11 @@ def test_a_failure_that_a_later_success_made_good_is_not_news(
 def test_a_second_and_different_failure_the_same_day_is_its_own_alert(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    now = admin.created_at + timedelta(hours=10)
+    day0 = next_berlin_midnight(admin.created_at)  # a fixed day edge, whatever the clock says
+    now = day0 + timedelta(hours=10)
     for hours, reason in ((2, "first reason"), (4, "second reason"), (5, "second reason")):
         db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED,
-                      finished_at=admin.created_at + timedelta(hours=hours),
+                      finished_at=day0 + timedelta(hours=hours),
                       details={"error": reason}))  # fmt: skip
     db.commit()
     assert run(db, now=now) == 2
@@ -504,10 +516,11 @@ def test_a_second_and_different_failure_the_same_day_is_its_own_alert(
 def test_a_partial_run_with_a_changing_count_is_still_one_alert_a_day(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    now = admin.created_at + timedelta(hours=30)
+    day0 = next_berlin_midnight(admin.created_at)  # a fixed day edge, whatever the clock says
+    now = day0 + timedelta(hours=30)
     for hours, count in ((3, 6), (5, 7)):  # 6, then 7 items failed the same day
         db.add(JobRun(job="ingest_prices", status=JobStatus.PARTIAL,
-                      finished_at=admin.created_at + timedelta(hours=hours),
+                      finished_at=day0 + timedelta(hours=hours),
                       details={"attempted": 50, "errors": {f"US{i}": "x" for i in range(count)}}))  # fmt: skip
     db.commit()
     assert run(db, now=now) == 1
@@ -536,10 +549,11 @@ def test_the_job_reads_no_bar_older_than_it_can_use(owner: TestClient, db: Sessi
 def test_the_same_outage_with_other_numbers_is_one_alert_a_day(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    now = admin.created_at + timedelta(hours=10)
+    day0 = next_berlin_midnight(admin.created_at)  # a fixed day edge, whatever the clock says
+    now = day0 + timedelta(hours=10)
     for hours, port in ((2, "8123"), (4, "9456")):
         db.add(JobRun(job="ingest_fx", status=JobStatus.FAILED,
-                      finished_at=admin.created_at + timedelta(hours=hours),
+                      finished_at=day0 + timedelta(hours=hours),
                       details={"error": f"ConnectError: port {port} refused (request 4f9ac2e1)"}))  # fmt: skip
     db.commit()
     assert run(db, now=now) == 1
@@ -625,10 +639,11 @@ def test_ordinary_words_made_of_hex_letters_are_not_taken_for_ids() -> None:
 def test_a_run_stuck_twice_the_same_day_is_one_alert(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    now = admin.created_at + timedelta(hours=40)
+    day0 = next_berlin_midnight(admin.created_at)  # a fixed day edge, whatever the clock says
+    now = day0 + timedelta(hours=40)
     for hours in (8, 12):  # started at different times, never finished
         db.add(JobRun(job="ingest_prices", status=JobStatus.RUNNING,
-                      started_at=admin.created_at + timedelta(hours=hours), details={}))  # fmt: skip
+                      started_at=day0 + timedelta(hours=hours), details={}))  # fmt: skip
     db.commit()
     assert run(db, now=now) == 1
 
@@ -797,10 +812,11 @@ def test_a_failed_job_alert_step_makes_the_run_partial_when_other_work_succeeded
 def test_a_run_that_failed_on_every_item_is_one_alert_a_day_whichever_tickers_it_names(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    now = admin.created_at + timedelta(hours=10)
+    day0 = next_berlin_midnight(admin.created_at)  # a fixed day edge, whatever the clock says
+    now = day0 + timedelta(hours=10)
     for hours, tickers in ((2, ("US1", "US2")), (4, ("US7", "US9"))):
         db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED,
-                      finished_at=admin.created_at + timedelta(hours=hours),
+                      finished_at=day0 + timedelta(hours=hours),
                       details={"attempted": 2, "errors": {t: "no data" for t in tickers}}))  # fmt: skip
     db.commit()
     assert run(db, now=now) == 1
