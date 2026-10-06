@@ -242,7 +242,8 @@ def test_failed_and_partly_failed_jobs_are_alerts_for_admins_only(
             JobRun(job="clean_partial", status=JobStatus.PARTIAL, finished_at=done, details={}),
             JobRun(job="old", status=JobStatus.FAILED, finished_at=now - timedelta(hours=60),
                    details={"error": "long ago"}),
-            JobRun(job="running", status=JobStatus.RUNNING, details={}),
+            JobRun(job="running", status=JobStatus.RUNNING, started_at=now - timedelta(hours=1),
+                   details={}),
             JobRun(job="fine", status=JobStatus.SUCCESS, finished_at=done, details={}),
         ]
     )  # fmt: skip
@@ -293,7 +294,7 @@ def test_one_users_failure_does_not_stop_the_others(
     assert len(alerts(db)) == 1  # the owner still got theirs
 
 
-def test_a_move_that_is_a_split_ratio_is_an_info_alert_with_a_note_for_a_share(
+def test_a_move_that_is_a_split_ratio_is_still_an_alert_with_a_note_for_a_share(
     owner: TestClient, db: Session
 ) -> None:
     price(db, A, ("50", "100"))  # -50%: the size of a 2-for-1 split, but also of a crash
@@ -301,7 +302,8 @@ def test_a_move_that_is_a_split_ratio_is_an_info_alert_with_a_note_for_a_share(
     run(db)
     rows = {n.isin: n for n in alerts(db)}
     assert set(rows) == {A, SPIN}
-    assert rows[A].severity == "info" and "size of a share split" in rows[A].body
+    assert rows[A].severity == "warning"  # its size, not the heuristic, sets the level
+    assert "size of a share split" in rows[A].body
     assert rows[SPIN].severity == "warning" and "split" not in rows[SPIN].body
 
 
@@ -377,7 +379,7 @@ def test_an_admin_whose_positions_cannot_be_read_still_gets_the_failed_job_alert
     db.commit()
     rls.bypass(db)
     result = create_alerts(db, TODAY, now)
-    assert "bad ledger" in result.errors[str(admin.id)]  # the run is not clean...
+    assert "bad ledger" in result.errors[admin.email]  # the run is not clean...
     assert [n.title for n in alerts(db)] == ["Job ingest_prices failed"]  # ...but the news arrives
 
 
@@ -427,3 +429,56 @@ def test_users_with_nothing_to_check_are_not_counted_as_attempted(
     rls.bypass(db)
     result = create_alerts(db, TODAY, NOW)
     assert result.attempted == 1  # the admin: the two members switched alerts off
+
+
+def test_a_run_stuck_in_running_is_an_alert_once_it_is_old_enough(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(days=1)
+    db.add_all(
+        [
+            JobRun(job="ingest_prices", status=JobStatus.RUNNING, started_at=now - timedelta(hours=7),
+                   details={}),
+            JobRun(job="map_isins", status=JobStatus.RUNNING, started_at=now - timedelta(hours=1),
+                   details={}),  # still young: just running
+        ]
+    )  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 1
+    [n] = alerts(db)
+    assert n.title == "Job ingest_prices seems stuck" and n.severity == "warning"
+    assert "never finished" in n.body
+
+
+def test_a_failure_that_a_later_success_made_good_is_not_news(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=30)
+    db.add_all(
+        [
+            JobRun(job="ingest_prices", status=JobStatus.FAILED,
+                   finished_at=admin.created_at + timedelta(hours=2), details={"error": "boom"}),
+            JobRun(job="ingest_prices", status=JobStatus.SUCCESS,
+                   finished_at=admin.created_at + timedelta(hours=20), details={}),
+            JobRun(job="map_isins", status=JobStatus.FAILED,
+                   finished_at=admin.created_at + timedelta(hours=25), details={"error": "bad"}),
+            JobRun(job="map_isins", status=JobStatus.SUCCESS,
+                   finished_at=admin.created_at + timedelta(hours=3), details={}),  # earlier
+        ]
+    )  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 1
+    assert [n.title for n in alerts(db)] == ["Job map_isins failed"]
+
+
+def test_a_second_and_different_failure_the_same_day_is_its_own_alert(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=10)
+    for hours, reason in ((2, "first reason"), (4, "second reason"), (5, "second reason")):
+        db.add(JobRun(job="ingest_prices", status=JobStatus.FAILED,
+                      finished_at=admin.created_at + timedelta(hours=hours),
+                      details={"error": reason}))  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 2
+    assert sorted(n.body for n in alerts(db)) == ["first reason", "second reason"]

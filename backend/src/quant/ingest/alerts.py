@@ -8,15 +8,18 @@ once stored it is not rewritten, even if the user then changes a limit or the da
 corrected.
 """
 
+import hashlib
 import logging
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from quant.config import get_settings
 from quant.ingest.jobs import JobResult
 from quant.models import (
     DEFAULT_CRYPTO_PCT,
@@ -45,6 +48,7 @@ from quant.portfolio.positions import Position, compute_positions, open_position
 log = logging.getLogger(__name__)
 
 FAILED_JOB_WINDOW_HOURS = 48
+STUCK_AFTER_HOURS = 6  # no job here runs this long
 DEFAULTS = AlertSettings(
     daily_moves_enabled=True,
     move_stock_pct=DEFAULT_STOCK_PCT,
@@ -129,7 +133,7 @@ def _user_moves(
             {
                 "user_id": user.id,
                 "kind": "daily_move",
-                "severity": "warning" if abs(move.pct) >= 2 * limit and not split else "info",
+                "severity": "warning" if abs(move.pct) >= 2 * limit else "info",
                 "title": title[:200],
                 "body": body[:1000],
                 "isin": position.isin,
@@ -140,18 +144,42 @@ def _user_moves(
 
 
 def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str, object]]:
-    """Runs that failed, or finished with errors, in the last two days and after the admin's
-    account existed (a new admin gets no alerts about the time before)."""
+    """Runs that failed, finished with errors, or look stuck, in the last two days and after the
+    admin's account existed (a new admin gets no alerts about the time before). A run that a later
+    successful run of the same job has made good is not news any more."""
     since = max(now - timedelta(hours=FAILED_JOB_WINDOW_HOURS), admin.created_at)
+    last_success = dict(
+        session.execute(
+            select(JobRun.job, func.max(JobRun.finished_at))
+            .where(JobRun.status == JobStatus.SUCCESS)
+            .group_by(JobRun.job)
+        ).all()
+    )
+    tz = ZoneInfo(get_settings().timezone)
     runs = session.scalars(
         select(JobRun).where(
-            JobRun.status.in_([JobStatus.FAILED, JobStatus.PARTIAL]),
-            JobRun.finished_at.is_not(None),
-            JobRun.finished_at >= since,
+            or_(
+                and_(
+                    JobRun.status.in_([JobStatus.FAILED, JobStatus.PARTIAL]),
+                    JobRun.finished_at.is_not(None),
+                    JobRun.finished_at >= since,
+                ),
+                # A run the worker never finished (killed, power cut) stays RUNNING for ever.
+                and_(
+                    JobRun.status == JobStatus.RUNNING,
+                    JobRun.started_at >= since,
+                    JobRun.started_at <= now - timedelta(hours=STUCK_AFTER_HOURS),
+                ),
+            )
         )
     )
     rows: list[dict[str, object]] = []
     for run in runs:
+        happened = run.finished_at or run.started_at
+        fixed = last_success.get(run.job)
+        if fixed is not None and fixed > happened:
+            continue
+        stuck = run.status == JobStatus.RUNNING
         details = run.details or {}
         reason = str(details.get("error") or "")
         errors = details.get("errors")
@@ -159,19 +187,30 @@ def _failed_jobs(session: Session, admin: User, now: datetime) -> list[dict[str,
             reason = f"{len(errors)} items failed, for example: " + "; ".join(
                 f"{k}: {v}" for k, v in list(errors.items())[:2]
             )
-        if run.status == JobStatus.PARTIAL and not reason:
+        if stuck:
+            reason = f"The run started at {run.started_at:%Y-%m-%d %H:%M} UTC and never finished."
+        elif run.status == JobStatus.PARTIAL and not reason:
             continue  # nothing went wrong that a person could act on
-        failed = run.status == JobStatus.FAILED
-        day = (run.finished_at or now).date().isoformat()  # one alert per job, status and day
+        what = (
+            "seems stuck"
+            if stuck
+            else "failed"
+            if run.status == JobStatus.FAILED
+            else "finished with errors"
+        )
+        # One alert per job, outcome, local day and reason: a nightly repeat is one a day, a
+        # second and different failure the same day still gets its own.
+        digest = hashlib.sha256(reason.encode()).hexdigest()[:8]
+        day = happened.astimezone(tz).date().isoformat()
         rows.append(
             {
                 "user_id": admin.id,
                 "kind": "job_failed",
-                "severity": "warning" if failed else "info",
-                "title": f"Job {run.job} {'failed' if failed else 'finished with errors'}",
+                "severity": "info" if run.status == JobStatus.PARTIAL else "warning",
+                "title": f"Job {run.job} {what}",
                 "body": (reason or "The run failed with no message.")[:900],
                 "isin": None,
-                "dedupe_key": f"job_failed:{run.job}:{run.status.value}:{day}",
+                "dedupe_key": f"job_failed:{run.job}:{run.status.value}:{day}:{digest}",
             }
         )
     return rows
@@ -190,7 +229,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
                 session.rollback()
                 log.exception("positions of user %s failed", user.id)
-                result.errors[str(user.id)] = f"{type(exc).__name__}: {exc}"
+                result.errors[user.email] = f"{type(exc).__name__}: {exc}"
     held = {p.isin for mine in positions.values() for p in mine if p.asset_class in MOVE_CLASSES}
     instruments = {
         i.isin: i
@@ -201,9 +240,7 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     }
     bars = _newest_bars(session, [i.id for i in instruments.values()])
     wanted = {
-        u.id
-        for u in users
-        if u.id in positions or u.role == Role.ADMIN or str(u.id) in result.errors
+        u.id for u in users if u.id in positions or u.role == Role.ADMIN or u.email in result.errors
     }
     result.attempted = len(wanted)  # the users that have something to check
     for user in users:
@@ -221,5 +258,5 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
         except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
             session.rollback()
             log.exception("alerts for user %s failed", user.id)
-            result.errors[str(user.id)] = f"{type(exc).__name__}: {exc}"
+            result.errors[user.email] = f"{type(exc).__name__}: {exc}"
     return result

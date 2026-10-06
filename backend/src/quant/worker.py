@@ -5,6 +5,7 @@ that was asleep or rebooted during the scheduled time still gets its data.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -171,13 +172,11 @@ def main() -> None:
                 except Exception:  # noqa: BLE001 - one broken job must not stop the scheduler
                     log.exception("catch-up of %s failed", job)
         # Prices and alerts go together, as in the evening run.
-        late = (
-            run_evening
-            if needs_catch_up(session, PRICES_JOB, now)
-            else run_alerts
-            if needs_catch_up(session, ALERT_JOB, now)
-            else None
-        )
+        late: Callable[[], None] | None = None
+        if needs_catch_up(session, PRICES_JOB, now):
+            late = run_evening
+        elif needs_catch_up(session, ALERT_JOB, now):
+            late = run_alerts
         if late is not None:
             log.info("catching up on %s", late.__name__)
             try:

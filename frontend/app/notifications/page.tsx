@@ -142,22 +142,27 @@ export default function NotificationsPage() {
       const older = await api<Notifications>(
         `/api/notifications?limit=${PAGE}&offset=${data.items.length}`,
       );
-      setData({ ...older, items: [...data.items, ...older.items] });
+      // New alerts may have arrived at the top meanwhile, which shifts the pages: skip repeats.
+      const have = new Set(data.items.map((n) => n.id));
+      setData({
+        ...older,
+        items: [...data.items, ...older.items.filter((n) => !have.has(n.id))],
+      });
       setMore(older.items.length === PAGE);
     } catch (err) {
       setError(err instanceof ApiError ? err.detail : "Could not load.");
     }
   };
 
-  const mutate = async (path: string) => {
+  // `id` is the one alert marked read, or none for "all". The answer carries the newest alerts
+  // only, so the rows on the page are updated here, by id.
+  const mutate = async (path: string, id?: string) => {
     try {
-      // Keep the alerts already on the page: the answer carries only the newest ones.
       const body = await post<Notifications>(path);
-      const read = new Set(body.items.filter((n) => n.read).map((n) => n.id));
       setData((old) => ({
         unread: body.unread,
         items: (old?.items ?? body.items).map((n) =>
-          path.endsWith("read-all") || read.has(n.id) ? { ...n, read: true } : n,
+          id === undefined || n.id === id ? { ...n, read: true } : n,
         ),
       }));
       changed();
@@ -202,7 +207,7 @@ export default function NotificationsPage() {
                   {!n.read && (
                     <>
                       {" · "}
-                      <button className="link" onClick={() => mutate(`/api/notifications/${n.id}/read`)}>
+                      <button className="link" onClick={() => mutate(`/api/notifications/${n.id}/read`, n.id)}>
                         Mark as read
                       </button>
                     </>
