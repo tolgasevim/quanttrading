@@ -420,7 +420,7 @@ def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
     monkeypatch.setattr(worker, "run_alerts", lambda: order.append("alerts"))
     monkeypatch.setattr(worker, "run_scoring", lambda: order.append("scoring"))
     worker.run_evening()  # the failure is logged, and the alerts still run
-    assert order == ["prices", "alerts", "scoring"]
+    assert order == ["prices", "scoring", "alerts"]
     assert "the price run failed" in caplog.text
     # A crash before the job could write its own row leaves a failed one, so the admins hear of it.
     crashed = db.query(JobRun).filter_by(job=worker.PRICES_JOB).one()
@@ -428,7 +428,7 @@ def test_the_evening_run_makes_the_alerts_after_the_prices_even_when_they_fail(
     order.clear()
     monkeypatch.setattr(worker, "run_prices", lambda: order.append("prices"))
     worker.run_evening()
-    assert order == ["prices", "alerts", "scoring"]
+    assert order == ["prices", "scoring", "alerts"]
 
 
 def test_a_job_that_is_partial_every_night_is_one_alert_a_day(
@@ -588,17 +588,19 @@ def test_two_admins_each_get_the_job_alerts_from_one_read(
 def test_a_later_partial_run_makes_good_a_failure_but_not_a_run_with_errors(
     owner: TestClient, db: Session, admin: User
 ) -> None:
-    now = admin.created_at + timedelta(hours=30)
-    t = admin.created_at
+    t = next_berlin_midnight(
+        admin.created_at
+    )  # the runs fall on two Berlin days, whatever the clock
+    now = t + timedelta(hours=30)
     db.add_all(
         [
             JobRun(job="ingest_prices", status=JobStatus.FAILED, finished_at=t + timedelta(hours=2),
                    details={"error": "boom"}),
-            JobRun(job="ingest_prices", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=20),
+            JobRun(job="ingest_prices", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=26),
                    details={"attempted": 50, "errors": {"US1": "x"}}),  # healthy for the scheduler
             JobRun(job="map_isins", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=2),
                    details={"attempted": 4, "errors": {"US1": "a", "US2": "b"}}),
-            JobRun(job="map_isins", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=20),
+            JobRun(job="map_isins", status=JobStatus.PARTIAL, finished_at=t + timedelta(hours=26),
                    details={"attempted": 4, "errors": {"US1": "a"}}),  # still not clean
         ]
     )  # fmt: skip

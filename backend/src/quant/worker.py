@@ -133,12 +133,12 @@ def run_evening() -> None:
     except Exception as exc:  # noqa: BLE001 - the alerts must still run
         log.exception("the price run failed")
         _record_crash(PRICES_JOB, exc)
-    run_alerts()
     try:
-        run_scoring()  # after the prices, so a window that ended today is scored today
-    except Exception as exc:  # noqa: BLE001 - the evening run is over either way
+        run_scoring()  # after the prices, so a window that ended yesterday is scored today
+    except Exception as exc:  # noqa: BLE001 - the alerts must still run
         log.exception("the pick scoring failed")
         _record_crash(SCORE_JOB, exc)
+    run_alerts()  # last, so it can tell the admins about any job that failed tonight
 
 
 def run_alerts() -> None:

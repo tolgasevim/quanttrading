@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 from quant import rls
 from quant.ai import scoring
 from quant.models import AiPick, AiPickScore, Instrument, JobStatus, PriceEOD, User
-from quant.worker import run_scoring
 
 from .conftest import login, make_user
 
@@ -53,8 +52,9 @@ def market(db: Session) -> tuple[Instrument, Instrument]:
     one = date(2026, 6, 4)
     three = date(2026, 8, 4)
     # Alpha +20 % after a month, +50 % after three; the benchmark +10 % and +12 %.
-    bars(db, alpha, {start: "100", one: "120", three: "150"})
-    bars(db, bench, {start: "200", one: "220", three: "224"})
+    later = date(2026, 9, 1)  # the prices run past the end of the 3-month window
+    bars(db, alpha, {start: "100", one: "120", three: "150", later: "160"})
+    bars(db, bench, {start: "200", one: "220", three: "224", later: "230"})
     return alpha, bench
 
 
@@ -117,8 +117,8 @@ def test_a_window_without_prices_waits_for_the_next_run(
     # Six months are due on 4 Nov; the data ends in August, so nothing can be scored then.
     result = scoring.score_picks(db, date(2026, 11, 5))
     assert result.rows_written == 2 and "waiting" in result.warnings
-    bars(db, alpha, {date(2026, 11, 4): "90"})
-    bars(db, bench, {date(2026, 11, 4): "230"})
+    bars(db, alpha, {date(2026, 11, 4): "90", date(2026, 11, 5): "91"})
+    bars(db, bench, {date(2026, 11, 4): "230", date(2026, 11, 5): "231"})
     rls.bypass(db)
     assert scoring.score_picks(db, date(2026, 11, 5)).rows_written == 1
     six = db.scalars(select(AiPickScore).where(AiPickScore.window_months == 6)).one()
@@ -151,6 +151,7 @@ def test_the_nightly_job_records_a_run(
     db: Session, admin: User, market: tuple[Instrument, Instrument]
 ) -> None:
     from quant.models import JobRun
+    from quant.worker import run_scoring  # imported here: see the note in conftest on loggers
 
     pick(db, admin, date(2026, 5, 4))
     run_scoring()
@@ -205,3 +206,68 @@ def test_the_app_cannot_change_scores(
         with pytest.raises(ProgrammingError):
             db.execute(text(sql))
         db.rollback()
+
+
+def test_a_stale_close_is_not_locked_in_when_the_prices_stop_early(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    alpha, bench = market
+    pick(db, admin, date(2026, 5, 4))
+    rls.bypass(db)
+    # The 1-month window ends on 4 June. Remove every close after 2 June: an outage of the
+    # price job. The nearest close is only 2 days old, but the prices do not run past the day.
+    db.execute(text("DELETE FROM prices_eod WHERE date > '2026-06-02'"))
+    db.add(
+        PriceEOD(
+            instrument_id=alpha.id,
+            date=date(2026, 6, 2),
+            close=D("119"),
+            currency="EUR",
+            source="t",
+        )
+    )
+    db.add(PriceEOD(instrument_id=bench.id, date=date(2026, 6, 2), close=D("219"), currency="EUR", source="t"))  # fmt: skip
+    db.commit()
+    assert scoring.score_picks(db, TODAY).rows_written == 0
+    assert db.scalars(select(AiPickScore)).all() == []
+
+
+def test_one_instrument_scores_every_window_of_a_pick(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    alpha, _ = market
+    # A second candidate (same ticker as the pick's) with other prices must not be mixed in.
+    other = instrument(db, "ALPHA2")
+    bars(db, other, {date(2026, 5, 4): "10", date(2026, 6, 4): "11", date(2026, 9, 1): "12"})
+    pick(db, admin, date(2026, 5, 4), isin=ISIN, ticker="alpha2")
+    rls.bypass(db)
+    scoring.score_picks(db, TODAY)
+    assert {s.pick_return_pct for s in db.scalars(select(AiPickScore))} == {
+        D("20.0000"),
+        D("50.0000"),
+    }
+
+
+def test_the_day_of_a_pick_is_the_berlin_day(db: Session, admin: User) -> None:
+    rls.bypass(db)
+    late = AiPick(
+        user_id=admin.id, created_at=datetime(2026, 5, 3, 22, 30, tzinfo=UTC), question="q",
+        name="n", direction="buy", horizon_months=1, rationale="r", held=False,
+    )  # fmt: skip
+    assert scoring.pick_day(late) == date(2026, 5, 4)  # 00:30 in Berlin
+
+
+def test_a_skipped_duplicate_is_not_counted(
+    db: Session, admin: User, market: tuple[Instrument, Instrument]
+) -> None:
+    row = pick(db, admin, date(2026, 5, 4))
+    rls.bypass(db)
+    db.add(
+        AiPickScore(
+            user_id=admin.id, pick_id=row.id, window_months=1, start_date=date(2026, 5, 4),
+            end_date=date(2026, 6, 4), pick_return_pct=D("1"), benchmark_return_pct=D("1"),
+            excess_pct=D("0"), hit=False,
+        )
+    )  # fmt: skip
+    db.commit()
+    assert scoring.score_picks(db, TODAY).rows_written == 1  # only the 3-month window is new

@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -31,7 +32,8 @@ log = logging.getLogger(__name__)
 
 WINDOWS = (1, 3, 6, 12)
 BENCHMARK_CODE = "SXRV"
-MAX_GAP_DAYS = 7  # a close this far before the day still counts (weekends, holidays)
+MAX_GAP_DAYS = 4  # a close this far before the day still counts (a long weekend)
+MARKET_TZ = ZoneInfo("Europe/Berlin")  # the day of a pick is the user's, not UTC's
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,23 @@ def close_on_or_before(
     return None if row is None else (row[0], row[1])
 
 
+def covered(session: Session, instrument_id: int, day: date) -> bool:
+    """The prices run past `day`, so the close used for it is the last one there will be. Without
+    this, an outage of the price job could lock a stale close into a score that is never changed."""
+    return (
+        session.scalar(
+            select(PriceEOD.id)
+            .where(PriceEOD.instrument_id == instrument_id, PriceEOD.date > day)
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def pick_day(pick: AiPick) -> date:
+    return pick.created_at.astimezone(MARKET_TZ).date()
+
+
 def is_hit(direction: str, excess: Decimal) -> bool:
     return excess < 0 if direction == "sell" else excess > 0
 
@@ -76,25 +95,33 @@ def _pct(start: Decimal, end: Decimal) -> Decimal:
     return ((end / start - 1) * 100).quantize(Decimal("0.0001"))
 
 
-def outcome(
-    session: Session, pick: AiPick, instruments: list[Instrument], bench: Instrument, end: date
-) -> Outcome | None:
-    """The pick's and the benchmark's return from the day of the pick to `end`, or None when a
-    price is missing."""
-    start_day = pick.created_at.date()
+def choose(session: Session, pick: AiPick, instruments: list[Instrument]) -> Instrument | None:
+    """The one instrument all windows of the pick are scored on: the first candidate with a
+    close at the pick day. Chosen once, so the 1- and the 12-month score never differ in it."""
+    day = pick_day(pick)
     for instrument in instruments:
-        first = close_on_or_before(session, instrument.id, start_day)
-        last = close_on_or_before(session, instrument.id, end)
-        bench_first = close_on_or_before(session, bench.id, start_day)
-        bench_last = close_on_or_before(session, bench.id, end)
-        if not (first and last and bench_first and bench_last):
-            continue
-        if first[1] <= 0 or bench_first[1] <= 0 or last[0] <= first[0]:
-            continue
-        return Outcome(
-            first[0], last[0], _pct(first[1], last[1]), _pct(bench_first[1], bench_last[1])
-        )
+        if close_on_or_before(session, instrument.id, day) is not None:
+            return instrument
     return None
+
+
+def outcome(
+    session: Session, pick: AiPick, instrument: Instrument, bench: Instrument, end: date
+) -> Outcome | None:
+    """The pick's and the benchmark's return from the day of the pick to `end`, each from its own
+    nearest close, or None when a price is missing or the prices do not run past `end` yet."""
+    start_day = pick_day(pick)
+    if not (covered(session, instrument.id, end) and covered(session, bench.id, end)):
+        return None
+    first = close_on_or_before(session, instrument.id, start_day)
+    last = close_on_or_before(session, instrument.id, end)
+    bench_first = close_on_or_before(session, bench.id, start_day)
+    bench_last = close_on_or_before(session, bench.id, end)
+    if not (first and last and bench_first and bench_last):
+        return None
+    if first[1] <= 0 or bench_first[1] <= 0 or last[0] <= first[0]:
+        return None
+    return Outcome(first[0], last[0], _pct(first[1], last[1]), _pct(bench_first[1], bench_last[1]))
 
 
 def score_picks(session: Session, today: date) -> JobResult:
@@ -115,22 +142,22 @@ def score_picks(session: Session, today: date) -> JobResult:
         due = [
             w
             for w in WINDOWS
-            if (pick.id, w) not in done and add_months(pick.created_at.date(), w) <= today
+            if (pick.id, w) not in done and add_months(pick_day(pick), w) <= today
         ]
         if not due:
             continue
-        instruments = candidates(session, pick.isin, pick.ticker)
-        if not instruments:
+        chosen = choose(session, pick, candidates(session, pick.isin, pick.ticker))
+        if chosen is None:
             unscorable += 1
             continue
         for window in due:
             result.attempted += 1
-            end = add_months(pick.created_at.date(), window)
-            found = outcome(session, pick, instruments, bench, end)
+            end = add_months(pick_day(pick), window)
+            found = outcome(session, pick, chosen, bench, end)
             if found is None:
                 waiting += 1
                 continue
-            session.execute(
+            inserted = session.scalars(
                 insert(AiPickScore)
                 .values(
                     user_id=pick.user_id,
@@ -144,8 +171,9 @@ def score_picks(session: Session, today: date) -> JobResult:
                     hit=is_hit(pick.direction, found.excess),
                 )
                 .on_conflict_do_nothing(constraint="uq_ai_pick_scores_pick_window")
-            )
-            result.rows_written += 1
+                .returning(AiPickScore.id)
+            ).all()
+            result.rows_written += len(inserted)  # a score another run wrote first is not counted
         session.commit()
     if waiting:
         result.warnings["waiting"] = f"{waiting} window(s) wait for prices"
