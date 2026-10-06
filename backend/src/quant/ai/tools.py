@@ -10,7 +10,7 @@ Not available, and the assistant is told so: news, macro data, live quotes, fund
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -22,6 +22,7 @@ from quant.ai.picks import candidates
 from quant.models import AiPick, AiPickScore, FxRate, PriceEOD
 from quant.portfolio import service
 from quant.portfolio.lots import COST_MISSING, realised_by_isin
+from quant.portfolio.tax import YearEstimate
 
 MAX_RESULT_CHARS = 6000
 MAX_DAYS = 400
@@ -134,13 +135,7 @@ class ToolContext:
     session: Session
     user_id: uuid.UUID
     anonymise: bool
-    _holdings: service.Holdings | None = field(default=None, repr=False)
-
-    @property
-    def holdings(self) -> service.Holdings:
-        if self._holdings is None:
-            self._holdings = service.build_holdings(self.session, self.user_id)
-        return self._holdings
+    holdings: service.Holdings
 
 
 class ToolError(Exception):
@@ -157,7 +152,7 @@ def _find_position(ctx: ToolContext, query: str) -> Any:
         raise ToolError("query is empty")
     positions = ctx.holdings.positions
     for p in positions:
-        if p.isin.lower() == wanted:
+        if p.isin.lower() == wanted or (p.name and p.name.lower() == wanted):
             return p
     named = [p for p in positions if p.name and wanted in p.name.lower()]
     if len(named) == 1:
@@ -167,8 +162,39 @@ def _find_position(ctx: ToolContext, query: str) -> Any:
     raise ToolError("the user holds nothing that matches")
 
 
+def _closed_position(ctx: ToolContext, query: str) -> tuple[dict[str, Any], str] | None:
+    """A holding the user has sold completely: what is left to say is the realised result."""
+    wanted = " ".join(query.split()).lower()
+    for p in ctx.holdings.everything.values():
+        if p.is_open or not (p.isin.lower() == wanted or (p.name and wanted in p.name.lower())):
+            continue
+        out: dict[str, Any] = {
+            "name": p.name,
+            "isin": p.isin,
+            "class": p.asset_class,
+            "status": "sold completely",
+            "first_bought": p.first_date,
+            "last_trade": p.last_date,
+        }
+        if ctx.anonymise:
+            out["amounts"] = HIDDEN
+        else:
+            realised = realised_by_isin(ctx.holdings.book.disposals).get(p.isin)
+            if realised is not None:
+                out["realised_pnl_eur"] = _dec(realised)
+        return out, f"{p.name or p.isin}: sold"
+    return None
+
+
 def get_position(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    p = _find_position(ctx, str(args.get("query", "")))
+    query = str(args.get("query", ""))
+    try:
+        p = _find_position(ctx, query)
+    except ToolError:
+        closed = _closed_position(ctx, query)
+        if closed is None:
+            raise
+        return closed
     h = ctx.holdings
     weights, _, _ = service.weights(h)
     sector, industry = h.sectors.get(p.isin, (None, None))
@@ -243,10 +269,11 @@ def get_prices(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], 
         if not rows:
             continue
         closes = [(d, c) for d, c, _ in rows]
-        window = [c for d, c in closes if d >= date.today() - timedelta(days=days)] or [
-            closes[-1][1]
-        ]
-        ytd = [(d, c) for d, c in closes if d.year == closes[-1][0].year]
+        last_day = closes[-1][0]
+        # The periods run back from the last stored close, which may be a few days old.
+        window = [c for d, c in closes if d >= last_day - timedelta(days=days)]
+        prior_year = [c for d, c in closes if d.year < last_day.year]
+        ytd_base = prior_year[-1] if prior_year else None  # the close of the year before
         out = {
             "name": name or instrument.name,
             "code": instrument.code,
@@ -256,9 +283,8 @@ def get_prices(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], 
             "change_1w_pct": _change(closes, 7),
             "change_1m_pct": _change(closes, 30),
             "change_3m_pct": _change(closes, 91),
-            "change_ytd_pct": _dec((closes[-1][1] / ytd[0][1] - 1) * 100)
-            if ytd and ytd[0][1]
-            else None,
+            "change_ytd_pct": _dec((closes[-1][1] / ytd_base - 1) * 100) if ytd_base else None,
+            "last_close_age_days": (date.today() - last_day).days,
             f"high_{days}d": _dec(max(window), "0.0001"),
             f"low_{days}d": _dec(min(window), "0.0001"),
             "note": "end-of-day closes, price only, not adjusted for dividends",
@@ -276,6 +302,8 @@ def scenario(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, Any], st
         try:
             target = " ".join(str(item["target"]).split()).lower()
             pct = Decimal(str(item["pct"]))
+            if not pct.is_finite():
+                raise ValueError("pct is not a number")
         except (KeyError, TypeError, ArithmeticError, ValueError):
             raise ToolError("each shock needs a target and a number pct") from None
         if not target or not -100 <= pct <= 1000:
@@ -335,9 +363,13 @@ def get_tax_summary(ctx: ToolContext, args: dict[str, Any]) -> tuple[dict[str, A
     if not years:
         raise ToolError("no tax data: there are no sales or income in the history")
     wanted = args.get("year")
-    year = (
-        next((y for y in years if y.year == wanted), None) if isinstance(wanted, int) else years[-1]
-    )
+    year: YearEstimate | None
+    if wanted is None:
+        year = max(years, key=lambda y: y.year)
+    elif isinstance(wanted, int) and not isinstance(wanted, bool):
+        year = next((y for y in years if y.year == wanted), None)
+    else:
+        raise ToolError("year must be a whole number such as 2024")
     if year is None:
         raise ToolError("no data for that year; years: " + ", ".join(str(y.year) for y in years))
     out = {
@@ -419,7 +451,9 @@ def run(ctx: ToolContext, name: str, args: dict[str, Any]) -> tuple[str, ToolTra
     the model can read; it never raises."""
     shown = json.dumps(args, ensure_ascii=False, default=str)[:300]
     try:
-        out, summary = RUNNERS[name](ctx, args)
+        # A savepoint: a database error inside a tool must not abort the user's transaction.
+        with ctx.session.begin_nested():
+            out, summary = RUNNERS[name](ctx, args)
     except ToolError as exc:
         return f"error: {exc}", ToolTrace(name, shown, f"error: {exc}"[:200], True)
     except Exception as exc:  # noqa: BLE001 - a broken tool must not end the answer

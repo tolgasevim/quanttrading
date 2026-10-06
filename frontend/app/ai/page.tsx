@@ -112,10 +112,13 @@ export default function AiPage() {
     setError("");
     setBusy(true);
     try {
-      const history = turns.flatMap((t) => [
-        { role: "user", content: t.question },
-        { role: "assistant", content: t.answer.answer },
-      ]);
+      // Only the latest messages go along: the server uses ten at most.
+      const history = turns
+        .slice(-5)
+        .flatMap((t) => [
+          { role: "user", content: t.question },
+          { role: "assistant", content: t.answer.answer.slice(0, 4000) },
+        ]);
       const answer = await post<AiAnswer>("/api/ai/ask", { question, history });
       setTurns([...turns, { question, answer }]);
       setQuestion("");

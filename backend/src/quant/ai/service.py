@@ -70,14 +70,8 @@ def _money(value: Decimal | None) -> str | None:
     return None if value is None else f"{value:.2f}"
 
 
-def build_context(
-    session: Session,
-    user_id: uuid.UUID,
-    anonymise: bool,
-    holdings: service.Holdings | None = None,
-) -> tuple[str, list[str], set[str]]:
+def build_context(holdings: service.Holdings, anonymise: bool) -> tuple[str, list[str], set[str]]:
     """The portfolio as compact JSON for the prompt, what it contains, and the held ISINs."""
-    holdings = holdings or service.build_holdings(session, user_id)
     weights, total, valued = service.weights(holdings)
     rows = []
     for p in holdings.positions:
@@ -211,7 +205,7 @@ def ask(
     client = client or default_client()
 
     holdings = service.build_holdings(session, user_id)
-    context, points, held = build_context(session, user_id, agreed.anonymise_amounts, holdings)
+    context, points, held = build_context(holdings, agreed.anonymise_amounts)
     ctx = tools.ToolContext(session, user_id, agreed.anonymise_amounts, holdings)
     messages: list[dict[str, Any]] = [
         {"role": m["role"], "content": m["content"][:MAX_HISTORY_CHARS]}
@@ -221,7 +215,14 @@ def ask(
     # The API wants the first message from the user and the roles to alternate.
     while messages and messages[0]["role"] != "user":
         messages.pop(0)
-    messages = [m for i, m in enumerate(messages) if i == 0 or m["role"] != messages[i - 1]["role"]]
+    # Two messages of one role in a row (a turn that was never recorded): the later one is kept.
+    merged: list[dict[str, Any]] = []
+    for m in messages:
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1] = m
+        else:
+            merged.append(m)
+    messages = merged
     if messages and messages[-1]["role"] == "user":
         messages.pop()
     messages.append(
@@ -234,6 +235,7 @@ def ask(
     notes: list[str] = []
     followed_up = False
     failed = 0  # picks the model got wrong on the last turn, with no turn left to fix them
+    asked_tools = False  # the last reply was a tool call: if the loop ends on it, no answer came
 
     for _turn in range(MAX_TURNS + 1):
         # No transaction stays open while the model thinks: the connection goes back to the pool.
@@ -244,6 +246,7 @@ def ask(
             except budget.BudgetExceeded:
                 notes.append("The AI budget ran out, so the answer stops here.")
                 _warn_if_unlogged(answer, saved, notes)
+                asked_tools = False  # the stop has its own note
                 break
         try:
             reply = client.send(
@@ -255,6 +258,7 @@ def ask(
             # The earlier calls were paid for and their picks are stored: keep what we have.
             notes.append("The AI service failed part way, so the answer may be incomplete.")
             _warn_if_unlogged(answer, saved, notes)
+            asked_tools = False
             break
         models.add(reply.model)
         usage = budget.record(session, user_id, "ask", reply, settings)
@@ -286,7 +290,9 @@ def ask(
             )
             messages.append({"role": "assistant", "content": reply.raw_content})
             messages.append({"role": "user", "content": results})
+            asked_tools = True
             continue
+        asked_tools = False
         failed = 0
         if not saved and not followed_up and RECOMMENDS.search(reply.text):
             followed_up = True
@@ -303,6 +309,8 @@ def ask(
             )
             continue
         break
+    if asked_tools:
+        notes.append("The AI used all its tool turns and gave no final answer. Ask again, shorter.")
     result = _result(answer or "The AI gave no answer.", saved, points, models, settings, False)
     result.notes.extend(notes)
     result.tool_calls = traces

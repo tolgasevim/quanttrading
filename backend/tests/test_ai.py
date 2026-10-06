@@ -688,7 +688,7 @@ def test_a_pick_the_model_cannot_fix_in_time_is_reported(
     fake.replies = [*good, reply("last", [pick_call("t9", horizon_months=0)])]
     body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
     assert len(body["picks"]) == 3
-    assert body["notes"] and "could not be recorded" in body["notes"][0]
+    assert any("could not be recorded" in n for n in body["notes"])
 
 
 def test_a_pick_fixed_on_the_next_turn_has_no_note(owner: TestClient, fake: Fake) -> None:
@@ -1014,7 +1014,9 @@ def test_a_repeated_pick_is_not_counted_as_a_failure(
         reply("d", same),
     ]
     body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
-    assert len(body["picks"]) == 2 and body["notes"] == []
+    # The last reply was a tool call, so the user is told there is no final answer; a repeat of
+    # a pick is not reported as a failure.
+    assert len(body["picks"]) == 2 and all("tool turns" in n for n in body["notes"])
 
 
 def test_a_refusal_keeps_the_notes(owner: TestClient, fake: Fake) -> None:

@@ -61,13 +61,14 @@ class ConsentIn(BaseModel):
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(max_length=ai_service.MAX_HISTORY_CHARS)
+    # Long messages are cut by the service, not refused: a long answer must not end the chat.
+    content: str = Field(max_length=100_000)
 
 
 class AskIn(BaseModel):
     question: str = Field(max_length=ai_service.MAX_QUESTION_CHARS)
     # The earlier messages of a chat, as plain text. The server keeps no chat state.
-    history: list[ChatMessage] = Field(default_factory=list, max_length=40)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=500)
 
     @field_validator("question")
     @classmethod
