@@ -27,6 +27,7 @@ from quant.portfolio.lots import COST_MISSING
 MAX_TURNS = 3
 MAX_POSITIONS = 60
 MAX_QUESTION_CHARS = 1000
+SUBSTANTIAL = 80  # characters: a reply this long counts as an answer, not as "Done."
 RECOMMENDS = re.compile(
     r"\b(buy|sell|hold|accumulate|add to|reduce|trim|avoid|overweight|underweight"
     r"|kaufen|verkaufen|halten)\b",
@@ -111,6 +112,18 @@ def build_context(
     return json.dumps(payload, separators=(",", ":")), points, {p.isin for p in holdings.positions}
 
 
+def _pick_key(data: dict[str, Any]) -> tuple[str, str] | None:
+    who = data.get("isin") or data.get("name")
+    direction = data.get("direction")
+    if not isinstance(who, str) or not isinstance(direction, str):
+        return None
+    return (" ".join(who.split()).upper(), direction.strip().lower())
+
+
+def _pick_key_of(pick: AiPick) -> tuple[str, str]:
+    return ((pick.isin or pick.name).upper(), pick.direction)
+
+
 def _handle_tools(
     session: Session,
     user_id: uuid.UUID,
@@ -127,6 +140,11 @@ def _handle_tools(
         if call.name != picks.TOOL_NAME:
             block.update(content="unknown tool", is_error=True)
         else:
+            key = _pick_key(call.input)
+            if key is not None and key in {_pick_key_of(p) for p in saved}:
+                block["content"] = "already recorded"  # the same pick twice is logged once
+                results.append(block)
+                continue
             try:
                 with session.begin_nested():
                     pick = picks.record_pick(
@@ -205,8 +223,9 @@ def ask(
         if reply.stop_reason == "max_tokens":
             notes.append("The answer was cut off at the length limit.")
         # A reply to the follow-up, or a short "Recorded." after the tool results, is not the
-        # answer: keep the longest text of the other replies.
-        if not followed_up and len(reply.text) > len(answer):
+        # answer. A later reply of some substance is (it may correct an earlier draft); a shorter
+        # one does not replace a longer text.
+        if not followed_up and (len(reply.text) >= SUBSTANTIAL or len(reply.text) > len(answer)):
             answer = reply.text
         if reply.tool_calls:
             before = len(saved)

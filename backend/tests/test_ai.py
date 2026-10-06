@@ -695,7 +695,7 @@ def test_a_dated_name_of_the_configured_model_is_not_a_fallback(
 
 def test_a_pick_the_model_cannot_fix_in_time_is_reported(owner: TestClient, fake: Fake) -> None:
     accept(owner)
-    good = [reply("again", [pick_call(f"t{i}")]) for i in range(3)]
+    good = [reply("again", [pick_call(f"t{i}", isin=f"US000000010{i}")]) for i in range(3)]
     fake.replies = [*good, reply("last", [pick_call("t9", horizon_months=0)])]
     body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
     assert len(body["picks"]) == 3
@@ -749,8 +749,12 @@ def test_a_pick_finds_its_price_by_ticker_when_the_isin_is_unknown(db: Session) 
         )
     )
     db.commit()  # fmt: skip
-    assert picks.latest_price(db, "XX0000000000", "alpha") == (D("5"), "EUR", RECENT)
-    assert picks.latest_price(db, "XX0000000000", None) is None
+    assert picks.latest_price(db, picks.candidates(db, "XX0000000000", "alpha")) == (
+        D("5"),
+        "EUR",
+        RECENT,
+    )
+    assert picks.latest_price(db, picks.candidates(db, "XX0000000000", None)) is None
 
 
 def test_a_failed_alert_is_stored_by_the_next_call(
@@ -907,7 +911,7 @@ def test_a_stale_price_is_not_the_price_on_the_day(db: Session) -> None:
         )
     )
     db.commit()  # fmt: skip
-    assert picks.latest_price(db, None, "OLD") is None
+    assert picks.latest_price(db, picks.candidates(db, None, "OLD")) is None
 
 
 def test_control_characters_in_a_pick_do_not_break_the_answer(
@@ -968,3 +972,41 @@ def test_the_client_is_shared_and_retries_once(monkeypatch: pytest.MonkeyPatch) 
         assert sdk.client_args["max_retries"] == 1
     finally:
         llm._shared.clear()
+
+
+def test_the_same_pick_twice_is_logged_once(owner: TestClient, fake: Fake, db: Session) -> None:
+    accept(owner)
+    fake.replies = [
+        reply("Alpha looks solid.", [pick_call("t1"), pick_call("t2")]),
+        reply("Still a buy.", [pick_call("t3", rationale="Again.")]),
+        reply("Done."),
+    ]
+    body = owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()
+    assert len(body["picks"]) == 1
+    rls.bypass(db)
+    assert len(db.scalars(select(AiPick)).all()) == 1
+    # A sell of the same security is a different pick.
+    fake.replies = [reply("", [pick_call("a"), pick_call("b", direction="sell")]), reply("ok")]
+    assert len(owner.post("/api/ai/ask", json={"question": "More?"}).json()["picks"]) == 2
+
+
+def test_a_substantive_final_reply_replaces_an_earlier_draft(owner: TestClient, fake: Fake) -> None:
+    accept(owner)
+    draft = "Draft: Alpha looks fine. " + "x" * 100
+    final = "Final: on reflection Alpha is a hold, because the main risk is high. " + "y" * 20
+    fake.replies = [reply(draft, [pick_call()]), reply(final)]
+    assert owner.post("/api/ai/ask", json={"question": "Buy what?"}).json()["answer"] == final
+
+
+def test_flipping_hide_amounts_keeps_the_time_of_acceptance(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    accept(owner)
+    rls.bypass(db)
+    first = consent.get(db, admin.id)
+    assert first is not None
+    at = first.accepted_at
+    db.expire_all()
+    accept(owner, anonymise=True)
+    again = consent.get(db, admin.id)
+    assert again is not None and again.accepted_at == at and again.anonymise_amounts is True

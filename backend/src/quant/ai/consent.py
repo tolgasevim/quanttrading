@@ -9,6 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from quant.models import AiConsent
@@ -35,15 +36,31 @@ def get(session: Session, user_id: uuid.UUID) -> AiConsent | None:
 
 
 def accept(session: Session, user_id: uuid.UUID, anonymise_amounts: bool) -> AiConsent:
-    row = session.scalar(select(AiConsent).where(AiConsent.user_id == user_id))
-    if row is None:
-        row = AiConsent(user_id=user_id)
-        session.add(row)
-    row.version = DISCLAIMER_VERSION
-    row.accepted_at = datetime.now(UTC)
-    row.anonymise_amounts = anonymise_amounts
-    session.commit()
-    return row
+    """Store the consent. The time of acceptance changes only when the disclaimer version does,
+    not when the user only flips "hide amounts"."""
+    for attempt in (1, 2):
+        row = session.scalar(select(AiConsent).where(AiConsent.user_id == user_id))
+        if row is None:
+            row = AiConsent(
+                user_id=user_id,
+                version=DISCLAIMER_VERSION,
+                accepted_at=datetime.now(UTC),
+                anonymise_amounts=anonymise_amounts,
+            )
+            session.add(row)
+        else:
+            if row.version != DISCLAIMER_VERSION:
+                row.version = DISCLAIMER_VERSION
+                row.accepted_at = datetime.now(UTC)
+            row.anonymise_amounts = anonymise_amounts
+        try:
+            session.commit()
+            return row
+        except IntegrityError:  # a second request inserted the row first: update that one
+            session.rollback()
+            if attempt == 2:
+                raise
+    raise AssertionError("unreachable")
 
 
 def require(session: Session, user_id: uuid.UUID) -> AiConsent:

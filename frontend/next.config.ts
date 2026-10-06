@@ -7,6 +7,10 @@ const apiUrl = process.env.API_INTERNAL_URL ?? "http://localhost:8000";
 const config: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  // The proxy gives up after 30 seconds by default. A question to the AI makes up to four model
+  // calls, so give it five minutes: if the proxy cut the line, the answer and its cost would
+  // still be stored while the user saw an error.
+  experimental: { proxyTimeout: 300_000 },
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${apiUrl}/api/:path*` }];
   },

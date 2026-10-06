@@ -66,11 +66,10 @@ def candidates(session: Session, isin: str | None, ticker: str | None) -> list[I
     return found
 
 
-def latest_price(
-    session: Session, isin: str | None, ticker: str | None
-) -> tuple[Decimal, str, date] | None:
-    """The newest stored close of the first candidate that has one, from the shared market data."""
-    for instrument in candidates(session, isin, ticker):
+def latest_price(session: Session, found: list[Instrument]) -> tuple[Decimal, str, date] | None:
+    """The newest stored close of the first instrument that has a recent one, from the shared
+    market data."""
+    for instrument in found:
         row = session.scalar(
             select(PriceEOD)
             .where(PriceEOD.instrument_id == instrument.id)
@@ -108,8 +107,9 @@ def record_pick(
     isin = _text(data.get("isin"), 20)
     isin = isin.upper() if isin else None
     ticker = _text(data.get("ticker"), 30)
-    quote = latest_price(session, isin, ticker)
-    known = {i.isin for i in candidates(session, isin, ticker) if i.isin}
+    found = candidates(session, isin, ticker)
+    quote = latest_price(session, found)
+    known = {i.isin for i in found if i.isin}
     held = bool(({isin} | known) & held_isins)
     pick = AiPick(
         user_id=user_id,
