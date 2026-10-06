@@ -273,7 +273,7 @@ def _job_events(session: Session, now: datetime) -> list[tuple[datetime, dict[st
         # count and must not make a second alert.
         digest = (
             ""
-            if run.status == JobStatus.PARTIAL
+            if run.status in (JobStatus.PARTIAL, JobStatus.RUNNING)  # their text has times, counts
             else hashlib.sha256(_normalise(reason).encode()).hexdigest()[:8]
         )
         day = happened.astimezone(tz).date().isoformat()
@@ -329,7 +329,9 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     window = today - timedelta(days=MAX_PRICE_AGE_DAYS + MAX_GAP_DAYS + 1)
     bars = _newest_bars(session, [i.id for i in instruments.values()], window)
     job_events = _job_events(session, now) if any(u.is_admin for u in users) else []
-    wanted = {u.id for u in users if u.id in positions or u.is_admin or str(u.id) in result.errors}
+    wanted = {
+        u.id for u in users if bool(positions.get(u.id)) or u.is_admin or str(u.id) in result.errors
+    }
     result.attempted = len(wanted)  # the users that have something to check
     for user in users:
         if user.id not in wanted:

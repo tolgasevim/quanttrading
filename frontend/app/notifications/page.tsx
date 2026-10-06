@@ -43,8 +43,8 @@ function SettingsCard() {
       ["move_crypto_pct", "coins"],
     ] as const) {
       const value = Number(form[key]);
-      if (form[key] === "" || !(value >= 0.01 && value <= 100)) {
-        setError(`The limit for ${label} is a number from 0.01 to 100.`);
+      if (!/^\d+(\.\d{1,2})?$/.test(String(form[key])) || !(value >= 0.01 && value <= 100)) {
+        setError(`The limit for ${label} is a number from 0.01 to 100, with at most two decimals.`);
         return;
       }
     }

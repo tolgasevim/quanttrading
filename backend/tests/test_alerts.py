@@ -615,3 +615,23 @@ def test_ordinary_words_made_of_hex_letters_are_not_taken_for_ids() -> None:
     assert _normalise("defaced feed") == "defaced feed"  # words stay
     assert _normalise("decade") != _normalise("facade")
     assert _normalise("request 4f9ac2e1 failed") == "request # failed"  # an id has digits
+
+
+def test_a_run_stuck_twice_the_same_day_is_one_alert(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    now = admin.created_at + timedelta(hours=40)
+    for hours in (8, 12):  # started at different times, never finished
+        db.add(JobRun(job="ingest_prices", status=JobStatus.RUNNING,
+                      started_at=admin.created_at + timedelta(hours=hours), details={}))  # fmt: skip
+    db.commit()
+    assert run(db, now=now) == 1
+
+
+def test_users_holding_nothing_are_not_counted_as_attempted(
+    owner: TestClient, db: Session, admin: User
+) -> None:
+    make_user(db, "empty@example.com")  # daily moves on by default, but nothing held
+    rls.bypass(db)
+    result = create_alerts(db, TODAY, NOW)
+    assert result.attempted == 1  # the admin, who also gets the job alerts
