@@ -55,20 +55,37 @@ Turn on two-factor sign-in under Settings after the first login.
 
 ## The AI guide (optional)
 
-The AI page answers questions about your portfolio and logs every buy, sell or hold it names
-(the pick log). It gives guidance only. It never places trades.
+The AI page is a chat about your portfolio. It gives guidance only. It never places trades. Every
+answer carries the label "AI-generated, may be wrong, not investment advice", the list of data it
+used and the tools it called.
 
+What it does:
+- **Chat with tools**: the model can look up one of your holdings, stored prices, a price-shock
+  scenario ("what if tech falls 20%"), your tax estimate, ECB rates and your earlier picks. It has
+  no news, macro data or live quotes, and says so.
+- **Pick log and track record**: every buy, sell or hold it names is logged with the price and
+  the reason, and scored after 1, 3, 6 and 12 months against a Nasdaq-100 fund (`/ai/track-record`).
+  The scoring job runs every evening after the prices.
+- **Weekly commentary**: every Sunday at 18:00 (`QT_COMMENTARY_CRON`) each user gets a short note
+  (`/ai/weekly`). If the AI is off, not allowed or over budget, it is a plain summary of your data.
+  Write it by hand with `docker compose exec api python -m quant.cli weekly-commentary`.
+
+Set-up:
 1. Get an API key from Anthropic and set `QT_ANTHROPIC_API_KEY` in `.env`. Keep it secret.
 2. The `anthropic` package is a new dependency. On a machine that can reach PyPI, run
    `cd backend && uv lock` and commit `uv.lock`, then rebuild the images. Until then the AI page
    says it is not set up.
-3. Each person accepts the disclaimer on the AI page once. They may hide amounts, so only
-   weights are sent.
+3. Everybody accepts the app disclaimer on first login (and again when its text changes). On the
+   AI page they accept a second consent about what is sent to the AI provider, and may hide
+   amounts, so only weights are sent.
 4. The spend cap is 2,000 EUR a month for everyone and 500 EUR for one person
-   (`QT_LLM_MONTHLY_CAP_EUR`, `QT_LLM_USER_MONTHLY_CAP_EUR`). At the cap the AI pauses. Admins get
-   an alert at 50, 80 and 100 percent.
+   (`QT_LLM_MONTHLY_CAP_EUR`, `QT_LLM_USER_MONTHLY_CAP_EUR`). At the cap the chat pauses, the
+   weekly note becomes a plain summary, and the pick log keeps working. Admins get an alert at 50,
+   80 and 100 percent.
 5. Server-side fallbacks are on: if the main model is busy, the API may answer with another
    model. The page says so. Switch it off with `QT_LLM_FALLBACKS=false`.
+6. The code that talks to the live API was tested with a fake SDK only. Ask one question after
+   set-up and check that it answers.
 
 ## Import your Trade Republic history
 
