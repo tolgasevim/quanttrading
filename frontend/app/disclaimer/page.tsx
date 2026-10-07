@@ -27,7 +27,7 @@ export default function DisclaimerPage() {
     setBusy(true);
     setError("");
     try {
-      await post<Disclaimer>("/api/auth/disclaimer");
+      await post<Disclaimer>("/api/auth/disclaimer", { version: info?.version });
       router.replace("/");
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : "Could not save.");

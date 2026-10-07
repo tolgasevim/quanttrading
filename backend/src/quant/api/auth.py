@@ -174,8 +174,17 @@ def get_disclaimer(user: CurrentUser, db: ScopedDb) -> DisclaimerOut:
     )
 
 
+class AcceptIn(BaseModel):
+    version: int  # the version of the text the user was shown
+
+
 @router.post("/disclaimer", response_model=DisclaimerOut)
-def accept_disclaimer(user: CurrentUser, db: ScopedDb) -> DisclaimerOut:
+def accept_disclaimer(body: AcceptIn, user: CurrentUser, db: ScopedDb) -> DisclaimerOut:
+    if body.version != disclaimer.VERSION:
+        # The text changed while the page was open: show the new one before accepting it.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "the disclaimer changed, please read it again"
+        )
     disclaimer.accept(db, user.id)
     return DisclaimerOut(text=disclaimer.TEXT, version=disclaimer.VERSION, accepted=True)
 

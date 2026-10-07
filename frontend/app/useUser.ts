@@ -15,7 +15,7 @@ export function useUser(): User | null {
   useEffect(() => {
     api<User>("/api/auth/me")
       .then((u) => {
-        if (u.disclaimer_accepted) setUser(u);
+        if (u.disclaimer_accepted === true) setUser(u);
         else router.replace("/disclaimer");
       })
       .catch((e) => {

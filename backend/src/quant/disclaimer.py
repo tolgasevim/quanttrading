@@ -43,7 +43,7 @@ def accept(session: Session, user_id: uuid.UUID) -> None:
         insert_stmt.on_conflict_do_update(
             index_elements=[DisclaimerAcceptance.user_id],
             set_={"version": VERSION, "accepted_at": now},
-            where=DisclaimerAcceptance.version != VERSION,
+            where=DisclaimerAcceptance.version < VERSION,  # never lower a newer acceptance
         )
     )
     session.commit()

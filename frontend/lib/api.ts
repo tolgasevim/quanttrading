@@ -27,6 +27,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // keep statusText
     }
+    // The disclaimer changed (or was never accepted) while the page was open: show it.
+    if (
+      response.status === 403 &&
+      detail === "accept the disclaimer first" &&
+      typeof window !== "undefined" &&
+      window.location.pathname !== "/disclaimer"
+    ) {
+      window.location.assign("/disclaimer");
+    }
     throw new ApiError(response.status, detail);
   }
   return (response.status === 204 ? undefined : await response.json()) as T;
@@ -46,7 +55,8 @@ export type User = {
   display_name: string;
   role: "admin" | "member";
   totp_enabled: boolean;
-  disclaimer_accepted: boolean;
+  // From /api/auth/me only: true or false there, null (unknown) in the login answer.
+  disclaimer_accepted: boolean | null;
 };
 
 export type InstrumentStatus = {
