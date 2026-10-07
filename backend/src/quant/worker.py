@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from quant import rls
+from quant.ai.commentary import run_weekly
 from quant.ai.scoring import score_picks
 from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
@@ -35,6 +36,7 @@ PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
 SCORE_JOB = "score_picks"
+WEEKLY_JOB = "weekly_commentary"
 
 
 def _map_and_fill(session: Session, settings: Settings, fetcher: Fetcher) -> JobResult:
@@ -162,6 +164,14 @@ def run_scoring() -> None:
         run_job(session, SCORE_JOB, lambda s: score_picks(s, today_local(settings).date()))
 
 
+def run_weekly_commentary() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Only the job's own bookkeeping runs here; each user's commentary has its own scoped
+        # session (see `run_weekly`).
+        run_job(session, WEEKLY_JOB, lambda s: run_weekly(today_local(settings).date()))
+
+
 def run_fx() -> None:
     settings = get_settings()
     with get_sessionmaker()() as session:
@@ -233,6 +243,12 @@ def main() -> None:
         run_evening,
         CronTrigger.from_crontab(settings.prices_cron, timezone=tz),
         id=PRICES_JOB,
+        **common,
+    )
+    scheduler.add_job(
+        run_weekly_commentary,
+        CronTrigger.from_crontab(settings.commentary_cron, timezone=tz),
+        id=WEEKLY_JOB,
         **common,
     )
     log.info("scheduler started: fx=%r prices=%r (%s)", settings.fx_cron, settings.prices_cron, tz)

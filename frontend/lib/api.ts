@@ -368,3 +368,12 @@ export type AiTrackRecord = {
   windows: AiWindowSummary[];
   items: { pick: AiPick; scores: AiScore[] }[];
 };
+
+export type AiCommentary = {
+  id: string;
+  week_start: string;
+  created_at: string;
+  kind: "ai" | "template";
+  why_template: string | null;
+  text: string;
+};

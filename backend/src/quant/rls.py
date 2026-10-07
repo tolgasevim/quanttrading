@@ -33,6 +33,7 @@ USER_TABLES = (
     "llm_usage",
     "ai_picks",
     "ai_pick_scores",
+    "ai_commentaries",
 )
 
 

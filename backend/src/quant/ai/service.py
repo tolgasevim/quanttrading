@@ -29,6 +29,7 @@ MAX_HISTORY = 10  # earlier messages of a chat that are sent again
 MAX_HISTORY_CHARS = 4000
 MAX_POSITIONS = 60
 MAX_QUESTION_CHARS = 1000
+NO_ANSWER = "The AI gave no answer."  # what a reply with no text becomes
 SUBSTANTIAL = 80  # characters: a reply this long counts as an answer, not as "Done."
 RECOMMENDS = re.compile(
     r"\b(buy|sell|hold|accumulate|add to|reduce|trim|avoid|overweight|underweight"
@@ -232,6 +233,9 @@ def ask(
     question: str,
     client: LlmClient | None = None,
     history: list[dict[str, str]] | None = None,
+    *,
+    purpose: str = "ask",
+    extra: str | None = None,
 ) -> AskResult:
     """One question, or the next message of a chat: `history` holds the earlier messages as plain
     text (role user or assistant). The portfolio summary goes with the newest question only."""
@@ -246,7 +250,12 @@ def ask(
     ctx = tools.ToolContext(session, user_id, agreed.anonymise_amounts, holdings)
     messages = _history_messages(history, agreed.anonymise_amounts)
     messages.append(
-        {"role": "user", "content": f"Portfolio summary:\n{context}\n\nQuestion: {question}"}
+        {
+            "role": "user",
+            "content": f"Portfolio summary:\n{context}\n\n"
+            + (f"{extra}\n\n" if extra else "")
+            + f"Question: {question}",
+        }
     )
     traces: list[tools.ToolTrace] = []
     saved: list[AiPick] = []
@@ -281,7 +290,7 @@ def ask(
             asked_tools = False
             break
         models.add(reply.model)
-        usage = budget.record(session, user_id, "ask", reply, settings)
+        usage = budget.record(session, user_id, purpose, reply, settings)
         if reply.refused:
             declined = _result(
                 "The AI declined to answer this question.", saved, points, models, settings, True
@@ -339,7 +348,7 @@ def ask(
         break
     if asked_tools:
         notes.append("The AI used all its tool turns and gave no final answer. Ask again, shorter.")
-    result = _result(answer or "The AI gave no answer.", saved, points, models, settings, False)
+    result = _result(answer or NO_ANSWER, saved, points, models, settings, False)
     result.notes.extend(notes)
     result.tool_calls = traces
     if failed:

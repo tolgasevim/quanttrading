@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     # Scheduler (Europe/Berlin): EOD prices after the US close, ECB FX after publication.
     timezone: str = "Europe/Berlin"
     prices_cron: str = "30 22 * * mon-fri"
+    commentary_cron: str = "0 18 * * sun"  # the weekly AI commentary (FR-54)
     mapping_cron: str = "0 22 * * mon-fri"  # before the price job, so new ISINs get prices at once
     fx_cron: str = "30 16 * * mon-fri"
     backfill_days: int = 400
