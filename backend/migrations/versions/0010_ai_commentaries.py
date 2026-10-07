@@ -26,7 +26,10 @@ def upgrade() -> None:
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("week_start", sa.Date(), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
         ),
         sa.Column("kind", sa.String(length=10), nullable=False),
         sa.Column("why_template", sa.String(length=200), nullable=True),
@@ -34,7 +37,7 @@ def upgrade() -> None:
         sa.Column("text", sa.String(length=10000), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "week_start", name="uq_ai_commentaries_week"),
+        sa.UniqueConstraint("user_id", "week_start", "kind", name="uq_ai_commentaries_week"),
     )
     # Written once per week and never edited: the app role may read and insert only (the default
     # privileges of migration 0002 give it all four).

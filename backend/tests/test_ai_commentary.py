@@ -261,3 +261,77 @@ def test_a_tool_call_inside_the_weekly_text_does_not_break_it(
     )
     made = make(db, portfolio, fake)
     assert made.kind == "ai" and made.text.startswith("Rates are not stored.")
+
+
+def test_hide_amounts_keeps_the_euro_value_out_of_what_the_model_sees(
+    db: Session, owner: TestClient, portfolio: User
+) -> None:
+    accept(owner, anonymise=True)
+    fake = Fake(reply("A calm week. " + "x" * 90))
+    made = make(db, portfolio, fake)
+    sent = fake.requests[0]["messages"][-1]["content"]
+    assert "market value" not in sent and "EUR." not in sent.split("Question:")[0].split("Facts")[1]
+    assert made.kind == "ai"
+
+
+def test_a_template_does_not_lock_the_week_when_the_ai_works_later(
+    db: Session, owner: TestClient, portfolio: User
+) -> None:
+    first = make(db, portfolio, None)  # Sunday: no consent yet
+    assert first.kind == "template"
+    again = make(db, portfolio, Fake())  # without a retry, the same one comes back
+    assert again.id == first.id
+    accept(owner)
+    rls.scope_to_user(db, portfolio.id)
+    fake = Fake(reply("Now with the AI. " + "x" * 90))
+    better = commentary.create_commentary(db, portfolio.id, TODAY, fake, retry_ai=True)
+    assert better is not None and better.kind == "ai"
+    stays = commentary.create_commentary(db, portfolio.id, TODAY, Fake(), retry_ai=True)
+    assert stays is not None and stays.id == better.id  # the AI text stays
+    rls.bypass(db)
+    assert len(db.scalars(select(AiCommentary)).all()) == 2  # the template stays as a record
+
+
+def test_a_failed_retry_keeps_the_template(db: Session, owner: TestClient, portfolio: User) -> None:
+    first = make(db, portfolio, None)
+    accept(owner)
+    rls.scope_to_user(db, portfolio.id)
+    kept = commentary.create_commentary(
+        db, portfolio.id, TODAY, Fake(reply("", refused=True)), retry_ai=True
+    )
+    assert kept is not None and kept.id == first.id and kept.kind == "template"
+
+
+def test_the_list_shows_the_ai_text_of_a_week_that_has_both(
+    client: TestClient, db: Session, owner: TestClient, portfolio: User
+) -> None:
+    make(db, portfolio, None)
+    accept(owner)
+    rls.scope_to_user(db, portfolio.id)
+    commentary.create_commentary(
+        db, portfolio.id, TODAY, Fake(reply("AI text. " + "x" * 90)), retry_ai=True
+    )
+    listed = owner.get("/api/ai/commentaries").json()
+    assert len(listed) == 1 and listed[0]["kind"] == "ai"
+
+
+def test_only_portfolio_alerts_are_counted(db: Session, portfolio: User) -> None:
+    rls.bypass(db)
+    for n, kind in enumerate(("daily_move", "job_failed", "ai_budget")):
+        db.add(Notification(user_id=portfolio.id, kind=kind, severity="info", title="t", body="b", dedupe_key=f"k{n}"))  # fmt: skip
+    db.commit()
+    assert "Alerts this week: 1." in make(db, portfolio, None).text
+
+
+def test_without_hide_amounts_the_model_gets_the_value_and_the_template_always_has_it(
+    db: Session, owner: TestClient, portfolio: User
+) -> None:
+    accept(owner)
+    fake = Fake(reply("A calm week. " + "x" * 90))
+    make(db, portfolio, fake)
+    assert "market value 1,950.00 EUR" in fake.requests[0]["messages"][-1]["content"]
+    other = make_user(db, "t@example.com")
+    hold(db, other, A, "NVIDIA Corp")
+    # No consent at all: no model call, and the local template shows the value.
+    template = make(db, other, Fake())
+    assert template.kind == "template" and "market value" in template.text

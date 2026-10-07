@@ -29,6 +29,7 @@ MAX_HISTORY = 10  # earlier messages of a chat that are sent again
 MAX_HISTORY_CHARS = 4000
 MAX_POSITIONS = 60
 MAX_QUESTION_CHARS = 1000
+NO_ANSWER = "The AI gave no answer."  # what a reply with no text becomes
 SUBSTANTIAL = 80  # characters: a reply this long counts as an answer, not as "Done."
 RECOMMENDS = re.compile(
     r"\b(buy|sell|hold|accumulate|add to|reduce|trim|avoid|overweight|underweight"
@@ -347,7 +348,7 @@ def ask(
         break
     if asked_tools:
         notes.append("The AI used all its tool turns and gave no final answer. Ask again, shorter.")
-    result = _result(answer or "The AI gave no answer.", saved, points, models, settings, False)
+    result = _result(answer or NO_ANSWER, saved, points, models, settings, False)
     result.notes.extend(notes)
     result.tool_calls = traces
     if failed:

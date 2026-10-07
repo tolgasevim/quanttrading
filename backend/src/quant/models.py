@@ -448,7 +448,11 @@ class AiCommentary(Base):
     the data when the AI is off, not allowed or over its budget. One per user and week."""
 
     __tablename__ = "ai_commentaries"
-    __table_args__ = (UniqueConstraint("user_id", "week_start", name="uq_ai_commentaries_week"),)
+    # One of each kind per week: a template written when the AI was not available can be followed
+    # by an AI text once it is (the app role cannot edit a row, so a second row is how).
+    __table_args__ = (
+        UniqueConstraint("user_id", "week_start", "kind", name="uq_ai_commentaries_week"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))

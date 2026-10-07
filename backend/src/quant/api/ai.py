@@ -368,10 +368,13 @@ def list_commentaries(
     rows = db.scalars(
         select(AiCommentary)
         .where(AiCommentary.user_id == user.id)
-        .order_by(AiCommentary.week_start.desc())
-        .limit(limit)
+        .order_by(AiCommentary.week_start.desc(), AiCommentary.kind)  # "ai" sorts before "template"
+        .limit(limit * 2)  # a week can have two rows
     ).all()
-    return [_commentary(c) for c in rows]
+    best: dict[date, AiCommentary] = {}
+    for c in rows:  # the first row of a week is the AI text if the week has one
+        best.setdefault(c.week_start, c)
+    return [_commentary(c) for c in list(best.values())[:limit]]
 
 
 @router.post("/commentaries/now", response_model=CommentaryOut)
@@ -381,7 +384,9 @@ def make_commentary_now(
     client: Annotated[LlmClient | None, Depends(optional_llm)],
 ) -> CommentaryOut:
     """This week's commentary, now. If the week already has one, that one is returned."""
-    made = commentary.create_commentary(db, user.id, today_local(get_settings()).date(), client)
+    made = commentary.create_commentary(
+        db, user.id, today_local(get_settings()).date(), client, retry_ai=True
+    )
     if made is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "there are no holdings to write about")
     return _commentary(made)
