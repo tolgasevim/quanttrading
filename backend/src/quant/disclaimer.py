@@ -9,6 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from quant.models import DisclaimerAcceptance
@@ -32,15 +33,17 @@ def accepted(session: Session, user_id: uuid.UUID) -> bool:
 
 def accept(session: Session, user_id: uuid.UUID) -> None:
     """Record acceptance of the current version. Accepting the same version again changes
-    nothing, so the time of the first acceptance stays."""
-    row = session.scalar(
-        select(DisclaimerAcceptance).where(DisclaimerAcceptance.user_id == user_id)
+    nothing, so the time of the first acceptance stays. One statement, so two requests at once
+    cannot collide."""
+    now = datetime.now(UTC)
+    insert_stmt = insert(DisclaimerAcceptance).values(
+        user_id=user_id, version=VERSION, accepted_at=now
     )
-    if row is None:
-        session.add(
-            DisclaimerAcceptance(user_id=user_id, version=VERSION, accepted_at=datetime.now(UTC))
+    session.execute(
+        insert_stmt.on_conflict_do_update(
+            index_elements=[DisclaimerAcceptance.user_id],
+            set_={"version": VERSION, "accepted_at": now},
+            where=DisclaimerAcceptance.version != VERSION,
         )
-    elif row.version != VERSION:
-        row.version = VERSION
-        row.accepted_at = datetime.now(UTC)
+    )
     session.commit()

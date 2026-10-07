@@ -8,6 +8,7 @@ os.environ.setdefault(
 os.environ["QT_COOKIE_SECURE"] = "false"  # TestClient talks plain http
 
 from collections.abc import Iterator  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
 
@@ -18,10 +19,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from quant import disclaimer, rls  # noqa: E402
 from quant.config import get_settings  # noqa: E402
 from quant.db import get_sessionmaker  # noqa: E402
 from quant.main import app  # noqa: E402
-from quant.models import Base, Role, User  # noqa: E402
+from quant.models import Base, DisclaimerAcceptance, Role, User  # noqa: E402
 from quant.security import hash_password  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -59,7 +61,9 @@ def client() -> TestClient:
     return TestClient(app)
 
 
-def make_user(db: Session, email: str, role: Role = Role.MEMBER) -> User:
+def make_user(db: Session, email: str, role: Role = Role.MEMBER, accepted: bool = True) -> User:
+    """A user. By default they have accepted the disclaimer (FR-4), which the data endpoints
+    require; `accepted=False` makes one who has not."""
     user = User(
         email=email,
         display_name=email.split("@")[0],
@@ -68,6 +72,17 @@ def make_user(db: Session, email: str, role: Role = Role.MEMBER) -> User:
     )
     db.add(user)
     db.commit()
+    if accepted:
+        # Their own short session: the table is row-level secured, and the test's session must
+        # not be left in bypass mode.
+        with get_sessionmaker()() as other:
+            rls.bypass(other)
+            other.add(
+                DisclaimerAcceptance(
+                    user_id=user.id, version=disclaimer.VERSION, accepted_at=datetime.now(UTC)
+                )
+            )
+            other.commit()
     return user
 
 
