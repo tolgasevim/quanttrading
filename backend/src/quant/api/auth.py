@@ -11,7 +11,8 @@ from fastapi import APIRouter, Cookie, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select
 
-from quant.api.deps import SESSION_COOKIE, CurrentUser, DbSession
+from quant import disclaimer
+from quant.api.deps import SESSION_COOKIE, CurrentUser, DbSession, ScopedDb
 from quant.config import get_settings
 from quant.models import AuthSession, Invite, Role, User
 from quant.security import (
@@ -43,6 +44,10 @@ class UserOut(BaseModel):
     display_name: str
     role: Role
     totp_enabled: bool
+    # Whether the user accepted the current disclaimer (FR-4). Only /me looks it up, so it is
+    # None (unknown) in the other answers; the page sends the user to /disclaimer unless it is
+    # true. The data endpoints refuse a user who has not accepted (403) whatever the page does.
+    disclaimer_accepted: bool | None = None
 
     @classmethod
     def of(cls, user: User) -> "UserOut":
@@ -150,8 +155,38 @@ def logout(
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: CurrentUser) -> UserOut:
-    return UserOut.of(user)
+def me(user: CurrentUser, db: ScopedDb) -> UserOut:
+    out = UserOut.of(user)
+    out.disclaimer_accepted = disclaimer.accepted(db, user.id)
+    return out
+
+
+class DisclaimerOut(BaseModel):
+    text: str
+    version: int
+    accepted: bool
+
+
+@router.get("/disclaimer", response_model=DisclaimerOut)
+def get_disclaimer(user: CurrentUser, db: ScopedDb) -> DisclaimerOut:
+    return DisclaimerOut(
+        text=disclaimer.TEXT, version=disclaimer.VERSION, accepted=disclaimer.accepted(db, user.id)
+    )
+
+
+class AcceptIn(BaseModel):
+    version: int  # the version of the text the user was shown
+
+
+@router.post("/disclaimer", response_model=DisclaimerOut)
+def accept_disclaimer(body: AcceptIn, user: CurrentUser, db: ScopedDb) -> DisclaimerOut:
+    if body.version != disclaimer.VERSION:
+        # The text changed while the page was open: show the new one before accepting it.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "the disclaimer changed, please read it again"
+        )
+    disclaimer.accept(db, user.id)
+    return DisclaimerOut(text=disclaimer.TEXT, version=disclaimer.VERSION, accepted=True)
 
 
 def _valid_invite(db: DbSession, token: str) -> Invite:
