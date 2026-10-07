@@ -28,7 +28,7 @@ from .test_ai import Fake, accept, hold, pick_call, reply
 from .test_ai_tools import A, B, priced
 
 TODAY = date.today()
-MONDAY = commentary.week_start(TODAY)
+MONDAY = commentary.commentary_week(TODAY)
 
 
 @pytest.fixture
@@ -51,6 +51,14 @@ def test_weeks_start_on_monday() -> None:
     assert commentary.week_start(date(2026, 10, 7)) == date(2026, 10, 5)
     assert commentary.week_start(date(2026, 10, 11)) == date(2026, 10, 5)  # Sunday
     assert commentary.week_start(date(2026, 10, 5)) == date(2026, 10, 5)
+
+
+def test_a_commentary_on_a_monday_or_tuesday_is_about_the_week_that_ended() -> None:
+    sunday, monday, tuesday, wednesday = (date(2026, 10, d) for d in (11, 12, 13, 14))
+    assert commentary.commentary_week(sunday) == date(2026, 10, 5)  # the week that is ending
+    assert commentary.commentary_week(monday) == date(2026, 10, 5)  # not the new, empty week
+    assert commentary.commentary_week(tuesday) == date(2026, 10, 5)
+    assert commentary.commentary_week(wednesday) == date(2026, 10, 12)
 
 
 def test_weekly_moves_compare_the_newest_close_with_one_a_week_older(
@@ -157,7 +165,7 @@ def test_a_week_has_one_commentary_and_one_notification(db: Session, portfolio: 
     rls.bypass(db)
     assert len(db.scalars(select(AiCommentary)).all()) == 1
     rows = db.scalars(select(Notification).where(Notification.kind == "weekly_commentary")).all()
-    assert len(rows) == 1 and rows[0].dedupe_key == f"weekly:{MONDAY.isoformat()}"
+    assert len(rows) == 1 and rows[0].dedupe_key == f"weekly:{MONDAY.isoformat()}:template"
 
 
 def test_a_user_without_holdings_gets_none(db: Session, admin: User) -> None:
@@ -335,3 +343,20 @@ def test_without_hide_amounts_the_model_gets_the_value_and_the_template_always_h
     # No consent at all: no model call, and the local template shows the value.
     template = make(db, other, Fake())
     assert template.kind == "template" and "market value" in template.text
+
+
+def test_the_ai_text_that_follows_a_template_has_its_own_notification(
+    db: Session, owner: TestClient, portfolio: User
+) -> None:
+    make(db, portfolio, None)
+    accept(owner)
+    rls.scope_to_user(db, portfolio.id)
+    commentary.create_commentary(
+        db, portfolio.id, TODAY, Fake(reply("AI. " + "x" * 90)), retry_ai=True
+    )
+    rls.bypass(db)
+    keys = {
+        n.dedupe_key
+        for n in db.scalars(select(Notification).where(Notification.kind == "weekly_commentary"))
+    }
+    assert keys == {f"weekly:{MONDAY.isoformat()}:template", f"weekly:{MONDAY.isoformat()}:ai"}

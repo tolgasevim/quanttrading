@@ -51,6 +51,13 @@ def week_start(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
+def commentary_week(today: date) -> date:
+    """The week a commentary asked for today is about. The Sunday job is about the week that is
+    ending. On a Monday or Tuesday a manual request is about the week that just ended, not about
+    a new week with nothing in it yet."""
+    return week_start(today - timedelta(days=2))
+
+
 def weekly_moves(session: Session, isins: list[str], today: date) -> dict[str, Decimal]:
     """The price change in percent over the last week, per ISIN, in the instrument's currency,
     from the stored closes (the newest close against the one a week before it). An instrument
@@ -59,21 +66,26 @@ def weekly_moves(session: Session, isins: list[str], today: date) -> dict[str, D
     if not isins:
         return moves
     rows = session.execute(
-        select(Instrument.isin, PriceEOD.date, PriceEOD.close)
+        select(Instrument.isin, Instrument.id, PriceEOD.date, PriceEOD.close)
         .join(PriceEOD, PriceEOD.instrument_id == Instrument.id)
         .where(Instrument.isin.in_(isins), PriceEOD.date >= today - timedelta(days=30))
-        .order_by(Instrument.isin, PriceEOD.date)
+        .order_by(Instrument.id, PriceEOD.date)
     ).all()
-    bars: dict[str, list[tuple[date, Decimal]]] = {}
-    for isin, day, close in rows:
-        if isin is None:
-            continue
-        bars.setdefault(isin, []).append((day, close))
-    for isin, series in bars.items():
-        last_day, last = series[-1]
+    # One series per instrument, so two listings of an ISIN are never mixed. The listing with
+    # the newest close is the one the app keeps current.
+    series: dict[int, tuple[str, list[tuple[date, Decimal]]]] = {}
+    for isin, instrument_id, day, close in rows:
+        if isin is not None:
+            series.setdefault(instrument_id, (isin, []))[1].append((day, close))
+    newest: dict[str, tuple[date, list[tuple[date, Decimal]]]] = {}
+    for isin, bars in series.values():
+        if isin not in newest or bars[-1][0] > newest[isin][0]:
+            newest[isin] = (bars[-1][0], bars)
+    for isin, (last_day, bars) in newest.items():
         if (today - last_day).days > 7:
             continue
-        base = next((c for d, c in reversed(series) if d <= last_day - timedelta(days=7)), None)
+        last = bars[-1][1]
+        base = next((c for d, c in reversed(bars) if d <= last_day - timedelta(days=7)), None)
         if base:
             moves[isin] = ((last / base - 1) * 100).quantize(Decimal("0.1"))
     return moves
@@ -113,20 +125,17 @@ def facts(
     user_id: uuid.UUID,
     holdings: service.Holdings,
     today: date,
-    amounts: bool = True,
-) -> tuple[str, list[str]]:
-    """What the app itself knows about the week: the facts for the model and for the template.
-    Returns the lines (also the body of the template) and the sections used. With `amounts` off
-    (the user chose "hide amounts", FR-57) the euro value of the portfolio is left out."""
+) -> tuple[str, str]:
+    """What the app itself knows about the week. Returns the facts with the portfolio's euro
+    value (for the template, which stays on the machine) and without it (for the model when the
+    user chose "hide amounts", FR-57). Computed once."""
     weights, total, valued = service.weights(holdings)
     held = [p.isin for p in holdings.positions]
     moves = weekly_moves(session, held, today)
     since = datetime.combine(week_start(today), time.min, tzinfo=ZoneInfo(get_settings().timezone))
     counts = _week_counts(session, user_id, since)
-    lines = [
-        f"Portfolio: {len(held)} positions, {valued} with a price"
-        + (f", market value {total:,.2f} EUR." if amounts else ".")
-    ]
+    first = f"Portfolio: {len(held)} positions, {valued} with a price"
+    lines: list[str] = []
     top = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)[:5]
     if top:
         lines.append(
@@ -153,7 +162,8 @@ def facts(
         f"Alerts this week: {counts['alerts']}. AI picks made this week: {counts['picks']}; "
         f"new pick scores: {counts['scores']}."
     )
-    return "\n".join(lines), ["portfolio", "weights", "weekly moves", "alerts", "picks"]
+    rest = "\n".join(lines)
+    return f"{first}, market value {total:,.2f} EUR.\n{rest}", f"{first}.\n{rest}"
 
 
 def template_text(monday: date, body: str, why: str) -> str:
@@ -197,7 +207,7 @@ def _store(
                 body="Open the AI guide to read it."
                 if kind == "ai"
                 else "A plain summary of your week.",
-                dedupe_key=f"weekly:{monday.isoformat()}",
+                dedupe_key=f"weekly:{monday.isoformat()}:{kind}",
             )
             .on_conflict_do_nothing(constraint="uq_notifications_user_key")
         )
@@ -231,7 +241,7 @@ def create_commentary(
     best one the week has (an AI text over a template), None when the user has no holdings to
     talk about. A week that has only a template gets an AI text only when `retry_ai` is set (the
     user asked again): a transient provider error on Sunday must not cost the week."""
-    monday = week_start(today)
+    monday = commentary_week(today)
     rows = _week_rows(session, user_id, monday)
     if rows and (any(c.kind == "ai" for c in rows) or not retry_ai):
         return _best(rows)
@@ -241,8 +251,9 @@ def create_commentary(
     agreed = consent.get(session, user_id)
     # Without a consent row there is no AI call; the model only ever sees what the user allowed.
     amounts_to_model = agreed is not None and not agreed.anonymise_amounts
-    body, _ = facts(session, user_id, holdings, today)  # the template is local: amounts stay
-    model_body, _ = facts(session, user_id, holdings, today, amounts=amounts_to_model)
+    with_amounts, without_amounts = facts(session, user_id, holdings, today)
+    body = with_amounts  # the template is local: the amounts stay
+    model_body = with_amounts if amounts_to_model else without_amounts
 
     why: str | None = None
     text = ""
@@ -295,7 +306,7 @@ def run_weekly(today: date, client: LlmClient | None = None) -> JobResult:
         try:
             with maker() as session:
                 rls.scope_to_user(session, user_id)
-                before = len(_week_rows(session, user_id, week_start(today)))
+                before = len(_week_rows(session, user_id, commentary_week(today)))
                 made = create_commentary(session, user_id, today, client)
                 if made is not None and not before:
                     result.rows_written += 1
