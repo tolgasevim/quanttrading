@@ -11,7 +11,8 @@ from fastapi import APIRouter, Cookie, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select
 
-from quant.api.deps import SESSION_COOKIE, CurrentUser, DbSession
+from quant import disclaimer
+from quant.api.deps import SESSION_COOKIE, CurrentUser, DbSession, UserDb
 from quant.config import get_settings
 from quant.models import AuthSession, Invite, Role, User
 from quant.security import (
@@ -43,6 +44,9 @@ class UserOut(BaseModel):
     display_name: str
     role: Role
     totp_enabled: bool
+    # Whether the user accepted the current disclaimer (FR-4). Only /me looks it up; the page
+    # sends the user to /disclaimer when it is false.
+    disclaimer_accepted: bool = True
 
     @classmethod
     def of(cls, user: User) -> "UserOut":
@@ -150,8 +154,29 @@ def logout(
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: CurrentUser) -> UserOut:
-    return UserOut.of(user)
+def me(user: CurrentUser, db: UserDb) -> UserOut:
+    out = UserOut.of(user)
+    out.disclaimer_accepted = disclaimer.accepted(db, user.id)
+    return out
+
+
+class DisclaimerOut(BaseModel):
+    text: str
+    version: int
+    accepted: bool
+
+
+@router.get("/disclaimer", response_model=DisclaimerOut)
+def get_disclaimer(user: CurrentUser, db: UserDb) -> DisclaimerOut:
+    return DisclaimerOut(
+        text=disclaimer.TEXT, version=disclaimer.VERSION, accepted=disclaimer.accepted(db, user.id)
+    )
+
+
+@router.post("/disclaimer", response_model=DisclaimerOut)
+def accept_disclaimer(user: CurrentUser, db: UserDb) -> DisclaimerOut:
+    disclaimer.accept(db, user.id)
+    return get_disclaimer(user, db)
 
 
 def _valid_invite(db: DbSession, token: str) -> Invite:

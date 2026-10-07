@@ -103,7 +103,7 @@ Priority: **P0** is required for the MVP, **P1** is desirable for the MVP, **P2*
 - **FR-1 (P0)**: Invite-only registration. The admin creates invite links.
 - **FR-2 (P0)**: Sign-in with a passkey (WebAuthn), with email and password plus TOTP as a fallback.
 - **FR-3 (P0)**: Strict per-user data isolation. Every query is scoped by `user_id`, enforced by Postgres row-level security.
-- **FR-4 (P0)**: Each user accepts a disclaimer ("not investment advice, AI may be wrong") on first login and after every change to it. *Status: partly built: the AI page asks for the disclaimer before the first question and again when its version number changes (`ai/consent.py`). An app-wide gate on first login is not built.*
+- **FR-4 (P0)**: Each user accepts a disclaimer ("not investment advice, AI may be wrong") on first login and after every change to it. *Status: built (`quant/disclaimer.py`, `disclaimer_acceptances`, the /disclaimer page): the page loads the user through `useUser`, which sends everyone who has not accepted the current version to /disclaimer before any data is shown (`GET /api/auth/me` carries `disclaimer_accepted`). Changing the text and raising `disclaimer.VERSION` asks everybody again. The gate is in the web app; the API data endpoints do not check it (the AI endpoints have their own consent, FR-57). The AI page keeps its own consent about what is sent to the AI provider.*
 - **FR-5 (P1)**: The admin panel shows users, last import, data-job health and LLM spend.
 
 ### 6.2 Portfolio import

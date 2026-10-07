@@ -46,6 +46,7 @@ export type User = {
   display_name: string;
   role: "admin" | "member";
   totp_enabled: boolean;
+  disclaimer_accepted: boolean;
 };
 
 export type InstrumentStatus = {
@@ -377,3 +378,5 @@ export type AiCommentary = {
   why_template: string | null;
   text: string;
 };
+
+export type Disclaimer = { text: string; version: number; accepted: boolean };

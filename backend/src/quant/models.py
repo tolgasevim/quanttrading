@@ -462,3 +462,16 @@ class AiCommentary(Base):
     why_template: Mapped[str | None] = mapped_column(String(200))  # why no AI text, if template
     model: Mapped[str | None] = mapped_column(String(60))
     text: Mapped[str] = mapped_column(String(10000))
+
+
+class DisclaimerAcceptance(Base):
+    """The user accepted the app-wide disclaimer (FR-4), at this version. A new version of the
+    text asks everybody again."""
+
+    __tablename__ = "disclaimer_acceptances"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
