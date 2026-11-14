@@ -205,6 +205,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 
 ### 6.4 Factor scoring
 - **FR-30 (P0)**: The **universe** (D16) is the union of:
+  - *Status: built, without the constituent lists.* The universe is every active share the app prices: held, watched, picked by the AI, or on a list. An admin loads a list (name and ISINs, the Scores page or `POST /api/scores/universe`); a new load replaces the old list of that name. The price job tracks listed and watched ISINs like held ones, so each gets a ticker, prices and a score. Each user has a watchlist. The app does not ship Nasdaq-100, TecDAX or semiconductor lists and has no free source to refresh them: the admin loads them and refreshes them monthly. Not built: the list refresh job.
   - Nasdaq-100 constituents;
   - TecDAX constituents;
   - **global semiconductors across all market caps**: US (PHLX SOX members plus small and mid caps), EU (ASML, Infineon, STMicro, ASM International, BE Semiconductor, Aixtron, Soitec, …) and Asia (TSMC, Samsung, SK Hynix, Tokyo Electron, Advantest, …);
@@ -212,6 +213,7 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
 
   Constituent lists refresh monthly. Free fundamentals for Asian and small-cap semis are weak, so their scores carry data-quality flags (FR-34) until the paid provider (D15) is in place.
 - **FR-31 (P0)**: **Stock factor scores**, computed as sector-relative percentile ranks from 0 to 100:
+  - *Status: built, with the fundamental factors fed by hand.* `portfolio/factors.py`, the evening job `score_factors`, `/api/scores`. Momentum (12-1 month return, 6-month return, distance from the 200-day average) and low risk (1-year volatility, drawdown, beta against the Nasdaq-100 ETF) come from stored prices. Value, quality and growth need fundamentals, which the free sources do not give: an admin loads them as a CSV (`fundamentals` table), and without them those three factors are blank, never guessed. Each input is ranked against the sector's peers (the whole universe when a sector has under five names, flagged), a factor is the mean of its input ranks, and the composite uses the Growth weights (momentum 30, quality 25, growth 25, value 10, low risk 10) re-spread over the factors that exist; one factor alone gives no composite. Not built: accruals, gross-margin stability and EPS revision trends from a feed, and weights for other risk profiles. The scores now feed two rules: the instrument-opportunity unlock trigger (FR-28b: top 10%, data quality ok, 25% below the high, quality not falling) and the small-position rules (top 30% protects, bottom 30% is an exit candidate; FR-45).
   - *Value*: EV/EBIT, free-cash-flow yield, EV/Sales (growth-adjusted)
   - *Quality*: ROIC, gross margin and its stability, accruals, net debt/EBITDA
   - *Growth*: revenue growth (TTM, 3-year CAGR), EPS revision trend where available
@@ -219,9 +221,13 @@ The owner's full history was profiled, in aggregate only, to shape the parser. P
   - *Low volatility / risk*: 1-year volatility, beta, drawdown
   - A **composite score** with weights set per risk profile (Growth default: Momentum 30, Quality 25, Growth 25, Value 10, Low-vol 10)
 - **FR-32 (P0)**: **ETF scorecard**: TER, tracking difference, fund size, replication method, distributing vs. accumulating (tax impact through Vorabpauschale), domicile (UCITS required), overlap with existing holdings, and the factor tilt of its holdings (P1).
+  - *Status: built, with facts entered by an admin.* `portfolio/scorecards.py`, `/api/scores/funds`, the Scores page. For each fund the user holds, and each with facts entered: cost, tracking difference, fund size, replication, accumulating or distributing (with the Vorabpauschale note), domicile (UCITS check) and overlap with the other funds held. A fact nobody entered shows as unknown and is listed. The factor tilt of the holdings (P1) is not built.
 - **FR-33 (P0)**: **ETC scorecard** for commodities: physical vs. synthetic, delivery claim (e.g. Xetra-Gold), TER, issuer, roll methodology for oil, and German tax treatment. For example, gold ETCs with a physical delivery claim may be tax-free after one year of holding; the app shows this as "verify with your tax advisor".
+  - *Status: built, with facts entered by an admin.* Physical or synthetic or futures, delivery claim, cost, issuer, roll method (futures only) and a tax note that says "verify with your tax adviser". The facts live in `instrument_facts`; the list of products per commodity is the one of FR-62.
 - **FR-34 (P0)**: Each score has a **data-quality flag**: stale, missing inputs or imputed values. A score must never look confident when its inputs are missing.
+  - *Status: built.* Every score row has a data-quality flag: `ok` only when all five factors exist and nothing is stale, `poor` when fewer than three factors exist, the newest price is over a week old or the history is under about a year, otherwise `partial`. The flags (no fundamentals, partial inputs, stale price, short history, stale fundamentals, small peer group) are stored and shown in words. A poor score protects or condemns nothing and cannot unlock a reserve.
 - **FR-35 (P0)**: Score history is stored daily so trends ("quality falling for 3 months") can be shown and backtested later.
+  - *Status: built.* One row per share and day in `factor_scores`, kept for ever (the app role may add and correct a row, not delete). `/api/scores/{isin}` returns the history and plain sentences such as "Quality has fallen for 3 months" when a factor moved steadily over four points three months apart. Backtesting on the history is Phase 3.
 
 ### 6.5 Guidance and rebalancing
 - **FR-40 (P0)**: The user defines a **target allocation** as buckets with bands. Default for the Growth profile (confirmed by the owner, D26):

@@ -20,6 +20,7 @@ from quant.api import (
     notifications,
     performance,
     prices,
+    scores,
     tax,
     transactions,
 )
@@ -46,6 +47,7 @@ app.include_router(allocation.router)
 app.include_router(book.router)
 app.include_router(crypto.router)
 app.include_router(markets.router)
+app.include_router(scores.router)
 
 
 @app.get("/api/health")

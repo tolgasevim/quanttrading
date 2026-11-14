@@ -42,6 +42,7 @@ USER_TABLES = (
     "allocation_settings",
     "journal_entries",
     "position_tags",
+    "watchlist",
 )
 
 
