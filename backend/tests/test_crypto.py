@@ -101,7 +101,7 @@ def test_each_lot_shows_when_it_turns_tax_free(coins: TestClient) -> None:
     assert [(lot["acquired"], lot["tax_free_from"], lot["free"]) for lot in lots] == [
         ("2024-02-01", "2025-02-02", True),
         ("2024-12-15", "2025-12-16", False),
-        ("2025-02-10", "2026-02-12", False),
+        ("2025-02-10", "2026-02-11", False),
     ]
     assert D(lots[0]["quantity"]) == D("0.08")  # 0.02 was sold from it
     assert lots[0]["days_left"] == 0 and lots[1]["days_left"] == 291
