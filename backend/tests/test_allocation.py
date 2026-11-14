@@ -91,7 +91,7 @@ def test_the_default_targets_and_the_drift(book: TestClient) -> None:
     assert body["custom_targets"] is False
     b = buckets(body)
     assert [D(b[k]["pct"]) for k in ("tech_stocks", "etfs", "cash")] == [40, 20, 40]
-    assert (D(b["tech_stocks"]["target"]), D(b["tech_stocks"]["low"])) == (35, 30)
+    assert D(b["tech_stocks"]["target"]) == 35 and D(b["tech_stocks"]["low"]) == 30
     assert D(b["etfs"]["high"]) == 50 and D(b["crypto"]["high"]) == 10
     # Tech 40% sits on the edge of its 30-40 band; ETFs are below, cash is above.
     status = {k: v["status"] for k, v in b.items()}
