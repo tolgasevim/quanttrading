@@ -549,3 +549,25 @@ class ReserveEvent(Base):
     amount_before: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
     amount_after: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
     detail: Mapped[dict[str, object] | None] = mapped_column(JSON)
+
+
+class EtfHolding(Base):
+    """One line of an ETF's holdings file (FR-24). Public data about the fund, so it has no user
+    column: every user's look-through reads the same rows. A new file for a fund replaces its
+    old rows."""
+
+    __tablename__ = "etf_holdings"
+    __table_args__ = (Index("ix_etf_holdings_etf", "etf_isin"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    etf_isin: Mapped[str] = mapped_column(String(12))
+    name: Mapped[str] = mapped_column(String(200))
+    ticker: Mapped[str | None] = mapped_column(String(30))
+    holding_isin: Mapped[str | None] = mapped_column(String(12))
+    weight: Mapped[Decimal] = mapped_column(Numeric(10, 6))  # percent of the fund
+    sector: Mapped[str | None] = mapped_column(String(60))
+    country: Mapped[str | None] = mapped_column(String(60))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    asset_class: Mapped[str | None] = mapped_column(String(30))
+    as_of: Mapped[date] = mapped_column(Date)
+    source: Mapped[str] = mapped_column(String(40))
