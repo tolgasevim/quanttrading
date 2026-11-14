@@ -588,3 +588,91 @@ export type FundFile = {
   as_of: string;
   source: string;
 };
+
+export type AllocationBucket = {
+  bucket: string;
+  label: string;
+  value: string;
+  pct: string;
+  target: string;
+  low: string;
+  high: string;
+  status: "below" | "ok" | "above";
+  gap_pp: string;
+  gap_eur: string;
+};
+
+export type GuardrailRule = {
+  rule: string;
+  subject: string;
+  current_pct: string;
+  limit_pct: string;
+  breached: boolean;
+  note: string;
+};
+
+export type Suggestion = {
+  kind: string;
+  text: string;
+  amount: string;
+  bucket: string;
+  why: string;
+  gain_estimate: string | null;
+};
+
+export type Tranche = {
+  number: number;
+  due: string;
+  amount: string;
+  done: boolean;
+  split: { bucket: string; label: string; amount: string; instrument: string | null }[];
+};
+
+export type Allocation = {
+  has_portfolio: boolean;
+  base: string;
+  free_cash: string;
+  trading_book: string;
+  buckets: AllocationBucket[];
+  rules: GuardrailRule[];
+  breaches: number;
+  suggestions: Suggestion[];
+  savings_plans: Record<string, string>;
+  deployment: {
+    active: boolean;
+    started: string | null;
+    tranches: number;
+    excess: string;
+    invested_since: string;
+    plan: Tranche[];
+    pull_forward: boolean;
+    pull_forward_note: string;
+  } | null;
+  custom_targets: boolean;
+  custom_guardrails: boolean;
+  guardrails: Record<string, string>;
+  warnings: string[];
+};
+
+export type JournalEntry = {
+  id: string;
+  at: string;
+  action: "bought" | "sold" | "ignored";
+  name: string;
+  isin: string | null;
+  reason: string;
+  guidance: string | null;
+  pick_id: string | null;
+  price: string | null;
+  price_currency: string | null;
+  since_pct: string | null;
+  guidance_right: boolean | null;
+  verdict: string;
+};
+
+export type Journal = {
+  entries: JournalEntry[];
+  counts: Record<string, number>;
+  judged: number;
+  right: number;
+};

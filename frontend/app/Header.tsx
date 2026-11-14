@@ -32,6 +32,8 @@ export function Header({ user }: { user: User }) {
         <Link href="/transactions">Transactions</Link>
         <Link href="/performance">Performance</Link>
         <Link href="/concentration">Concentration</Link>
+        <Link href="/allocation">Allocation</Link>
+        <Link href="/journal">Journal</Link>
         <Link href="/cash">Cash</Link>
         <Link href="/tax">Tax</Link>
         <Link href="/costs">Costs</Link>

@@ -314,6 +314,7 @@ class Notification(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     # daily_move | job_failed | ai_budget | weekly_commentary | reserve_breach | reserve_loan
+    # | allocation_drift | guardrail_breach
     kind: Mapped[str] = mapped_column(String(30))
     severity: Mapped[str] = mapped_column(String(10))  # info | warning
     title: Mapped[str] = mapped_column(String(200))
@@ -571,3 +572,42 @@ class EtfHolding(Base):
     asset_class: Mapped[str | None] = mapped_column(String(30))
     as_of: Mapped[date] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(40))
+
+
+class AllocationSettings(Base):
+    """A user's target allocation, guardrails and cash-deployment plan (FR-40, FR-43, FR-49). No
+    row means the defaults of the Growth profile (D26). Each part is stored as JSON and checked
+    when it is written (`quant.portfolio.allocation`)."""
+
+    __tablename__ = "allocation_settings"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    targets: Mapped[dict[str, dict[str, str]] | None] = mapped_column(JSON)
+    guardrails: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    deployment: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class JournalEntry(Base):
+    """The decision journal (FR-44): "bought", "sold" or "ignored guidance", with the reason. It
+    feeds the accuracy tracking: the price at the time is kept, so what followed can be shown."""
+
+    __tablename__ = "journal_entries"
+    __table_args__ = (Index("ix_journal_entries_user_at", "user_id", "at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    action: Mapped[str] = mapped_column(String(10))  # bought | sold | ignored
+    name: Mapped[str] = mapped_column(String(200))
+    isin: Mapped[str | None] = mapped_column(String(20))
+    reason: Mapped[str] = mapped_column(String(1000))
+    guidance: Mapped[str | None] = mapped_column(String(200))  # what was suggested, in words
+    pick_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # a pick it answers
+    price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    price_currency: Mapped[str | None] = mapped_column(String(3))
+    price_date: Mapped[date | None] = mapped_column(Date)
