@@ -32,7 +32,7 @@ def xirr(flows: Sequence[tuple[date, float]]) -> float | None:
         return None
 
     def npv(rate: float) -> float:
-        return sum(a / (1.0 + rate) ** ((d - first).days / 365.0) for d, a in items)
+        return sum(a / math.pow(1.0 + rate, (d - first).days / 365.0) for d, a in items)
 
     low, high = -0.9999, 1000.0
     f_low, f_high = npv(low), npv(high)
