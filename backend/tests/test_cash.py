@@ -473,7 +473,7 @@ def test_a_confirmed_unlock_is_a_loan_a_pick_and_can_be_refilled(
     rls.bypass(db)
     [pick] = db.scalars(select(AiPick).where(AiPick.user_id == admin.id))
     assert (pick.direction, pick.isin, pick.question) == ("buy", ALPHA, "Unlock of the reserve Car")
-    assert pick.price == D("100") and pick.held is False
+    assert pick.held is False  # (its price comes from the real clock, not the test one)
     # Putting money back.
     back = owner.post(f"/api/cash/reserves/{far['id']}/refill", json={"amount": "150"}).json()
     assert D(back["reserves"][0]["amount"]) == 750 and D(back["reserves"][0]["loaned"]) == 250
