@@ -262,7 +262,8 @@ def market(db: Session) -> dict[str, Instrument]:
 
 def setup_unlock(client: TestClient, cash_amount: str = "5000") -> dict[str, Any]:
     enter(client, cash_amount)
-    return reserve(client, "Car", "opportunity", "1000")["reserves"][0]
+    first: dict[str, Any] = reserve(client, "Car", "opportunity", "1000")["reserves"][0]
+    return first
 
 
 def check(client: TestClient, rid: str, isin: str, amount: str, manual: bool = False) -> Any:
@@ -421,7 +422,10 @@ def test_confirming_an_unlock_shrinks_the_reserve(
 
 def dated_reserve(client: TestClient, target: str) -> dict[str, Any]:
     enter(client, "5000")
-    return reserve(client, "Car", "opportunity", "1000", target_date=target)["reserves"][0]
+    first: dict[str, Any] = reserve(client, "Car", "opportunity", "1000", target_date=target)[
+        "reserves"
+    ][0]
+    return first
 
 
 def test_no_unlock_within_six_months_of_the_target_date(
