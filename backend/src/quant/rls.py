@@ -35,6 +35,7 @@ USER_TABLES = (
     "ai_pick_scores",
     "ai_commentaries",
     "disclaimer_acceptances",
+    "transaction_audits",
 )
 
 
