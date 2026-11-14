@@ -11,6 +11,8 @@ from quant.api.deps import CurrentUser, UserDb
 from quant.models import Transaction, TransactionAudit
 from quant.portfolio import manual
 
+Day = date  # the new models have a field called `date`, which would hide the type
+
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
 
 
@@ -103,7 +105,7 @@ class ManualIn(BaseModel):
     """A transaction typed in by hand. Every number is positive: the side says which way."""
 
     side: manual.Side
-    date: date
+    date: Day
     time: datetime | None = Field(None, description="Exact time; the date's noon (UTC) if empty")
     isin: str | None = Field(None, max_length=12)
     name: str | None = Field(None, max_length=200)
@@ -120,7 +122,7 @@ class ManualPatch(BaseModel):
     """Only the fields that are sent change."""
 
     side: manual.Side | None = None
-    date: date | None = None
+    date: Day | None = None
     time: datetime | None = None
     isin: str | None = Field(None, max_length=12)
     name: str | None = Field(None, max_length=200)
