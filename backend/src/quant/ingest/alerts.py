@@ -37,7 +37,7 @@ from quant.models import (
     Role,
     User,
 )
-from quant.portfolio import service
+from quant.portfolio import cash, service
 from quant.portfolio.alerts import (
     MAX_GAP_DAYS,
     MAX_PRICE_AGE_DAYS,
@@ -338,6 +338,66 @@ def _store_job_alerts(
         result.errors[JOB_ALERTS_STEP] = _kind(exc)
 
 
+def _loan_alerts(
+    session: Session, user: Person, state: cash.CashStatus, today: date
+) -> list[dict[str, object]]:
+    """A reserve lent money to an investment and its target date is near, and the free cash is
+    not enough to put it back (FR-28b)."""
+    rows: list[dict[str, object]] = []
+    for reserve in cash.active_reserves(session, user.id):
+        if reserve.loaned <= 0 or reserve.target_date is None:
+            continue
+        days = (reserve.target_date - today).days
+        if days > cash.LOAN_ALERT_DAYS or state.investable >= reserve.loaned:
+            continue
+        rows.append(
+            {
+                "user_id": user.id,
+                "kind": "reserve_loan",
+                "severity": "warning",
+                "title": f"{reserve.name}: the loan may not be back in time",
+                "body": (
+                    f"{reserve.loaned:.2f} EUR of the reserve is invested, and it is needed in "
+                    f"{max(days, 0)} days. Your free cash is {state.investable:.2f} EUR."
+                ),
+                "isin": None,
+                "dedupe_key": f"reserve_loan:{reserve.id}:{today.year}-{today.month:02d}",
+            }
+        )
+    return rows
+
+
+def _reserve_alerts(session: Session, users: list[Person], today: date, result: JobResult) -> None:
+    """Tell a user whose cash fell below their reserves (FR-28a): reserved money was spent or
+    invested. One alert a week while it lasts. A failure is a warning in the job's details, not
+    an error: it must not change the status the price alerts earned."""
+    week = today.isocalendar()
+    for user in users:
+        try:
+            state = cash.cash_status(session, user.id)
+            if state.shortfall > 0 and state.reserves_total > 0:
+                row: dict[str, object] = {
+                    "user_id": user.id,
+                    "kind": "reserve_breach",
+                    "severity": "warning",
+                    "title": "Your cash is below your reserves",
+                    "body": (
+                        f"Your cash is {state.shortfall:.2f} EUR below the "
+                        f"{state.reserves_total:.2f} EUR you set aside. "
+                        "Money you reserved was spent or invested."
+                    ),
+                    "isin": None,
+                    "dedupe_key": f"reserve_breach:{week.year}-W{week.week:02d}",
+                }
+                result.rows_written += _store(session, [row])
+            result.rows_written += _store(session, _loan_alerts(session, user, state, today))
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
+            session.rollback()
+            log.exception("reserve alerts for user %s failed", user.id)
+            result.warnings[f"reserves {user.id}"] = _kind(exc)
+
+
 def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
     result = JobResult()
     users = [
@@ -401,4 +461,5 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             session.rollback()
             log.exception("alerts for user %s failed", user.id)
             result.errors[str(user.id)] = _kind(exc)
+    _reserve_alerts(session, users, today, result)
     return result

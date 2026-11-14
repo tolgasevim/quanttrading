@@ -8,7 +8,7 @@ relevant FR-x before building anything, and cite it in the PR description.
   - `providers/`: market-data providers behind `PriceProvider` / `FxProvider` (PRD §8). A new source is a new class plus a registry entry.
   - `ingest/`: scheduled jobs (prices, FX, ISIN→ticker `mapping.py`, sectors, alerts). Every run is recorded in `job_runs`.
   - `importers/`: broker file parsers (pure functions; statements: `tr_crypto_pdf`, `tr_depot_pdf`) and the preview/commit workflow.
-  - `portfolio/`: position engine (`positions.py`), FIFO lots, cost basis and realised P&L (`lots.py`), statement reconciliation (`reconcile.py`), the German tax estimate (`tax.py`), manual transactions with their audit trail (`manual.py`), performance and risk (`performance.py`, with the pure statistics in `metrics.py`) and the holdings read model (`service.py`).
+  - `portfolio/`: position engine (`positions.py`), FIFO lots, cost basis and realised P&L (`lots.py`), statement reconciliation (`reconcile.py`), the German tax estimate (`tax.py`), manual transactions with their audit trail (`manual.py`), performance and risk (`performance.py`, with the pure statistics in `metrics.py`), cash, reserves and the opportunity unlock (`cash.py`) and the holdings read model (`service.py`).
   - `ai/`: the AI layer: `client.py` (the model adapter behind `LlmClient`), `service.py` (chat loop, consent, budget, picks), `tools.py` (read-only chat tools), `picks.py`, `scoring.py` (nightly pick scoring), `commentary.py` (weekly), `budget.py` (spend ledger and caps), `consent.py`. Tests use a fake `LlmClient`.
   - `api/`: HTTP routers. `worker.py`: the scheduler. `cli.py`: admin commands.
 - `frontend/`: Next.js (App Router). The browser only talks to Next, which proxies `/api/*` to FastAPI.
