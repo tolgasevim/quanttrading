@@ -37,7 +37,7 @@ from quant.models import (
     Role,
     User,
 )
-from quant.portfolio import allocation, cash, service
+from quant.portfolio import allocation, book, cash, lookthrough, service, trading
 from quant.portfolio.alerts import (
     MAX_GAP_DAYS,
     MAX_PRICE_AGE_DAYS,
@@ -430,6 +430,44 @@ def _allocation_alerts(
             result.warnings[f"allocation {user.id}"] = _kind(exc)
 
 
+def _trading_rows(session: Session, user: Person, today: date) -> list[dict[str, object]]:
+    """Alerts of the trading book (FR-48): a holding time past its limit, a knock-out close to
+    its barrier, a price at the stop. The barrier and stop are daily, the holding time weekly."""
+    held = service.build_holdings(session, user.id)
+    conc = lookthrough.concentration(session, held)
+    tags = book.load_tags(session, user.id)
+    settings = book.load_book_settings(session, user.id)
+    view = trading.analyse(session, user.id, held, conc, tags, settings, today)
+    week = today.isocalendar()
+    rows: list[dict[str, object]] = []
+    for trade in view.open:
+        for alert in trade.alerts:
+            stamp = f"{week.year}-W{week.week:02d}" if alert.code == "hold" else today.isoformat()
+            rows.append(
+                {
+                    "user_id": user.id,
+                    "kind": "trading_book",
+                    "severity": "warning",
+                    "title": f"Trading book: {trade.name}"[:200],
+                    "body": alert.text[:1000],
+                    "isin": trade.isin,
+                    "dedupe_key": f"trading:{alert.code}:{trade.isin}:{stamp}"[:120],
+                }
+            )
+    return rows
+
+
+def _trading_alerts(session: Session, users: list[Person], today: date, result: JobResult) -> None:
+    for user in users:
+        try:
+            result.rows_written += _store(session, _trading_rows(session, user, today))
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
+            session.rollback()
+            log.exception("trading alerts for user %s failed", user.id)
+            result.warnings[f"trading {user.id}"] = _kind(exc)
+
+
 def _reserve_alerts(session: Session, users: list[Person], today: date, result: JobResult) -> None:
     """Tell a user whose cash fell below their reserves (FR-28a): reserved money was spent or
     invested. One alert a week while it lasts. A failure is a warning in the job's details, not
@@ -526,4 +564,5 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             result.errors[str(user.id)] = _kind(exc)
     _reserve_alerts(session, users, today, result)
     _allocation_alerts(session, users, today, result)
+    _trading_alerts(session, users, today, result)
     return result

@@ -676,3 +676,107 @@ export type Journal = {
   judged: number;
   right: number;
 };
+
+export type SubgroupRow = {
+  key: string;
+  label: string;
+  value: string;
+  pct: string;
+  pct_of_tech: string;
+  target: string | null;
+  cap: string | null;
+  breached: boolean;
+  members: { isin: string; name: string; value: string; overridden: boolean }[];
+};
+
+export type Subgroups = {
+  base: string;
+  groups: SubgroupRow[];
+  non_tech: string;
+  non_tech_pct: string;
+  stocks: {
+    isin: string;
+    name: string;
+    subgroup: string;
+    label: string;
+    auto: string;
+    auto_label: string;
+    overridden: boolean;
+    value: string;
+  }[];
+  labels: Record<string, string>;
+};
+
+export type BookSettings = {
+  min_positions: number;
+  max_positions: number;
+  weekly_prompts: number;
+  hold_days: number;
+  barrier_pct: string;
+};
+
+export type Consolidation = {
+  direct: number;
+  look_through: number;
+  min_positions: number;
+  max_positions: number;
+  state: "below" | "within" | "above";
+  small_pct: string;
+  small: {
+    isin: string;
+    name: string;
+    type: string;
+    value: string | null;
+    pct: string | null;
+    status: string;
+    why: string;
+    suggestion: string;
+    gain_estimate: string | null;
+  }[];
+  overlaps: {
+    a_isin: string;
+    a_name: string;
+    b_isin: string;
+    b_name: string;
+    overlap_pct: string | null;
+    basis: string;
+    intentional: boolean;
+    reconfirm: boolean;
+    suggestion: string;
+  }[];
+  prompts: { isin: string; name: string; kind: string; text: string }[];
+  held_back: number;
+  notes: string[];
+  settings: BookSettings;
+};
+
+export type TradingBook = {
+  value: string;
+  pct: string;
+  cap: string;
+  over_cap: boolean;
+  open: {
+    isin: string;
+    name: string;
+    type: string;
+    value: string;
+    days_held: number | null;
+    price: string | null;
+    stop_price: string | null;
+    barrier_distance_pct: string | null;
+    alerts: { code: string; text: string }[];
+    flags: string[];
+  }[];
+  stats: {
+    closed: number;
+    wins: number;
+    hit_rate: string | null;
+    expired: number;
+    pnl: string;
+    avg_days: string | null;
+    by_year: Record<string, string>;
+  };
+  needs_thesis: [string, string][];
+  tax_note: string;
+  settings: BookSettings;
+};

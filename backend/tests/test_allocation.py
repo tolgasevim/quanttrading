@@ -476,9 +476,9 @@ def test_the_journal_is_private(owner: TestClient, client: TestClient, db: Sessi
 def test_the_band_maths_helpers() -> None:
     assert allocation.add_months(date(2025, 1, 31), 1) == date(2025, 2, 28)
     assert allocation.add_months(date(2025, 11, 30), 3) == date(2026, 2, 28)
-    assert allocation.bucket_of("stock", "Information Technology", False) == "tech_stocks"
-    assert allocation.bucket_of("stock", "Energy", False) == "other"
-    assert allocation.bucket_of("stock", "Energy", True) == "tech_stocks"  # a crypto-linked share
+    assert allocation.bucket_of("stock", "software", False) == "tech_stocks"
+    assert allocation.bucket_of("stock", "non_tech", False) == "other"
+    assert allocation.bucket_of("stock", "non_tech", True) == "tech_stocks"  # a crypto-linked share
     assert allocation.bucket_of("etf", "Unknown", False) == "etfs"
     assert allocation.bucket_of("etc", "Unknown", False) == "commodities"
     assert allocation.bucket_of("crypto", "Crypto", True) == "crypto"
