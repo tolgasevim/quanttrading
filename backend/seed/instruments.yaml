@@ -5,6 +5,10 @@ instruments:
      symbols: {yahoo: "^NDX", stooq: "^ndx"}}
   - {code: SXRV, isin: IE00B53SZB19, name: iShares NASDAQ 100 UCITS ETF (Acc), asset_class: etf,
      currency: EUR, symbols: {yahoo: SXRV.DE}}   # benchmark proxy (D35)
+  - {code: EUNL, isin: IE00B4L5Y983, name: iShares Core MSCI World UCITS ETF (Acc), asset_class: etf,
+     currency: EUR, symbols: {yahoo: EUNL.DE}}   # alternative benchmark: MSCI World (FR-21)
+  - {code: SXR8, isin: IE00B5BMR087, name: iShares Core S&P 500 UCITS ETF (Acc), asset_class: etf,
+     currency: EUR, symbols: {yahoo: SXR8.DE}}   # alternative benchmark: S&P 500 (FR-21)
   - {code: NVDA, isin: US67066G1040, name: NVIDIA, asset_class: stock, currency: USD,
      symbols: {yahoo: NVDA, stooq: nvda.us}}
   - {code: MSFT, isin: US5949181045, name: Microsoft, asset_class: stock, currency: USD,
