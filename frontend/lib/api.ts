@@ -780,3 +780,90 @@ export type TradingBook = {
   tax_note: string;
   settings: BookSettings;
 };
+
+export type CommodityRow = {
+  code: string;
+  name: string;
+  unit: string;
+  usd: string | null;
+  eur: string | null;
+  as_of: string | null;
+  changes: Record<string, string | null>;
+  low_52w: string | null;
+  high_52w: string | null;
+  range_pos: string | null;
+  stale: boolean;
+};
+
+export type Markets = {
+  today: string;
+  commodities: CommodityRow[];
+  drivers: {
+    title: string;
+    items: { label: string; value: string | null; unit: string; detail: string; available: boolean }[];
+  }[];
+  regime: {
+    label: "risk-on" | "risk-off" | "mixed" | "unknown";
+    score: number;
+    signals: { name: string; vote: number; available: boolean; detail: string }[];
+    implication: string;
+    disclaimer: string;
+  };
+  hedge: {
+    available: boolean;
+    windows: { days: number; observations: number; correlation: number | null }[];
+    verdict: string;
+  };
+  products: {
+    id: number;
+    commodity: string;
+    isin: string;
+    name: string;
+    issuer: string | null;
+    kind: string;
+    ter: string | null;
+    tr_available: boolean | null;
+    notes: string | null;
+    risk: string;
+  }[];
+  risks: Record<string, string>;
+  note: string;
+};
+
+export type Crypto = {
+  year: number;
+  coins: {
+    isin: string;
+    name: string;
+    quantity: string;
+    price: string | null;
+    value: string | null;
+    free_quantity: string;
+    free_share_pct: string;
+    next_free_date: string | null;
+    next_free_quantity: string;
+    taxable_gain_if_sold: string | null;
+    lots: {
+      acquired: string;
+      quantity: string;
+      cost: string;
+      value: string | null;
+      gain: string | null;
+      tax_free_from: string;
+      free: boolean;
+      days_left: number;
+      origin: string;
+    }[];
+  }[];
+  value: string;
+  free_value: string;
+  taxable_gain_if_sold: string;
+  realised_taxable: string;
+  realised_free: string;
+  freigrenze: string;
+  headroom: string;
+  over_limit: boolean;
+  exposure_pct: string;
+  cap_pct: string;
+  note: string;
+};

@@ -33,3 +33,28 @@ instruments:
      symbols: {yahoo: 4GLD.DE}}
   - {code: BTC, name: Bitcoin, asset_class: crypto, currency: EUR,
      symbols: {yahoo: BTC-EUR}}
+  # Commodity futures (FR-60): information only, no futures are traded (D5).
+  - {code: GOLD, name: Gold (futures), asset_class: commodity, currency: USD,
+     symbols: {yahoo: "GC=F"}}
+  - {code: SILVER, name: Silver (futures), asset_class: commodity, currency: USD,
+     symbols: {yahoo: "SI=F"}}
+  - {code: WTI, name: WTI crude oil (futures), asset_class: commodity, currency: USD,
+     symbols: {yahoo: "CL=F"}}
+  - {code: BRENT, name: Brent crude oil (futures), asset_class: commodity, currency: USD,
+     symbols: {yahoo: "BZ=F"}}
+  - {code: COPPER, name: Copper (futures), asset_class: commodity, currency: USD,
+     symbols: {yahoo: "HG=F"}}
+  - {code: NATGAS, name: Natural gas (futures), asset_class: commodity, currency: USD,
+     symbols: {yahoo: "NG=F"}}
+  # Coins for the crypto key drivers (FR-61).
+  - {code: ETH, name: Ethereum, asset_class: crypto, currency: EUR,
+     symbols: {yahoo: ETH-EUR}}
+  # Macro series from FRED (FR-61, FR-63). The currency field carries the unit.
+  - {code: DFII10, name: 10-year real yield (TIPS), asset_class: macro, currency: PCT,
+     symbols: {fred: DFII10}}
+  - {code: DTWEXBGS, name: US dollar index (broad, trade weighted), asset_class: macro,
+     currency: IDX, symbols: {fred: DTWEXBGS}}
+  - {code: CPIAUCSL, name: US consumer prices (CPI index), asset_class: macro, currency: IDX,
+     symbols: {fred: CPIAUCSL}}
+  - {code: BAMLH0A0HYM2, name: US high-yield credit spread, asset_class: macro, currency: PCT,
+     symbols: {fred: BAMLH0A0HYM2}}

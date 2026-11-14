@@ -641,3 +641,24 @@ class PositionTag(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class CommodityProduct(Base):
+    """A tradable product that follows a commodity (FR-62): an ETC or ETN. Shared by all users,
+    managed by an admin. The app cannot check what a broker offers: `tr_available` is what the
+    admin last confirmed, or unknown."""
+
+    __tablename__ = "commodity_products"
+    __table_args__ = (UniqueConstraint("commodity", "isin", name="uq_commodity_products"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    commodity: Mapped[str] = mapped_column(
+        String(12)
+    )  # gold | silver | wti | brent | copper | natgas
+    isin: Mapped[str] = mapped_column(String(12))
+    name: Mapped[str] = mapped_column(String(200))
+    issuer: Mapped[str | None] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(10))  # physical | synthetic | futures | other
+    ter: Mapped[Decimal | None] = mapped_column(Numeric(6, 3))  # percent a year
+    tr_available: Mapped[bool | None] = mapped_column(Boolean)
+    notes: Mapped[str | None] = mapped_column(String(300))

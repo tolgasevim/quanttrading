@@ -321,6 +321,7 @@ class Analysis:
     unpriced: list[str] = field(default_factory=list)
     estimated: list[str] = field(default_factory=list)
     series: list[SeriesPoint] = field(default_factory=list)
+    daily: dict[date, float] = field(default_factory=dict)  # every daily return, unthinned
     correlation: CorrelationMatrix | None = None
     warnings: list[str] = field(default_factory=list)
 
@@ -459,6 +460,7 @@ def analyse(
             r = 0.0
         levels.append(levels[-1] * (1 + r))
     result.observations = len(returns)
+    result.daily = dict(returns)
     result.twr = metrics.total_return(list(returns.values())) if returns else None
 
     # Money-weighted return: the flows in the window, and the value at the end.

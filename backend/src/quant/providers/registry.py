@@ -3,6 +3,7 @@
 from quant.providers.base import Fetcher, FxProvider, PriceProvider
 from quant.providers.coingecko import CoinGeckoProvider, CoinGeckoResolver
 from quant.providers.ecb import EcbProvider
+from quant.providers.fred import FredProvider
 from quant.providers.resolvers import (
     CryptoResolver,
     IsinResolver,
@@ -12,7 +13,7 @@ from quant.providers.resolvers import (
 from quant.providers.stooq import StooqProvider
 from quant.providers.yahoo import YahooProvider
 
-PRICE_PROVIDERS = ("yahoo", "stooq", "coingecko")
+PRICE_PROVIDERS = ("yahoo", "stooq", "coingecko", "fred")
 FX_PROVIDERS: dict[str, type[EcbProvider]] = {"ecb": EcbProvider}
 
 
@@ -26,6 +27,7 @@ def price_providers(
         "yahoo": YahooProvider(fetcher),
         "stooq": StooqProvider(fetcher),
         "coingecko": CoinGeckoProvider(fetcher, coingecko_key),
+        "fred": FredProvider(fetcher),
     }
     return [built[n] for n in names]
 

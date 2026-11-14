@@ -14,6 +14,11 @@ from quant.providers.base import PriceProvider, PriceSeries, ProviderError, norm
 
 log = logging.getLogger(__name__)
 
+# Commodities and macro series are shown over five years (FR-60), so their first fetch goes back
+# that far. Shares and funds need about a year.
+LONG_HISTORY_CLASSES = frozenset({"commodity", "macro"})
+LONG_BACKFILL_DAYS = 5 * 366 + 10
+
 # Re-fetch a few days already stored, so late corrections by the provider are picked up.
 OVERLAP_DAYS = 5
 
@@ -98,9 +103,12 @@ def ingest_prices(
     for instrument in instruments:
         result.attempted += 1
         last = last_dates.get(instrument.id)
-        start = (
-            last - timedelta(days=OVERLAP_DAYS) if last else today - timedelta(days=backfill_days)
+        first_days = (
+            max(backfill_days, LONG_BACKFILL_DAYS)
+            if instrument.asset_class in LONG_HISTORY_CLASSES
+            else backfill_days
         )
+        start = last - timedelta(days=OVERLAP_DAYS) if last else today - timedelta(days=first_days)
         try:
             source, series = fetch_with_fallback(providers, instrument, start, today)
         except ProviderError as exc:

@@ -12,9 +12,11 @@ from quant.api import (
     cash,
     concentration,
     costs,
+    crypto,
     holdings,
     imports,
     market,
+    markets,
     notifications,
     performance,
     prices,
@@ -42,6 +44,8 @@ app.include_router(cash.router)
 app.include_router(concentration.router)
 app.include_router(allocation.router)
 app.include_router(book.router)
+app.include_router(crypto.router)
+app.include_router(markets.router)
 
 
 @app.get("/api/health")

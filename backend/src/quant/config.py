@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Data providers, tried in order (PRD §8). Swapping providers is a config change.
     # A list setting takes either a comma list (yahoo,stooq) or JSON (["yahoo","stooq"]).
     price_providers: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["yahoo", "stooq", "coingecko"]
+        default_factory=lambda: ["yahoo", "stooq", "coingecko", "fred"]
     )
     fx_provider: str = "ecb"
     # CoinGecko prices crypto in euros. It works without a key; a free demo key raises the limit.
