@@ -206,7 +206,7 @@ def edit(
         current = side_of(tx)
         assert current is not None
         new_side = side or current
-        merged = {
+        merged: dict[str, Any] = {
             "isin": tx.isin,
             "name": tx.name,
             "shares": abs(tx.shares) if tx.shares is not None else None,
