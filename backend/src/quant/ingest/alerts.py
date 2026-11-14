@@ -37,7 +37,7 @@ from quant.models import (
     Role,
     User,
 )
-from quant.portfolio import cash, service
+from quant.portfolio import allocation, cash, service
 from quant.portfolio.alerts import (
     MAX_GAP_DAYS,
     MAX_PRICE_AGE_DAYS,
@@ -367,6 +367,67 @@ def _loan_alerts(
     return rows
 
 
+def _allocation_rows(
+    user: Person, today: date, report: allocation.Report
+) -> list[dict[str, object]]:
+    """Drift (a bucket outside its band, FR-41) and guardrail breaches (FR-43), one alert a week
+    for each while it lasts."""
+    week = today.isocalendar()
+    stamp = f"{week.year}-W{week.week:02d}"
+    rows: list[dict[str, object]] = []
+    for b in report.buckets:
+        if b.status == "ok":
+            continue
+        word = "below" if b.status == "below" else "above"
+        rows.append(
+            {
+                "user_id": user.id,
+                "kind": "allocation_drift",
+                "severity": "info",
+                "title": f"{allocation.LABELS[b.bucket]} is {word} its band",
+                "body": (
+                    f"It is {b.pct:.1f}% of your portfolio. Your band is {b.low:.0f}% to "
+                    f"{b.high:.0f}% (target {b.target:.0f}%). See the Allocation page."
+                ),
+                "isin": None,
+                "dedupe_key": f"drift:{b.bucket}:{b.status}:{stamp}",
+            }
+        )
+    for r in report.rules:
+        if not r.breached:
+            continue
+        rows.append(
+            {
+                "user_id": user.id,
+                "kind": "guardrail_breach",
+                "severity": "warning",
+                "title": f"Guardrail: {r.subject}"[:200],
+                "body": (
+                    f"{r.subject} is {r.current_pct:.1f}% against your limit of "
+                    f"{r.limit_pct:.0f}% ({r.rule.replace('_', ' ')})."
+                )[:1000],
+                "isin": None,
+                "dedupe_key": f"guardrail:{r.rule}:{r.subject[:60]}:{stamp}"[:120],
+            }
+        )
+    return rows
+
+
+def _allocation_alerts(
+    session: Session, users: list[Person], today: date, result: JobResult
+) -> None:
+    for user in users:
+        try:
+            report = allocation.analyse(session, user.id, today)
+            if report.has_portfolio:
+                result.rows_written += _store(session, _allocation_rows(user, today, report))
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
+            session.rollback()
+            log.exception("allocation alerts for user %s failed", user.id)
+            result.warnings[f"allocation {user.id}"] = _kind(exc)
+
+
 def _reserve_alerts(session: Session, users: list[Person], today: date, result: JobResult) -> None:
     """Tell a user whose cash fell below their reserves (FR-28a): reserved money was spent or
     invested. One alert a week while it lasts. A failure is a warning in the job's details, not
@@ -462,4 +523,5 @@ def create_alerts(session: Session, today: date, now: datetime) -> JobResult:
             log.exception("alerts for user %s failed", user.id)
             result.errors[str(user.id)] = _kind(exc)
     _reserve_alerts(session, users, today, result)
+    _allocation_alerts(session, users, today, result)
     return result

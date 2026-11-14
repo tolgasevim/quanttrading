@@ -6,6 +6,7 @@ from sqlalchemy import text
 from quant.api import (
     admin,
     ai,
+    allocation,
     auth,
     cash,
     concentration,
@@ -38,6 +39,7 @@ app.include_router(ai.router)
 app.include_router(performance.router)
 app.include_router(cash.router)
 app.include_router(concentration.router)
+app.include_router(allocation.router)
 
 
 @app.get("/api/health")

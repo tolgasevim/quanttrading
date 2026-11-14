@@ -39,6 +39,8 @@ USER_TABLES = (
     "cash_balances",
     "reserves",
     "reserve_events",
+    "allocation_settings",
+    "journal_entries",
 )
 
 
