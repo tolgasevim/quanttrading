@@ -427,9 +427,9 @@ def test_listed_and_watched_shares_are_tracked_like_held_ones(db: Session) -> No
     listed, watched = make_isin(40), make_isin(41)
     db.add(UniverseMember(list_name="Test", isin=listed, name="Listed Inc"))
     db.add(UniverseMember(list_name="Test", isin="US0000000009", name="Bad check digit"))
+    rls.bypass(db)  # the watchlist is row-level secured
     db.add(WatchlistItem(user_id=owner.id, isin=watched, note="Watched Ltd"))
     db.commit()
-    rls.bypass(db)
     tracked = {h.isin: h for h in held_isins(db)}
     assert set(tracked) == {listed, watched}  # the bad ISIN is dropped, the rest are shares
     assert tracked[listed].asset_class == "stock" and tracked[listed].name == "Listed Inc"
@@ -474,7 +474,8 @@ def test_fundamentals_are_stored_replaced_and_checked(owner: TestClient, db: Ses
         "/api/scores/fundamentals", json={"rows": [row, {**row, "isin": "US0000000009"}]}
     )
     assert out.json() == {"stored": 1, "rejected": ["US0000000009"]}
-    owner.post("/api/scores/fundamentals", json={"rows": [{**row, "roic": "25"}]})
+    again = {k: v for k, v in row.items() if k != "ev_ebit"}
+    owner.post("/api/scores/fundamentals", json={"rows": [{**again, "roic": "25"}]})
     stored = db.scalars(select(Fundamental)).all()
     assert len(stored) == 1 and stored[0].roic == D("25") and stored[0].source == "csv"
     assert stored[0].ev_ebit is None  # a new row for the same day replaces the old one

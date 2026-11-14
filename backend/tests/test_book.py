@@ -327,7 +327,7 @@ def test_the_position_count_against_the_soft_target(small_book: TestClient) -> N
     tight = small_book.put("/api/book/settings", json={"min_positions": 2, "max_positions": 5})
     assert tight.json()["state"] == "above"
     assert any("soft target of 2 to 5" in n for n in tight.json()["notes"])
-    assert any("not built yet" in n for n in tight.json()["notes"])
+    assert any("top 30% of the universe is protected" in n for n in tight.json()["notes"])
     bad = small_book.put("/api/book/settings", json={"min_positions": 90, "max_positions": 80})
     assert bad.status_code == 422 and "minimum" in bad.text
 
