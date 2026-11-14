@@ -143,9 +143,9 @@ def test_delete_and_audit(owner: TestClient, db: Session, admin: User) -> None:
     assert owner.get("/api/transactions").json()["counts"] == {}
     trail = owner.get("/api/transactions/audit").json()
     assert [a["action"] for a in trail] == ["delete", "edit", "add"]
-    assert trail[0]["after"] is None and trail[0]["before"]["shares"] == "6.000000"
+    assert trail[0]["after"] is None and Decimal(trail[0]["before"]["shares"]) == 6
     edit = trail[1]
-    assert edit["before"]["shares"] == "4.000000" and edit["after"]["shares"] == "6.000000"
+    assert Decimal(edit["before"]["shares"]) == 4 and Decimal(edit["after"]["shares"]) == 6
     assert trail[2]["before"] is None and trail[2]["source"] == "manual"
 
 

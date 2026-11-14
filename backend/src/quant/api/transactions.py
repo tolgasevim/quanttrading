@@ -164,7 +164,7 @@ def add_transaction(body: ManualIn, user: CurrentUser, db: UserDb) -> Transactio
             currency=body.currency,
         )
     except manual.ManualError as error:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
+        raise HTTPException(422, str(error)) from error
     return _out(tx)
 
 
@@ -179,7 +179,7 @@ def edit_transaction(
         tx = manual.edit(db, tx, side=side, day=day, at=at, fields=sent)
     except manual.ManualError as error:
         db.rollback()
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
+        raise HTTPException(422, str(error)) from error
     return _out(tx)
 
 
