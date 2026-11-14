@@ -120,28 +120,28 @@ def parse_holdings(text: str) -> list[ParsedHolding]:
             continue
         cells = _split(line, delimiter)
 
-        def cell(key: str, cells: list[str] = cells) -> str | None:
+        def field_of(key: str, cells: list[str] = cells) -> str | None:
             j = columns.get(key)
             if j is None or j >= len(cells):
                 return None
             value = cells[j].strip()
             return value if value and value != "-" else None
 
-        weight = _decimal(cell("weight") or "", comma_decimal)
-        name = cell("name") or cell("ticker") or cell("isin")
+        weight = _decimal(field_of("weight") or "", comma_decimal)
+        name = field_of("name") or field_of("ticker") or field_of("isin")
         if weight is None or weight <= 0 or not name:
             continue
-        isin = (cell("isin") or "").upper()
+        isin = (field_of("isin") or "").upper()
         rows.append(
             ParsedHolding(
                 name=name[:200],
-                ticker=(cell("ticker") or "")[:30].upper() or None,
+                ticker=(field_of("ticker") or "")[:30].upper() or None,
                 isin=isin if re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]", isin) else None,
                 weight=weight,
-                sector=(cell("sector") or "")[:60] or None,
-                country=(cell("country") or "")[:60] or None,
-                currency=(cell("currency") or "").upper()[:3] or None,
-                asset_class=(cell("asset_class") or "")[:30] or None,
+                sector=(field_of("sector") or "")[:60] or None,
+                country=(field_of("country") or "")[:60] or None,
+                currency=(field_of("currency") or "").upper()[:3] or None,
+                asset_class=(field_of("asset_class") or "")[:30] or None,
             )
         )
         if len(rows) > MAX_ROWS:
