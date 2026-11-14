@@ -230,8 +230,8 @@ def analyse(
     for group in by_company.values():
         if len(group) > 1:
             group.sort(key=lambda p: p.value, reverse=True)
-            for smaller in group[1:]:
-                twin_of[smaller.isin] = group[0]
+            for twin in group[1:]:
+                twin_of[twin.isin] = group[0]
 
     total = conc.total
     for p in conc.positions:
