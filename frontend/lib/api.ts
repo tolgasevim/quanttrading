@@ -44,6 +44,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const put = <T>(path: string, body: unknown) =>
   api<T>(path, { method: "PUT", body: JSON.stringify(body) });
 
+export const patch = <T>(path: string, body: unknown) =>
+  api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+
 export const del = (path: string) => api<void>(path, { method: "DELETE" });
 
 export const post = <T>(path: string, body?: unknown) =>
@@ -390,3 +393,48 @@ export type AiCommentary = {
 };
 
 export type Disclaimer = { text: string; version: number; accepted: boolean };
+
+export type TransactionItem = {
+  id: number;
+  executed_at: string;
+  date: string;
+  kind: string;
+  type: string;
+  asset_class: string | null;
+  isin: string | null;
+  name: string | null;
+  shares: string | null;
+  price: string | null;
+  amount: string | null;
+  fee: string | null;
+  tax: string | null;
+  currency: string | null;
+  savings_plan: boolean;
+  source: string;
+  editable: boolean;
+};
+
+export type TransactionList = {
+  counts: Record<string, number>;
+  cash_balance: string;
+  items: TransactionItem[];
+};
+
+export type TransactionAudit = {
+  id: number;
+  at: string;
+  action: "add" | "edit" | "delete";
+  source: string;
+  external_id: string;
+  before: Record<string, string | null> | null;
+  after: Record<string, string | null> | null;
+};
+
+export type ManualSide =
+  | "buy"
+  | "sell"
+  | "dividend"
+  | "interest"
+  | "deposit"
+  | "withdrawal"
+  | "fee";
