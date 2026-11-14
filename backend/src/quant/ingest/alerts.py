@@ -419,7 +419,9 @@ def _allocation_alerts(
     for user in users:
         try:
             report = allocation.analyse(session, user.id, today)
-            if report.has_portfolio:
+            # Only a user who holds securities has a drift to report: with cash alone every
+            # bucket would be "below its band".
+            if report.securities > 0 or report.trading_book > 0:
                 result.rows_written += _store(session, _allocation_rows(user, today, report))
             session.commit()
         except Exception as exc:  # noqa: BLE001 - one user's failure must not stop the others
