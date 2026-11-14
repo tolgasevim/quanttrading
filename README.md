@@ -42,7 +42,7 @@ the securities and crypto statements.
    share (Yahoo's names) for the Holdings page. Coins are priced in euros from
    CoinGecko: the app finds each coin by the name Trade Republic gives it (Prices page, "coin id"
    for a hand entry). It works without a key; a free demo key (`QT_COINGECKO_API_KEY`) raises the
-   rate limit. If your `.env` sets `QT_PRICE_PROVIDERS`, add `coingecko` to it. The free API serves
+   rate limit. If your `.env` sets `QT_PRICE_PROVIDERS`, add `coingecko` and `fred` to it (`fred` brings the macro series of the Markets page). The free API serves
    one year of history, so older coin prices are not backfilled.
 5. Open the app:
    - On the Mac mini itself: http://localhost:3000. Set `QT_COOKIE_SECURE=false` in `.env` for
