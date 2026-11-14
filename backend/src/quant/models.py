@@ -313,7 +313,8 @@ class Notification(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    kind: Mapped[str] = mapped_column(String(30))  # daily_move | job_failed | ai_budget
+    # daily_move | job_failed | ai_budget | weekly_commentary | reserve_breach | reserve_loan
+    kind: Mapped[str] = mapped_column(String(30))
     severity: Mapped[str] = mapped_column(String(10))  # info | warning
     title: Mapped[str] = mapped_column(String(200))
     body: Mapped[str] = mapped_column(String(1000))
@@ -493,3 +494,58 @@ class TransactionAudit(Base):
     external_id: Mapped[str] = mapped_column(String(100))
     before: Mapped[dict[str, object] | None] = mapped_column(JSON)
     after: Mapped[dict[str, object] | None] = mapped_column(JSON)
+
+
+class CashBalance(Base):
+    """A cash balance the user typed in (FR-28). The broker's cash account is not on the
+    Depotauszug, so the user says what it holds on a day. The newest entry counts; older ones are
+    kept as history and never changed."""
+
+    __tablename__ = "cash_balances"
+    __table_args__ = (Index("ix_cash_balances_user_asof", "user_id", "as_of"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    as_of: Mapped[date] = mapped_column(Date)
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 2))
+    note: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Reserve(Base):
+    """Money set aside from the cash balance for a named purpose (FR-28a). A `hard` reserve is
+    never invested. An `opportunity` reserve is not invested either, unless it is unlocked through
+    the strict rule of FR-28b. A released reserve stays in the table, for the record."""
+
+    __tablename__ = "reserves"
+    __table_args__ = (Index("ix_reserves_user", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(80))
+    kind: Mapped[str] = mapped_column(String(12))  # hard | opportunity
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 2))
+    # Unlocked for investments and not yet put back (the "reserve loan", FR-28b).
+    loaned: Mapped[Decimal] = mapped_column(Numeric(20, 2), default=0, server_default="0")
+    target_date: Mapped[date | None] = mapped_column(Date)
+    note: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ReserveEvent(Base):
+    """What happened to a reserve: created, changed, released, or unlocked for an investment.
+    Never edited or deleted."""
+
+    __tablename__ = "reserve_events"
+    __table_args__ = (Index("ix_reserve_events_user_at", "user_id", "at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    reserve_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    action: Mapped[str] = mapped_column(String(12))  # create | change | release | unlock | refill
+    name: Mapped[str] = mapped_column(String(80))
+    amount_before: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    amount_after: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    detail: Mapped[dict[str, object] | None] = mapped_column(JSON)

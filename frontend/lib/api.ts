@@ -473,3 +473,67 @@ export type Performance = {
   correlation: { isins: string[]; names: string[]; values: (number | null)[][] } | null;
   warnings: string[];
 };
+
+export type CashStatus = {
+  entered: string | null;
+  entered_as_of: string | null;
+  history: string;
+  difference: string | null;
+  difference_pct: string | null;
+  mismatch: boolean;
+  cash: string;
+  cash_source: "entered" | "history";
+  reserves_total: string;
+  shortfall: string;
+  investable: string;
+};
+
+export type Reserve = {
+  id: string;
+  name: string;
+  kind: "hard" | "opportunity";
+  amount: string;
+  loaned: string;
+  refill_per_month: string | null;
+  target_date: string | null;
+  note: string | null;
+};
+
+export type ReserveEvent = {
+  id: number;
+  at: string;
+  reserve_id: string;
+  action: "create" | "change" | "release" | "unlock" | "refill";
+  name: string;
+  amount_before: string | null;
+  amount_after: string | null;
+  detail: Record<string, unknown> | null;
+};
+
+export type Cash = {
+  status: CashStatus;
+  securities_value: string;
+  net_worth: string;
+  band: {
+    pct: string;
+    status: "low" | "ok" | "high";
+    target_pct: string;
+    low_pct: string;
+    high_pct: string;
+    excess: string;
+  } | null;
+  reserves: Reserve[];
+  balances: { id: number; as_of: string; amount: string; note: string | null }[];
+  events: ReserveEvent[];
+  warnings: string[];
+};
+
+export type UnlockCheck = {
+  key: string;
+  title: string;
+  passed: boolean | null;
+  detail: string;
+  blocking: boolean;
+};
+
+export type UnlockResult = { allowed: boolean; triggers: string[]; checks: UnlockCheck[] };

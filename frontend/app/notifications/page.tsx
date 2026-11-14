@@ -15,6 +15,8 @@ const KIND_TEXT: Record<string, string> = {
   job_failed: "Data job failed",
   ai_budget: "AI budget",
   weekly_commentary: "Weekly commentary",
+  reserve_breach: "Reserve",
+  reserve_loan: "Reserve loan",
 };
 
 const when = (iso: string) =>

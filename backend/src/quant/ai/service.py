@@ -21,7 +21,7 @@ from quant.ai import budget, consent, picks, tools
 from quant.ai.client import LlmClient, LlmError, LlmReply, default_client
 from quant.config import get_settings
 from quant.models import AiPick
-from quant.portfolio import service
+from quant.portfolio import cash, service
 from quant.portfolio.lots import COST_MISSING
 
 MAX_TURNS = 5  # model calls after the first; read tools need a turn each
@@ -51,7 +51,10 @@ that it is linear and ignores correlations.
 
 Be short and concrete. Give the main risk next to every recommendation. For every security you \
 recommend to buy, sell or hold, call the tool record_pick once, with a time horizon in months. \
-Do not record a pick for a general explanation. Never ask for passwords or broker logins."""
+Do not record a pick for a general explanation. Never ask for passwords or broker logins.
+
+The summary may list reserves: money the user set aside. Never suggest investing a reserve, \
+and never count it as cash to invest. Only the investable cash may be suggested for investing."""
 
 
 @dataclass
@@ -71,7 +74,26 @@ def _money(value: Decimal | None) -> str | None:
     return None if value is None else f"{value:.2f}"
 
 
-def build_context(holdings: service.Holdings, anonymise: bool) -> tuple[str, list[str], set[str]]:
+def _cash_context(state: cash.CashStatus, reserves: list[Any], anonymise: bool) -> dict[str, Any]:
+    """Cash and reserves for the prompt (FR-28a): the AI must see that reserved money is not
+    investable. With amounts hidden, only the names and kinds go out."""
+    names = [{"name": r.name, "kind": r.kind} for r in reserves]
+    if anonymise:
+        return {"reserves": names, "note": "reserves are not investable; amounts hidden"}
+    return {
+        "investable_cash_eur": _money(state.investable),
+        "reserves": [
+            {"name": r.name, "kind": r.kind, "amount_eur": _money(r.amount)} for r in reserves
+        ],
+        "note": "reserves are not investable cash",
+    }
+
+
+def build_context(
+    holdings: service.Holdings,
+    anonymise: bool,
+    cash_info: dict[str, Any] | None = None,
+) -> tuple[str, list[str], set[str]]:
     """The portfolio as compact JSON for the prompt, what it contains, and the held ISINs."""
     weights, total, valued = service.weights(holdings)
     rows = []
@@ -108,6 +130,8 @@ def build_context(holdings: service.Holdings, anonymise: bool) -> tuple[str, lis
     }
     if not anonymise:
         payload["valued_total_eur"] = _money(total)
+    if cash_info:
+        payload["cash"] = cash_info
     points = [f"{len(shown)} of {len(rows)} positions (largest first), {valued} with a price"]
     points.append(
         "weights only; euro values, quantities and profit were hidden"
@@ -246,7 +270,13 @@ def ask(
     client = client or default_client()
 
     holdings = service.build_holdings(session, user_id)
-    context, points, held = build_context(holdings, agreed.anonymise_amounts)
+    reserves = cash.active_reserves(session, user_id)
+    cash_info = (
+        _cash_context(cash.cash_status(session, user_id), reserves, agreed.anonymise_amounts)
+        if reserves
+        else None
+    )
+    context, points, held = build_context(holdings, agreed.anonymise_amounts, cash_info)
     ctx = tools.ToolContext(session, user_id, agreed.anonymise_amounts, holdings)
     messages = _history_messages(history, agreed.anonymise_amounts)
     messages.append(

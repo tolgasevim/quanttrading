@@ -36,6 +36,9 @@ USER_TABLES = (
     "ai_commentaries",
     "disclaimer_acceptances",
     "transaction_audits",
+    "cash_balances",
+    "reserves",
+    "reserve_events",
 )
 
 
