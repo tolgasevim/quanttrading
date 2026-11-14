@@ -438,3 +438,38 @@ export type ManualSide =
   | "deposit"
   | "withdrawal"
   | "fee";
+
+export type PerformanceSeriesPoint = { day: string; portfolio: number; benchmark: number | null };
+
+export type Performance = {
+  benchmark: string;
+  benchmark_name: string;
+  benchmarks: { code: string; name: string }[];
+  period: string;
+  has_history: boolean;
+  start: string | null;
+  end: string | null;
+  current_value: string;
+  net_invested: string;
+  income: string;
+  twr: number | null;
+  xirr: number | null;
+  benchmark_twr: number | null;
+  benchmark_xirr: number | null;
+  volatility: number | null;
+  benchmark_volatility: number | null;
+  max_drawdown: number | null;
+  drawdown_peak: string | null;
+  drawdown_low: string | null;
+  beta: number | null;
+  var95: number | null;
+  cvar95: number | null;
+  observations: number;
+  days: number;
+  estimated_days: number;
+  unpriced: string[];
+  estimated: string[];
+  series: PerformanceSeriesPoint[];
+  correlation: { isins: string[]; names: string[]; values: (number | null)[][] } | null;
+  warnings: string[];
+};
