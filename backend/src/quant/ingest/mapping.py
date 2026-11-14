@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from quant.ingest.jobs import JobResult
-from quant.models import AiPick, Instrument, Transaction
+from quant.models import AiPick, Instrument, Transaction, UniverseMember, WatchlistItem
 from quant.portfolio.positions import DUST, QUANTITY_CATEGORIES
 from quant.providers.base import ProviderError
 from quant.providers.resolvers import CryptoResolver, IsinResolver, Listing
@@ -92,6 +92,20 @@ def held_isins(session: Session) -> list[HeldIsin]:
     # The pick has no asset class: it is looked up as a share, which Yahoo also answers for
     # funds. TR's pseudo-ISINs for coins ("XF...") cannot be looked up this way.
     have = {h.isin for h in found}
+    # A share on a universe list or on someone's watchlist is tracked too (FR-30), so it has a
+    # price and a score before anyone buys it.
+    listed = [
+        *session.execute(
+            select(UniverseMember.isin, func.max(UniverseMember.name)).group_by(UniverseMember.isin)
+        ).all(),
+        *session.execute(
+            select(WatchlistItem.isin, func.max(WatchlistItem.note)).group_by(WatchlistItem.isin)
+        ).all(),
+    ]
+    for isin, name in listed:
+        if isin and isin not in have and valid_isin(isin):
+            found.append(HeldIsin(isin, name, "stock"))
+            have.add(isin)
     picked = session.execute(
         select(AiPick.isin, func.max(AiPick.name))
         .where(AiPick.isin.is_not(None), AiPick.isin.not_like("XF%"))

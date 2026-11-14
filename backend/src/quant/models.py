@@ -662,3 +662,102 @@ class CommodityProduct(Base):
     ter: Mapped[Decimal | None] = mapped_column(Numeric(6, 3))  # percent a year
     tr_available: Mapped[bool | None] = mapped_column(Boolean)
     notes: Mapped[str | None] = mapped_column(String(300))
+
+
+class UniverseMember(Base):
+    """One name on a universe list (FR-30): Nasdaq-100, TecDAX, the semiconductors, whatever an
+    admin loads. Shared by all users. The price job tracks these ISINs like held ones, so a name
+    on a list gets a ticker, prices and a score."""
+
+    __tablename__ = "universe_members"
+    __table_args__ = (UniqueConstraint("list_name", "isin", name="uq_universe_members"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    list_name: Mapped[str] = mapped_column(String(30))
+    isin: Mapped[str] = mapped_column(String(12))
+    name: Mapped[str | None] = mapped_column(String(200))
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WatchlistItem(Base):
+    """A share a user watches (FR-30). It is tracked and scored like a held one."""
+
+    __tablename__ = "watchlist"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    isin: Mapped[str] = mapped_column(String(12), primary_key=True)
+    note: Mapped[str | None] = mapped_column(String(200))
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Fundamental(Base):
+    """Fundamentals of one share on one day (FR-31). The free price sources give none, so an admin
+    loads them (from a paid provider's export, D15, or by hand). Public data, so no user column.
+    Ratios are plain numbers; yields, margins, returns and growth are percent."""
+
+    __tablename__ = "fundamentals"
+    __table_args__ = (UniqueConstraint("isin", "as_of", name="uq_fundamentals_isin_as_of"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    isin: Mapped[str] = mapped_column(String(12))
+    as_of: Mapped[date] = mapped_column(Date)
+    source: Mapped[str] = mapped_column(String(40))
+    ev_ebit: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    fcf_yield: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    ev_sales: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    roic: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    gross_margin: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    net_debt_ebitda: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    revenue_growth: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))  # TTM
+    revenue_cagr_3y: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+    eps_revision: Mapped[Decimal | None] = mapped_column(Numeric(14, 4))
+
+
+class FactorScore(Base):
+    """The factor scores of one share on one day (FR-31, FR-34, FR-35). One row a day, kept for
+    ever, so a trend can be shown and backtested. Each factor is 0 to 100, ranked against the
+    sector's peers; a factor with no usable input is NULL, never a made-up number."""
+
+    __tablename__ = "factor_scores"
+    __table_args__ = (UniqueConstraint("isin", "day", name="uq_factor_scores_isin_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    isin: Mapped[str] = mapped_column(String(12))
+    day: Mapped[date] = mapped_column(Date)
+    value: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    quality: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    growth: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    momentum: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    low_vol: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    composite: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    composite_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))  # rank in the universe
+    data_quality: Mapped[str] = mapped_column(String(10))  # ok | partial | poor
+    flags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    peers: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InstrumentFact(Base):
+    """What the scorecards of a fund or ETC need (FR-32, FR-33) and no free source gives
+    reliably: cost, size, how it replicates, whether it pays out, where it is domiciled. Entered
+    by an admin from the fund's factsheet. A blank means unknown, and the scorecard says so."""
+
+    __tablename__ = "instrument_facts"
+
+    isin: Mapped[str] = mapped_column(String(12), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(3))  # etf | etc
+    ter: Mapped[Decimal | None] = mapped_column(Numeric(6, 3))  # percent a year
+    fund_size_eur: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    replication: Mapped[str | None] = mapped_column(String(12))  # physical | sampling | synthetic
+    distribution: Mapped[str | None] = mapped_column(String(4))  # acc | dist
+    domicile: Mapped[str | None] = mapped_column(String(2))  # ISO country
+    tracking_difference: Mapped[Decimal | None] = mapped_column(Numeric(6, 3))  # percent a year
+    issuer: Mapped[str | None] = mapped_column(String(100))
+    delivery_claim: Mapped[bool | None] = mapped_column(Boolean)  # ETC: a right to the metal
+    roll_method: Mapped[str | None] = mapped_column(String(200))  # ETC on futures
+    notes: Mapped[str | None] = mapped_column(String(300))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -9,8 +9,9 @@ An *opportunity* reserve can be unlocked for one investment, and only under the 
 FR-28b. The rule here (`unlock_checks`):
 
 - at least one trigger: the Nasdaq-100 or MSCI World fund is 20% or more below its 52-week high,
-  or the user flags the opportunity by hand. The third trigger, a top-10% score with good data
-  quality, needs the factor scores (FR-31 to FR-35) and shows as "no data" until they exist;
+  or the user flags the opportunity by hand, or the share has a top-10% factor score with data
+  quality ok and a price 25% below its high without a falling quality score (FR-31, FR-34;
+  "no data" until the share has a score);
 - at most 50% of the reserve per opportunity, and no more than the cash there is;
 - not within six months of the reserve's target date (the money may be needed);
 - a liquid share or ETF only (no coin, no other class, no thin trading), and a share may not pass
@@ -33,7 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from quant.models import CashBalance, Instrument, PriceEOD, Reserve, ReserveEvent, Transaction
-from quant.portfolio import service
+from quant.portfolio import factors, service
 
 ZERO = Decimal(0)
 CENT = Decimal("0.01")
@@ -325,6 +326,50 @@ class Unlock:
     triggers: list[str] = field(default_factory=list)  # the triggers that fired
 
 
+MAX_SCORE_AGE_DAYS = 7
+QUALITY_LOOKBACK_DAYS = 90
+SCORE_TOP_PCT = Decimal(90)  # composite rank in the universe
+QUALITY_DROP_POINTS = Decimal(10)  # a fall of the quality score over 90 days that spoils the case
+
+
+def score_trigger(
+    session: Session, inst: Instrument | None, isin: str | None, today: date
+) -> tuple[bool | None, str]:
+    """The third trigger of FR-28b: a composite score in the top 10% of the universe, data quality
+    ok, a price at least 25% below its 52-week high, and no fall of the quality score (a cheap
+    price, not a broken thesis). None when the share has no score at all."""
+    row = factors.latest(session, isin) if isin else None
+    if row is None or row.composite is None or row.composite_pct is None:
+        return None, "no data: this share has no factor score yet"
+    if (today - row.day).days > MAX_SCORE_AGE_DAYS:
+        return None, f"no data: the newest score is from {row.day.isoformat()}"
+    top = 100 - row.composite_pct
+    if row.data_quality != "ok":
+        return False, f"its data quality is {row.data_quality}: a score with gaps cannot unlock"
+    if row.composite_pct < SCORE_TOP_PCT:
+        return (
+            False,
+            f"its score is in the top {top:.0f}% of the universe: it must be in the top 10%",
+        )
+    found = below_high(session, inst.id, today) if inst is not None else None
+    if found is None or found[0] < INSTRUMENT_DISCOUNT_PCT:
+        return (
+            False,
+            f"a top-10% score, but the price is not {INSTRUMENT_DISCOUNT_PCT}% below its high",
+        )
+    older = factors.history(session, row.isin, QUALITY_LOOKBACK_DAYS + 10, row.day)
+    base = next((r for r in older if (row.day - r.day).days >= QUALITY_LOOKBACK_DAYS - 10), None)
+    fell = (
+        base is not None
+        and base.quality is not None
+        and row.quality is not None
+        and base.quality - row.quality >= QUALITY_DROP_POINTS
+    )
+    if fell:
+        return False, "the quality score fell over the last 90 days: the thesis may be broken"
+    return True, f"a top-{top:.0f}% score, data quality ok, and {found[0]:.1f}% below its high"
+
+
 def below_high(
     session: Session, instrument_id: int, today: date
 ) -> tuple[Decimal, Decimal, Decimal] | None:
@@ -468,12 +513,14 @@ def unlock_checks(
             False,
         )
     )
+    inst = session.scalar(select(Instrument).where(Instrument.isin == isin)) if isin else None
+    score_ok, score_text = score_trigger(session, inst, isin, today)
     add(
         Check(
             "instrument_score",
-            "Top-10% score with good data quality",
-            None,
-            "no data: the factor scores are not built yet",
+            "Top-10% score with good data quality, and a cheap price",
+            score_ok,
+            score_text,
             False,
         )
     )
@@ -481,9 +528,10 @@ def unlock_checks(
         out.triggers.append("market_dislocation")
     if manual:
         out.triggers.append("manual")
+    if score_ok:
+        out.triggers.append("instrument_score")
 
     # The instrument.
-    inst = session.scalar(select(Instrument).where(Instrument.isin == isin)) if isin else None
     if inst is None:
         add(
             Check(

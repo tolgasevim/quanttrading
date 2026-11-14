@@ -867,3 +867,53 @@ export type Crypto = {
   cap_pct: string;
   note: string;
 };
+
+export type Score = {
+  isin: string;
+  name: string;
+  sector: string | null;
+  day: string;
+  value: string | null;
+  quality: string | null;
+  growth: string | null;
+  momentum: string | null;
+  low_vol: string | null;
+  composite: string | null;
+  composite_pct: string | null;
+  data_quality: "ok" | "partial" | "poor";
+  flags: string[];
+  flag_text: string[];
+  peers: number;
+  held: boolean;
+  watched: boolean;
+};
+
+export type Scores = { day: string | null; scores: Score[]; weights: Record<string, number>; note: string };
+
+export type ScoreDetail = {
+  score: Score | null;
+  history: {
+    day: string;
+    value: string | null;
+    quality: string | null;
+    growth: string | null;
+    momentum: string | null;
+    low_vol: string | null;
+    composite: string | null;
+  }[];
+  trends: string[];
+  note: string;
+};
+
+export type WatchItem = { isin: string; note: string | null; name: string | null; has_score: boolean };
+
+export type FundCard = {
+  isin: string;
+  name: string;
+  kind: "etf" | "etc";
+  held: boolean;
+  lines: { label: string; value: string; verdict: "good" | "watch" | "bad" | "info" | "unknown"; note: string }[];
+  missing: string[];
+  overlaps: string[];
+  tax_note: string;
+};

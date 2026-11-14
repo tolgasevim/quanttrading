@@ -3,12 +3,12 @@
 The app steers towards a leaner portfolio, but **being small is never on its own a reason to
 sell** (D25). A position under 0.5% of the securities gets one of these statuses:
 
-- `protected`: the user pinned it. (A top-30% score in its sector will protect it too, once the
-  factor scores exist, FR-31.) It is never suggested for exit.
+- `protected`: the user pinned it, or its factor score is in the top 30% of the universe (FR-31).
+  It is never suggested for exit.
 - `consolidate`: it is redundant with a bigger holding: the same company under another name, or a
   fund that overlaps another fund by 70% or more (FR-46) and is not marked intentional.
-- `exit_candidate`: its thesis looks broken: no usable price at all. A weak score will count here
-  once scores exist.
+- `exit_candidate`: its thesis looks broken: no usable price at all, or a factor score in the
+  bottom 30% (a score with poor data quality counts for nothing, either way).
 - `tracker`: the user keeps it on purpose; no prompts for the period they chose (6 months by
   default in the page), then it comes up again as `review`.
 - `review`: small, nothing wrong with it as far as the app can tell. It is left alone.
@@ -29,12 +29,14 @@ from itertools import combinations
 from sqlalchemy.orm import Session
 
 from quant.models import EtfHolding
-from quant.portfolio import allocation, book, lookthrough, service
+from quant.portfolio import allocation, book, factors, lookthrough, service
 from quant.portfolio import instruments as kinds
 
 ZERO = Decimal(0)
 HUNDRED = Decimal(100)
 SMALL_PCT = Decimal("0.5")
+TOP_PCT = Decimal(70)  # a composite rank from here up protects a small share (FR-45)
+BOTTOM_PCT = Decimal(30)  # and from here down makes it an exit candidate
 OVERLAP_PCT = Decimal(70)
 RECONFIRM_DAYS = 365
 TRACKER_MONTHS = 6
@@ -248,6 +250,9 @@ def analyse(
             status, why = "tracker", f"You keep it as a tracker until {tag.tracker_until}."
         elif tag and tag.pinned:
             status, why = "protected", "You pinned it as a protected small bet."
+        elif (score := _usable_score(session, p.isin, today)) is not None and score >= TOP_PCT:
+            status = "protected"
+            why = f"Its factor score is in the top {100 - score:.0f}% of the universe."
         elif p.isin in twin_of:
             big = twin_of[p.isin]
             status = "consolidate"
@@ -257,6 +262,12 @@ def analyse(
             status = "consolidate"
             why = "A fund that overlaps another fund you hold."
             suggestion = redundant[p.isin].suggestion
+        elif score is not None and score <= BOTTOM_PCT:
+            status = "exit_candidate"
+            why = (
+                f"Its factor score is in the bottom {score:.0f}% of the universe, and it is small."
+            )
+            suggestion = "Look at its factor scores. If the case is gone, let it go."
         elif tag and tag.tracker_until and tag.tracker_until < today:
             status, why = "review", "The tracker period is over. Decide: keep it, or let it go."
         out.small.append(
@@ -301,10 +312,20 @@ def analyse(
             "consolidation prompts first."
         )
     out.notes.append(
-        "The factor scores that would protect the best small bets, and mark weak ones as exit "
-        "candidates, are not built yet. Until then only a pin protects a small position."
+        "A small share with a factor score in the top 30% of the universe is protected, and one "
+        "in the bottom 30% is an exit candidate. A share without a recent score with data "
+        "quality ok or partial is judged by the other rules only."
     )
     return out
+
+
+def _usable_score(session: Session, isin: str, today: date) -> Decimal | None:
+    """The rank (0 to 100) of a share's composite score in the universe, when it is recent and
+    not of poor data quality: a score with gaps must not protect or condemn a position."""
+    row = factors.fresh(session, isin, today)
+    if row is None or row.composite_pct is None or row.data_quality == "poor":
+        return None
+    return Decimal(row.composite_pct)
 
 
 def _value(conc: lookthrough.Concentration, isin: str) -> Decimal:

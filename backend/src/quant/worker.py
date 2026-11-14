@@ -27,6 +27,7 @@ from quant.ingest.prices import ingest_prices
 from quant.ingest.runtime import make_fetcher, today_local
 from quant.ingest.sectors import fill_sectors
 from quant.models import JobRun, JobStatus
+from quant.portfolio.factors import compute_scores
 from quant.providers.base import Fetcher
 from quant.providers.registry import crypto_resolvers, fx_provider, isin_resolvers, price_providers
 
@@ -36,6 +37,7 @@ PRICES_JOB = "ingest_prices"
 FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
 SCORE_JOB = "score_picks"
+FACTOR_JOB = "score_factors"
 WEEKLY_JOB = "weekly_commentary"
 
 
@@ -140,6 +142,11 @@ def run_evening() -> None:
     except Exception as exc:  # noqa: BLE001 - the alerts must still run
         log.exception("the pick scoring failed")
         _record_crash(SCORE_JOB, exc)
+    try:
+        run_factor_scores()  # after the prices: momentum and risk need tonight's bars
+    except Exception as exc:  # noqa: BLE001 - the alerts must still run
+        log.exception("the factor scoring failed")
+        _record_crash(FACTOR_JOB, exc)
     run_alerts()  # last, so it can tell the admins about any job that failed tonight
 
 
@@ -162,6 +169,14 @@ def run_scoring() -> None:
         # Scores every user's picks from the shared prices (FR-3 bypass).
         rls.bypass(session)
         run_job(session, SCORE_JOB, lambda s: score_picks(s, today_local(settings).date()))
+
+
+def run_factor_scores() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Scores the shared universe (FR-30, FR-31). The scores are public data: no user rows.
+        rls.bypass(session)
+        run_job(session, FACTOR_JOB, lambda s: compute_scores(s, today_local(settings).date()))
 
 
 def run_weekly_commentary() -> None:
