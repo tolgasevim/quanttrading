@@ -41,6 +41,7 @@ USER_TABLES = (
     "reserve_events",
     "allocation_settings",
     "journal_entries",
+    "position_tags",
 )
 
 

@@ -8,6 +8,7 @@ from quant.api import (
     ai,
     allocation,
     auth,
+    book,
     cash,
     concentration,
     costs,
@@ -40,6 +41,7 @@ app.include_router(performance.router)
 app.include_router(cash.router)
 app.include_router(concentration.router)
 app.include_router(allocation.router)
+app.include_router(book.router)
 
 
 @app.get("/api/health")

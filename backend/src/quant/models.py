@@ -7,6 +7,7 @@ import enum
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -314,7 +315,7 @@ class Notification(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     # daily_move | job_failed | ai_budget | weekly_commentary | reserve_breach | reserve_loan
-    # | allocation_drift | guardrail_breach
+    # | allocation_drift | guardrail_breach | trading_book
     kind: Mapped[str] = mapped_column(String(30))
     severity: Mapped[str] = mapped_column(String(10))  # info | warning
     title: Mapped[str] = mapped_column(String(200))
@@ -587,6 +588,10 @@ class AllocationSettings(Base):
     targets: Mapped[dict[str, dict[str, str]] | None] = mapped_column(JSON)
     guardrails: Mapped[dict[str, str] | None] = mapped_column(JSON)
     deployment: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    # Optional soft target and cap for each tech sub-group (FR-47).
+    subgroup_limits: Mapped[dict[str, dict[str, str]] | None] = mapped_column(JSON)
+    # Consolidation, redundancy and trading-book settings (FR-45, FR-46, FR-48).
+    book_settings: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -611,3 +616,28 @@ class JournalEntry(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
     price_currency: Mapped[str | None] = mapped_column(String(3))
     price_date: Mapped[date | None] = mapped_column(Date)
+
+
+class PositionTag(Base):
+    """What the user says about one instrument (FR-45, FR-47, FR-48): a tech sub-group that
+    overrides the automatic one, a pin (a protected small bet), a "keep as tracker" until a day,
+    a short-term trade with its stop and knock-out barrier. No row means no opinion."""
+
+    __tablename__ = "position_tags"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    isin: Mapped[str] = mapped_column(String(20), primary_key=True)
+    subgroup: Mapped[str | None] = mapped_column(String(30))
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    tracker_until: Mapped[date | None] = mapped_column(Date)
+    short_term: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    stop_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    barrier: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    barrier_isin: Mapped[str | None] = mapped_column(String(20))  # what the barrier is measured on
+    barrier_long: Mapped[bool | None] = mapped_column(Boolean)  # True: a long, barrier below
+    note: Mapped[str | None] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

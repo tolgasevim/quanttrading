@@ -6,9 +6,9 @@ reserves, FR-28a). The trading book (leveraged products and knock-outs, FR-48) i
 drift maths and has its own cap against the whole.
 
 **Buckets** (D26): tech single stocks, broad and tech ETFs, crypto (coins), commodity hedge, cash,
-and "other" (non-tech shares, bond funds, private-market funds). A share is "tech" when its sector
-is Information Technology or Communication; a manual override comes with the sub-groups (FR-47).
-Each bucket has a target and a band. A bucket outside its band is drift (FR-41).
+and "other" (non-tech shares, bond funds, private-market funds). A share is "tech" when it is in
+one of the nine tech sub-groups (`subgroups.py`, FR-47), which the user can override. Each bucket
+has a target and a band. A bucket outside its band is drift (FR-41).
 
 **Guardrails** (FR-43) work on the look-through view (`lookthrough.py`): a single share, a sector
 and a country as a share of the portfolio, the cash minimum, the combined crypto cap, the trading
@@ -35,7 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from quant.models import AllocationSettings, Instrument, PriceEOD, Transaction
-from quant.portfolio import cash, lookthrough, performance, service
+from quant.portfolio import book, cash, lookthrough, performance, service, subgroups
 from quant.portfolio import instruments as kinds
 
 ZERO = Decimal(0)
@@ -63,7 +63,6 @@ LABELS = {
 }
 # Buckets that new money may go to.
 INVESTABLE = (TECH, ETFS, CRYPTO, COMMODITIES)
-TECH_SECTORS = frozenset({"Information Technology", "Communication"})
 
 
 @dataclass(frozen=True)
@@ -239,8 +238,8 @@ def save_guardrails(session: Session, user_id: uuid.UUID, guardrails: Guardrails
 # --- the picture ---------------------------------------------------------------------------
 
 
-def bucket_of(kind: str, sector: str, crypto_linked: bool) -> str:
-    """The bucket a position belongs to."""
+def bucket_of(kind: str, subgroup: str, crypto_linked: bool) -> str:
+    """The bucket a position belongs to. `subgroup` is its tech sub-group, or `non_tech`."""
     if kind == kinds.CRYPTO:
         return CRYPTO
     if kind == kinds.ETC:
@@ -249,7 +248,7 @@ def bucket_of(kind: str, sector: str, crypto_linked: bool) -> str:
         return TRADING_BOOK
     if kind == kinds.ETF:
         return ETFS
-    if kind == kinds.STOCK and (sector in TECH_SECTORS or crypto_linked):
+    if kind == kinds.STOCK and (subgroups.is_tech(subgroup) or crypto_linked):
         return TECH
     return OTHER
 
@@ -313,6 +312,19 @@ class DeploymentView:
     pull_forward_note: str = ""
 
 
+@dataclass(frozen=True)
+class SubgroupRow:
+    key: str
+    label: str
+    value: Decimal
+    pct: Decimal  # of the portfolio base
+    pct_of_tech: Decimal
+    target: Decimal | None
+    cap: Decimal | None
+    breached: bool
+    members: list[tuple[str, str, Decimal, bool]]  # isin, name, value, overridden by the user
+
+
 @dataclass
 class Report:
     base: Decimal = ZERO  # investable portfolio: securities (no trading book) plus free cash
@@ -325,6 +337,11 @@ class Report:
     suggestions: list[Suggestion] = field(default_factory=list)
     plans: dict[str, Decimal] = field(default_factory=dict)  # savings plans: isin -> euro a month
     deployment: DeploymentView | None = None
+    subgroups: list[SubgroupRow] = field(default_factory=list)
+    non_tech: Decimal = ZERO  # direct non-tech shares (reported apart, no cap: D31)
+    sub_of: dict[str, str] = field(default_factory=dict)  # isin -> sub-group of each share
+    stocks: list[tuple[str, str, str, str, bool, Decimal]] = field(default_factory=list)
+    # (isin, name, sub-group, automatic sub-group, overridden by the user, value) of each share
     settings: Settings | None = None
     has_portfolio: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -391,9 +408,28 @@ def analyse(session: Session, user_id: uuid.UUID, today: date | None = None) -> 
     report.free_cash = state.investable
     members: dict[str, list[tuple[str, str, Decimal]]] = {}
     values: dict[str, Decimal] = {b: ZERO for b in (*BUCKETS, TRADING_BOOK)}
+    tags = book.load_tags(session, user_id)
     for p in conc.positions:
-        sector = kinds.canonical_sector(held.sectors.get(p.isin, (None, None))[0])
-        bucket = bucket_of(p.type, sector, p.crypto_linked)
+        group = tech_subgroup(held, p, tags)
+        if p.type == kinds.STOCK:
+            report.sub_of[p.isin] = group
+            sector_raw, industry = held.sectors.get(p.isin, (None, None))
+            auto = subgroups.auto_subgroup(
+                kinds.canonical_sector(sector_raw), industry, p.name, p.isin
+            )
+            report.stocks.append(
+                (
+                    p.isin,
+                    p.name,
+                    group,
+                    auto,
+                    bool(tags.get(p.isin) and tags[p.isin].subgroup),
+                    p.value,
+                )
+            )
+        bucket = bucket_of(p.type, group, p.crypto_linked)
+        if tags.get(p.isin) is not None and tags[p.isin].short_term and bucket != TRADING_BOOK:
+            bucket = TRADING_BOOK  # the user tagged it a short-term trade (FR-48)
         values[bucket] += p.value
         members.setdefault(bucket, []).append((p.isin, p.name, p.value))
     values[CASH] = state.investable
@@ -423,6 +459,7 @@ def analyse(session: Session, user_id: uuid.UUID, today: date | None = None) -> 
             )
         )
     report.plans = savings_plans(session, user_id, today)
+    _subgroups(session, user_id, report, conc, tags, held, values)
     report.rules = _rules(session, user_id, today, report, conc, settings.guardrails)
     report.suggestions = _suggestions(report, members, held)
     report.deployment = _deployment(session, user_id, today, report, settings, members)
@@ -434,6 +471,62 @@ def analyse(session: Session, user_id: uuid.UUID, today: date | None = None) -> 
     if conc.unvalued:
         report.warnings.append(f"{conc.unvalued} position(s) have no price and are left out.")
     return report
+
+
+def tech_subgroup(
+    held: service.Holdings, p: lookthrough.PositionView, tags: dict[str, book.Tag]
+) -> str:
+    """The sub-group of a position: the user's override, else the automatic tag."""
+    tag = tags.get(p.isin)
+    if tag is not None and tag.subgroup:
+        return tag.subgroup
+    sector_raw, industry = held.sectors.get(p.isin, (None, None))
+    return subgroups.auto_subgroup(kinds.canonical_sector(sector_raw), industry, p.name, p.isin)
+
+
+def _subgroups(
+    session: Session,
+    user_id: uuid.UUID,
+    report: Report,
+    conc: lookthrough.Concentration,
+    tags: dict[str, book.Tag],
+    held: service.Holdings,
+    values: dict[str, Decimal],
+) -> None:
+    """The weight of each tech sub-group (direct shares only), with the user's optional soft
+    target and cap (FR-47)."""
+    limits = book.load_subgroup_limits(session, user_id)
+    by_group: dict[str, list[tuple[str, str, Decimal, bool]]] = {
+        g: [] for g in subgroups.TECH_GROUPS
+    }
+    for p in conc.positions:
+        if p.type != kinds.STOCK:
+            continue
+        tag = tags.get(p.isin)
+        group = report.sub_of[p.isin]
+        if tag is not None and tag.short_term:
+            continue  # a short-term trade is in the trading book, not in a long-term group
+        if subgroups.is_tech(group):
+            by_group[group].append((p.isin, p.name, p.value, bool(tag and tag.subgroup)))
+        else:
+            report.non_tech += p.value
+    tech_total = sum((m[2] for rows in by_group.values() for m in rows), ZERO)
+    for group in subgroups.TECH_GROUPS:
+        rows = sorted(by_group[group], key=lambda m: m[2], reverse=True)
+        value = sum((m[2] for m in rows), ZERO)
+        limit = limits.get(group, book.SubgroupLimit())
+        pct = _pct(value, report.base)
+        if value <= 0 and limit.target is None and limit.cap is None:
+            continue
+        report.subgroups.append(
+            SubgroupRow(
+                group, subgroups.LABELS[group], value, pct, _pct(value, tech_total),
+                limit.target, limit.cap,
+                breached=limit.cap is not None and pct > limit.cap,
+                members=rows,
+            )
+        )  # fmt: skip
+    _ = held, values
 
 
 def _rules(
@@ -473,6 +566,9 @@ def _rules(
     for country, value in conc.by_country.items():
         if country not in skip:
             add("country", country, value, g.max_country)
+    for row in report.subgroups:
+        if row.cap is not None:
+            add("subgroup", row.label, row.value, row.cap, "direct shares only")
     add("crypto", "Coins and crypto-linked shares", conc.crypto_value, g.max_crypto)
     add(
         "trading_book", "Leveraged products and knock-outs", report.trading_book, g.max_trading_book

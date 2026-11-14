@@ -19,6 +19,7 @@ const KIND_TEXT: Record<string, string> = {
   reserve_loan: "Reserve loan",
   allocation_drift: "Allocation drift",
   guardrail_breach: "Guardrail",
+  trading_book: "Trading book",
 };
 
 const when = (iso: string) =>
