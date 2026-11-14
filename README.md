@@ -99,6 +99,8 @@ Set-up:
    ```
 3. In the app: Import → choose the file → check the preview → Import.
 
+A transaction the import missed, or a wrong one, can be added, fixed or deleted on the Transactions page. Every change is kept in an audit trail, and a deleted row does not come back when you import again.
+
 ## Check your holdings
 
 Holdings are rebuilt from the transaction history. To compare them with a statement:
