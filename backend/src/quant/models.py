@@ -721,7 +721,10 @@ class FactorScore(Base):
     sector's peers; a factor with no usable input is NULL, never a made-up number."""
 
     __tablename__ = "factor_scores"
-    __table_args__ = (UniqueConstraint("isin", "day", name="uq_factor_scores_isin_day"),)
+    __table_args__ = (
+        UniqueConstraint("isin", "day", name="uq_factor_scores_isin_day"),
+        Index("ix_factor_scores_day", "day"),  # the newest day's scores, whole
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     isin: Mapped[str] = mapped_column(String(12))
