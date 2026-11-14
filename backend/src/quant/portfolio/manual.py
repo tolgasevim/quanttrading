@@ -75,8 +75,10 @@ def snapshot(tx: Transaction) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key in AUDIT_FIELDS:
         value = getattr(tx, key)
-        out[key] = value.isoformat() if isinstance(value, datetime) else (
-            str(value) if isinstance(value, Decimal) else value
+        out[key] = (
+            value.isoformat()
+            if isinstance(value, datetime)
+            else (str(value) if isinstance(value, Decimal) else value)
         )
     return out
 
@@ -215,10 +217,13 @@ def edit(
             "asset_class": tx.asset_class,
             "currency": tx.currency or "EUR",
         }
-        # Moving a row to another kind of entry: a stale amount must not carry over.
-        if new_side is not current and "amount" not in fields:
-            if new_side in NEEDS_SHARES:
+        # New shares or a new price: the old amount is stale, so it is worked out again (unless
+        # the user sends an amount too).
+        if new_side in NEEDS_SHARES and "amount" not in fields:
+            if "shares" in fields or "price" in fields:
                 merged["amount"] = None
+        elif new_side not in NEEDS_SHARES and current in NEEDS_SHARES and "amount" not in fields:
+            merged["amount"] = None  # a trade turned into a cash entry: the user must say how much
         merged.update(fields)
         for key, value in build(new_side, **merged).items():
             setattr(tx, key, value)
@@ -231,7 +236,9 @@ def edit(
     if day is not None or at is not None:
         new_day = day or tx.date
         tx.date = new_day
-        tx.executed_at = moment(new_day, at) if at or tx.broker == BROKER else _same_time(tx, new_day)
+        tx.executed_at = (
+            moment(new_day, at) if at or tx.broker == BROKER else _same_time(tx, new_day)
+        )
     session.flush()
     session.add(
         TransactionAudit(

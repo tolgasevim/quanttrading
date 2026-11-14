@@ -81,7 +81,9 @@ def commit(session: Session, record: Import) -> Import:
         raise ValueError(f"import is {record.status}, not awaiting confirmation")
     # A row the user deleted by hand (FR-14) stays deleted.
     skip = deleted_external_ids(session, record.user_id, tr_csv.BROKER)
-    rows = [_row(record.user_id, record.id, s) for s in record.staged if s["external_id"] not in skip]
+    rows = [
+        _row(record.user_id, record.id, s) for s in record.staged if s["external_id"] not in skip
+    ]
     inserted = 0
     # Chunked to stay well below Postgres' bind-parameter limit.
     for start in range(0, len(rows), 1000):

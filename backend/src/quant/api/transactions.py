@@ -167,7 +167,9 @@ def add_transaction(body: ManualIn, user: CurrentUser, db: UserDb) -> Transactio
 
 
 @router.patch("/{tx_id}", response_model=TransactionOut)
-def edit_transaction(tx_id: int, body: ManualPatch, user: CurrentUser, db: UserDb) -> TransactionOut:
+def edit_transaction(
+    tx_id: int, body: ManualPatch, user: CurrentUser, db: UserDb
+) -> TransactionOut:
     tx = _mine(db, user, tx_id)
     sent = body.model_dump(exclude_unset=True)
     side, day, at = sent.pop("side", None), sent.pop("date", None), sent.pop("time", None)
