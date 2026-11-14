@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from quant.importers import tr_csv
 from quant.models import Import, ImportStatus, Transaction
+from quant.portfolio.manual import deleted_external_ids
 
 DECIMAL_FIELDS = (
     "shares",
@@ -78,7 +79,11 @@ def _row(user_id: uuid.UUID, import_id: uuid.UUID, staged: dict[str, Any]) -> di
 def commit(session: Session, record: Import) -> Import:
     if record.status != ImportStatus.PREVIEW or record.staged is None:
         raise ValueError(f"import is {record.status}, not awaiting confirmation")
-    rows = [_row(record.user_id, record.id, s) for s in record.staged]
+    # A row the user deleted by hand (FR-14) stays deleted.
+    skip = deleted_external_ids(session, record.user_id, tr_csv.BROKER)
+    rows = [
+        _row(record.user_id, record.id, s) for s in record.staged if s["external_id"] not in skip
+    ]
     inserted = 0
     # Chunked to stay well below Postgres' bind-parameter limit.
     for start in range(0, len(rows), 1000):

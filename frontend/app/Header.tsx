@@ -29,6 +29,7 @@ export function Header({ user }: { user: User }) {
         <Link href="/">Dashboard</Link>
         <Link href="/import">Import</Link>
         <Link href="/holdings">Holdings</Link>
+        <Link href="/transactions">Transactions</Link>
         <Link href="/tax">Tax</Link>
         <Link href="/costs">Costs</Link>
         <Link href="/prices">Prices</Link>

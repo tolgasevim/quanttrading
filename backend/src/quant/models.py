@@ -475,3 +475,21 @@ class DisclaimerAcceptance(Base):
     )
     version: Mapped[int] = mapped_column(Integer)
     accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TransactionAudit(Base):
+    """Who changed which transaction, and how (FR-14). One row for each manual add, edit or
+    delete, with the row as it was before and after. Never edited or deleted. An imported row the
+    user deleted is also listed here: a later import skips it instead of bringing it back."""
+
+    __tablename__ = "transaction_audits"
+    __table_args__ = (Index("ix_transaction_audits_user_at", "user_id", "at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    action: Mapped[str] = mapped_column(String(10))  # add | edit | delete
+    broker: Mapped[str] = mapped_column(String(20))
+    external_id: Mapped[str] = mapped_column(String(100))
+    before: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    after: Mapped[dict[str, object] | None] = mapped_column(JSON)
