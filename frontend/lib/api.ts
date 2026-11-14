@@ -537,3 +537,54 @@ export type UnlockCheck = {
 };
 
 export type UnlockResult = { allowed: boolean; triggers: string[]; checks: UnlockCheck[] };
+
+export type ConcentrationSlice = { label: string; value: string; pct: string };
+
+export type ConcentrationPosition = {
+  isin: string;
+  name: string;
+  type: string;
+  flags: string[];
+  value: string;
+  pct: string;
+  trading_book: boolean;
+  crypto_linked: boolean;
+  looked_through: boolean | null;
+};
+
+export type ConcentrationUnderlying = {
+  key: string;
+  name: string;
+  isin: string | null;
+  type: string;
+  sector: string;
+  country: string;
+  direct_pct: string;
+  indirect_pct: string;
+  total_pct: string;
+  via: { fund: string; pct: string }[];
+};
+
+export type Concentration = {
+  total: string;
+  unvalued: number;
+  covered_pct: string | null;
+  crypto_pct: string;
+  positions: ConcentrationPosition[];
+  underlying: ConcentrationUnderlying[];
+  by_class: ConcentrationSlice[];
+  by_sector: ConcentrationSlice[];
+  by_country: ConcentrationSlice[];
+  by_currency: ConcentrationSlice[];
+  unlooked: string[];
+  warnings: string[];
+};
+
+export type FundFile = {
+  etf_isin: string;
+  name: string | null;
+  rows: number;
+  total_weight: string;
+  as_of: string;
+  source: string;
+};

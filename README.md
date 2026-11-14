@@ -87,6 +87,16 @@ Set-up:
 6. The code that talks to the live API was tested with a fake SDK only. Ask one question after
    set-up and check that it answers.
 
+## What the pages show
+
+| Page | What it is for |
+|---|---|
+| Holdings, Tax, Costs, Prices | What you own, its cost and profit, a German tax estimate, missing costs, and the price feed. |
+| Transactions | Add, fix or delete a transaction by hand. Every change is kept in an audit trail. |
+| Performance | Time-weighted and money-weighted return against a benchmark (Nasdaq-100, MSCI World or S&P 500), and risk: volatility, largest fall, beta, one-day VaR and CVaR, correlation. |
+| Cash | Your cash balance, checked against your history. Reserves you set aside, and the strict rule for unlocking part of an opportunity reserve. |
+| Concentration | Weights by sector, country, currency and instrument type, with ETF look-through. An admin uploads each fund's holdings file (a CSV from the issuer). |
+
 ## Import your Trade Republic history
 
 1. In the TR app: Profile → Settings → Account → Export transactions (CSV).
