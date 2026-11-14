@@ -71,10 +71,10 @@ def add_prices(
     db.commit()
 
 
-def fundamentals(db: Session, isin: str, as_of: date = TODAY, **fields: float) -> None:
+def fundamentals(db: Session, isin: str, /, **fields: float) -> None:
     db.add(
         Fundamental(
-            isin=isin, as_of=as_of, source="test", **{k: D(str(v)) for k, v in fields.items()}
+            isin=isin, as_of=TODAY, source="test", **{k: D(str(v)) for k, v in fields.items()}
         )
     )
     db.commit()
@@ -170,7 +170,7 @@ def test_missing_and_old_fundamentals_are_flagged() -> None:
     assert "stale_fundamentals" in factors.fundamental_inputs(old, TODAY)[1]
 
 
-def raw(isin: str, sector: str | None = "Tech", **values: float) -> factors.Raw:
+def raw(isin: str, sector: str | None = "Tech", /, **values: float) -> factors.Raw:
     full: dict[str, float | None] = {n: None for f in factors.FACTORS for n, _ in factors.INPUTS[f]}
     full.update(values)
     return factors.Raw(isin, isin, sector, full, set())
@@ -183,8 +183,10 @@ def test_the_best_share_in_a_sector_scores_highest_and_weights_spread() -> None:
         for i, n in enumerate(names)
     ]
     scored = factors.score_all(raws)
-    quality = [scored[n].factors["quality"] for n in names]
-    assert quality == sorted(quality) and quality[0] == 0 and quality[-1] == 100
+    quality = [q for n in names if (q := scored[n].factors["quality"]) is not None]
+    assert (
+        len(quality) == 6 and quality == sorted(quality) and quality[0] == 0 and quality[-1] == 100
+    )
     # Only quality exists: one factor is too little for a composite.
     assert scored["S5"].composite is None and scored["S5"].data_quality == "poor"
     assert factors.score_all([raw("A", ret_6m=0.2, roic=30)])["A"].peers == 1
