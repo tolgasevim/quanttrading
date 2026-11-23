@@ -93,6 +93,7 @@ EXPECTED_JOBS: dict[str, int] = {
     "map_isins": 80,
     "score_picks": 80,
     "score_factors": 80,
+    "scan_swing": 80,
     "push_alerts": 12,  # every 15 minutes from 06:00 to 23:45
     "send_digests": 36,  # hourly from 07:05 to 21:05, and only sends when one is due
     "create_alerts": 80,

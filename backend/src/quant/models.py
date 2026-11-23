@@ -831,3 +831,46 @@ class TelegramState(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     next_offset: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class SwingGate(Base):
+    """The backtest of one swing signal type, recomputed every night (Phase 4). Only a type that
+    `passed` has its signals shown. Public data derived from public prices: no user column."""
+
+    __tablename__ = "swing_gates"
+    __table_args__ = (UniqueConstraint("signal", "computed_on", name="uq_swing_gates_signal_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal: Mapped[str] = mapped_column(String(20))
+    computed_on: Mapped[date] = mapped_column(Date)
+    n_trades: Mapped[int] = mapped_column(Integer)
+    win_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2))  # percent
+    expectancy: Mapped[Decimal] = mapped_column(Numeric(10, 4))  # percent a trade, net of costs
+    profit_factor: Mapped[Decimal | None] = mapped_column(Numeric(10, 3))
+    first_half: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    second_half: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    universe: Mapped[int] = mapped_column(Integer)  # instruments replayed
+    passed: Mapped[bool] = mapped_column(Boolean)
+
+
+class SwingSignal(Base):
+    """A signal that fired on the newest bar of an instrument, with its levels (Phase 4)."""
+
+    __tablename__ = "swing_signals"
+    __table_args__ = (
+        UniqueConstraint("scanned_on", "code", "signal", name="uq_swing_signals_day_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scanned_on: Mapped[date] = mapped_column(Date)  # the day of the scan
+    day: Mapped[date] = mapped_column(Date)  # the day of the bar the signal fired on
+    code: Mapped[str] = mapped_column(String(40))
+    isin: Mapped[str | None] = mapped_column(String(12))
+    name: Mapped[str] = mapped_column(String(200))
+    currency: Mapped[str] = mapped_column(String(3))
+    signal: Mapped[str] = mapped_column(String(20))
+    entry: Mapped[Decimal] = mapped_column(Numeric(20, 6))  # the close of the signal day
+    stop: Mapped[Decimal] = mapped_column(Numeric(20, 6))
+    target: Mapped[Decimal] = mapped_column(Numeric(20, 6))
+    atr: Mapped[Decimal] = mapped_column(Numeric(20, 6))
+    max_hold: Mapped[int] = mapped_column(Integer)

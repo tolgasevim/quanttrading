@@ -37,6 +37,7 @@ export function Header({ user }: { user: User }) {
         <Link href="/scores">Scores</Link>
         <Link href="/markets">Markets</Link>
         <Link href="/crypto">Crypto</Link>
+        <Link href="/lab">Lab</Link>
         <Link href="/journal">Journal</Link>
         <Link href="/cash">Cash</Link>
         <Link href="/tax">Tax</Link>

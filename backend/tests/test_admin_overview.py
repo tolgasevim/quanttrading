@@ -68,6 +68,7 @@ def test_the_expected_jobs_are_the_ones_the_worker_runs() -> None:
         worker.SCORE_JOB,
         worker.FACTOR_JOB,
         worker.PUSH_JOB,
+        worker.SWING_JOB,
         worker.DIGEST_JOB,
         worker.WEEKLY_JOB,
         ALERT_JOB_NAME,
