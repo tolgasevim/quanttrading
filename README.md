@@ -116,6 +116,7 @@ tested with fakes only.
 | Positions | Tech sub-groups, tags, consolidation prompts, fund overlap and the short-term trading book. |
 | Scores | Factor scores for every share in the universe, with data-quality flags and history; a watchlist; fund and ETC scorecards. An admin loads universe lists, fundamentals and fund facts. |
 | Markets, Crypto | Commodities, key drivers, the regime and the gold hedge check; crypto lots with the day each turns tax-free. |
+| Lab | Backtest a rule (trend, momentum, factor score) against a benchmark, with costs and tax; and swing signals, shown only while their own backtest passes. Hypothetical, with the limits printed on the page. |
 | Admin | For the owner: users, last imports, the health of every data job and the AI spend. |
 
 ## Import your Trade Republic history

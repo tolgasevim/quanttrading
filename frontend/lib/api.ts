@@ -963,3 +963,74 @@ export type Delivery = {
   link_pending: boolean;
   privacy: string;
 };
+
+export type LabInfo = {
+  strategies: Record<string, string>;
+  benchmarks: string[];
+  held: number;
+  watchlist: number;
+  universe: number;
+  score_first_day: string | null;
+  score_days: number;
+};
+
+export type BacktestStats = {
+  final_value: string;
+  total_return_pct: number;
+  cagr_pct: number | null;
+  volatility_pct: number | null;
+  sharpe: number | null;
+  sortino: number | null;
+  max_drawdown_pct: number | null;
+  trades: number;
+  fees: string;
+  tax: string;
+  turnover_pct_year: number | null;
+};
+
+export type BacktestResult = {
+  strategy: BacktestStats;
+  benchmark: BacktestStats;
+  curve: { day: string; strategy: number; benchmark: number }[];
+  first_day: string;
+  last_day: string;
+  universe_size: number;
+  notes: string[];
+  warnings: string[];
+};
+
+export type Swing = {
+  scanned_on: string | null;
+  criteria: string;
+  gates: {
+    signal: string;
+    text: string;
+    computed_on: string;
+    n_trades: number;
+    win_rate_pct: string;
+    expectancy_pct: string;
+    profit_factor: string | null;
+    first_half_pct: string | null;
+    second_half_pct: string | null;
+    universe: number;
+    passed: boolean;
+  }[];
+  signals: {
+    day: string;
+    code: string;
+    name: string;
+    currency: string;
+    signal: string;
+    entry: string;
+    stop: string;
+    target: string;
+    atr: string;
+    max_hold: number;
+    risk_pct: string;
+    reward_pct: string;
+    held: boolean;
+    watched: boolean;
+  }[];
+  hidden: number;
+  notes: string[];
+};

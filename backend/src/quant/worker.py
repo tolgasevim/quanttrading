@@ -30,6 +30,7 @@ from quant.ingest.runtime import make_fetcher, today_local
 from quant.ingest.sectors import fill_sectors
 from quant.models import JobRun, JobStatus
 from quant.portfolio.factors import compute_scores
+from quant.portfolio.swing import scan as scan_swing
 from quant.providers.base import Fetcher
 from quant.providers.registry import crypto_resolvers, fx_provider, isin_resolvers, price_providers
 
@@ -41,6 +42,7 @@ MAP_JOB = "map_isins"
 SCORE_JOB = "score_picks"
 FACTOR_JOB = "score_factors"
 PUSH_JOB = "push_alerts"
+SWING_JOB = "scan_swing"
 DIGEST_JOB = "send_digests"
 WEEKLY_JOB = "weekly_commentary"
 
@@ -151,6 +153,11 @@ def run_evening() -> None:
     except Exception as exc:  # noqa: BLE001 - the alerts must still run
         log.exception("the factor scoring failed")
         _record_crash(FACTOR_JOB, exc)
+    try:
+        run_swing_scan()  # tonight's bars: the gates are replayed and the signals looked for
+    except Exception as exc:  # noqa: BLE001 - the alerts must still run
+        log.exception("the swing scan failed")
+        _record_crash(SWING_JOB, exc)
     run_alerts()  # last, so it can tell the admins about any job that failed tonight
     try:
         run_push()  # the alerts just made go out now, unless quiet hours hold them
@@ -186,6 +193,14 @@ def run_factor_scores() -> None:
         # Scores the shared universe (FR-30, FR-31). The scores are public data: no user rows.
         rls.bypass(session)
         run_job(session, FACTOR_JOB, lambda s: compute_scores(s, today_local(settings).date()))
+
+
+def run_swing_scan() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Scans the shared prices (the signals are public data, Phase 4).
+        rls.bypass(session)
+        run_job(session, SWING_JOB, lambda s: scan_swing(s, today_local(settings).date()))
 
 
 def run_push() -> None:

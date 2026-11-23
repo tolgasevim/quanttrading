@@ -16,6 +16,7 @@ from quant.api import (
     delivery,
     holdings,
     imports,
+    lab,
     market,
     markets,
     notifications,
@@ -52,6 +53,7 @@ app.include_router(markets.router)
 app.include_router(scores.router)
 app.include_router(passkeys.router)
 app.include_router(delivery.router)
+app.include_router(lab.router)
 
 
 @app.get("/api/health")

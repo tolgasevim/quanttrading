@@ -14,6 +14,7 @@ const JOB_NAME: Record<string, string> = {
   map_isins: "Ticker lookup",
   score_picks: "AI pick scoring",
   score_factors: "Factor scores",
+  scan_swing: "Swing scan",
   push_alerts: "Telegram push",
   send_digests: "Email digests",
   create_alerts: "Alerts",
