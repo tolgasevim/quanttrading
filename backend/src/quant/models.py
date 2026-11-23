@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -764,3 +765,35 @@ class InstrumentFact(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class Passkey(Base):
+    """A WebAuthn credential of a user (FR-2): the public key and the signature counter. The
+    private key never leaves the user's device. Like `users` and `auth_sessions` this is an
+    account table read before anyone is signed in (the sign-in looks the credential up), so it has
+    no row-level security."""
+
+    __tablename__ = "passkeys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    credential_id: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary)
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WebauthnChallenge(Base):
+    """The challenge of one passkey ceremony. It lives five minutes and works once."""
+
+    __tablename__ = "webauthn_challenges"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    challenge: Mapped[bytes] = mapped_column(LargeBinary)
+    purpose: Mapped[str] = mapped_column(String(10))  # register | login
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

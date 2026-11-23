@@ -220,6 +220,22 @@ def check_holdings(csv_path: Path, crypto_pdf: Path | None, depot_pdf: Path | No
     return 0 if ok else 1
 
 
+def check_confirmation(path: Path) -> int:
+    """Dry-run a TR trade confirmation (FR-11a) on the owner's machine (PRD §9a). Prints only
+    pass or fail and counts: never a name, an ISIN or an amount."""
+    from quant.importers import tr_confirmation_pdf
+    from quant.importers.statement_pdf import StatementFormatError, extract_text
+
+    try:
+        c = tr_confirmation_pdf.parse_text(extract_text(path.read_bytes()))
+    except StatementFormatError as exc:
+        print(f"FAIL confirmation: {exc}")
+        return 1
+    print(f"a {c.side}, {len(c.taxes)} kinds of tax, {'with' if c.fees else 'no'} fees")
+    print("PASS the numbers add up (quantity x price = amount; amount and costs = total)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="quant")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -245,6 +261,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--crypto-pdf", default=None)
     p.add_argument("--depot-pdf", default=None)
 
+    p = sub.add_parser(
+        "check-confirmation",
+        help="dry-run a TR trade confirmation PDF: pass or fail only, nothing is stored",
+    )
+    p.add_argument("path")
+
     sub.add_parser("map-isins", help="map held ISINs to tickers now (FR-12)")
     sub.add_parser("ingest-prices", help="run the EOD price job now")
     sub.add_parser("create-alerts", help="create the daily-move and failed-job alerts now")
@@ -260,6 +282,8 @@ def main(argv: list[str] | None = None) -> None:
         path = Path(args.file or get_settings().instruments_file)
         with get_sessionmaker()() as session:
             print(f"seeded {seed_instruments(session, load_instruments(path))} instruments")
+    elif args.command == "check-confirmation":
+        sys.exit(check_confirmation(Path(args.path)))
     elif args.command == "check-holdings":
         crypto = Path(args.crypto_pdf) if args.crypto_pdf else None
         depot = Path(args.depot_pdf) if args.depot_pdf else None

@@ -19,6 +19,7 @@ dependencies = [
     "anthropic>=1,<2",
     "python-multipart>=0.0.9",
     "pypdf>=5.0",
+    "webauthn>=2.5,<3",
 ]
 
 [dependency-groups]

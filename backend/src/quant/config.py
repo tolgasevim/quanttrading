@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     invite_ttl_hours: int = 72
     totp_issuer: str = "QuantTrading"
+    # Passkeys (WebAuthn, FR-2). The relying-party id is the host name people type in the browser
+    # (no scheme, no port) and the origin is the full address of the web app. They must match the
+    # real address, or the browser refuses the ceremony. The defaults suit a local trial only.
+    webauthn_rp_id: str = "localhost"
+    webauthn_rp_name: str = "QuantTrading"
+    webauthn_origin: str = "http://localhost:3000"
 
     # Data providers, tried in order (PRD §8). Swapping providers is a config change.
     # A list setting takes either a comma list (yahoo,stooq) or JSON (["yahoo","stooq"]).
