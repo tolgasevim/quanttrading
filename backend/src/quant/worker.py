@@ -19,6 +19,8 @@ from quant.ai.commentary import run_weekly
 from quant.ai.scoring import score_picks
 from quant.config import Settings, get_settings
 from quant.db import get_sessionmaker
+from quant.delivery import service as delivery
+from quant.delivery.transports import make_email_sender, make_telegram
 from quant.ingest.alerts import ALERT_JOB_NAME, create_alerts
 from quant.ingest.fx import ingest_fx
 from quant.ingest.jobs import JobResult, run_job
@@ -38,6 +40,8 @@ FX_JOB = "ingest_fx"
 MAP_JOB = "map_isins"
 SCORE_JOB = "score_picks"
 FACTOR_JOB = "score_factors"
+PUSH_JOB = "push_alerts"
+DIGEST_JOB = "send_digests"
 WEEKLY_JOB = "weekly_commentary"
 
 
@@ -148,6 +152,11 @@ def run_evening() -> None:
         log.exception("the factor scoring failed")
         _record_crash(FACTOR_JOB, exc)
     run_alerts()  # last, so it can tell the admins about any job that failed tonight
+    try:
+        run_push()  # the alerts just made go out now, unless quiet hours hold them
+    except Exception as exc:  # noqa: BLE001 - nothing else depends on it
+        log.exception("the alert push failed")
+        _record_crash(PUSH_JOB, exc)
 
 
 def run_alerts() -> None:
@@ -177,6 +186,38 @@ def run_factor_scores() -> None:
         # Scores the shared universe (FR-30, FR-31). The scores are public data: no user rows.
         rls.bypass(session)
         run_job(session, FACTOR_JOB, lambda s: compute_scores(s, today_local(settings).date()))
+
+
+def run_push() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Pushes every user's new alerts to their linked Telegram chat (FR-72, FR-3 bypass).
+        rls.bypass(session)
+        run_job(
+            session,
+            PUSH_JOB,
+            lambda s: delivery.push_alerts(
+                s, make_telegram(settings), datetime.now(UTC), settings.timezone
+            ),
+        )
+
+
+def run_digests() -> None:
+    settings = get_settings()
+    with get_sessionmaker()() as session:
+        # Sends each user's email digest (FR-71, FR-3 bypass).
+        rls.bypass(session)
+        run_job(
+            session,
+            DIGEST_JOB,
+            lambda s: delivery.send_digests(
+                s,
+                make_email_sender(settings),
+                datetime.now(UTC),
+                settings.timezone,
+                delivery.consolidation_prompts,
+            ),
+        )
 
 
 def run_weekly_commentary() -> None:
@@ -264,6 +305,15 @@ def main() -> None:
         run_weekly_commentary,
         CronTrigger.from_crontab(settings.commentary_cron, timezone=tz),
         id=WEEKLY_JOB,
+        **common,
+    )
+    scheduler.add_job(
+        run_push, CronTrigger.from_crontab(settings.push_cron, timezone=tz), id=PUSH_JOB, **common
+    )
+    scheduler.add_job(
+        run_digests,
+        CronTrigger.from_crontab(settings.digest_cron, timezone=tz),
+        id=DIGEST_JOB,
         **common,
     )
     log.info("scheduler started: fx=%r prices=%r (%s)", settings.fx_cron, settings.prices_cron, tz)

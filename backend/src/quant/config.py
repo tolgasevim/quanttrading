@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     invite_ttl_hours: int = 72
     totp_issuer: str = "QuantTrading"
+    # Email digests (FR-71): any SMTP server, such as a relay with a free tier. Empty host: no mail
+    # is sent. The password is a secret: keep it in .env only.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_starttls: bool = True
+    smtp_from: str = "quant@localhost"
+    # Telegram (FR-72): the token of a bot made with @BotFather, and the bot's name for the
+    # instructions. Empty token: no Telegram.
+    telegram_bot_token: str | None = None
+    telegram_bot_name: str | None = None
+
     # Passkeys (WebAuthn, FR-2). The relying-party id is the host name people type in the browser
     # (no scheme, no port) and the origin is the full address of the web app. They must match the
     # real address, or the browser refuses the ceremony. The defaults suit a local trial only.
@@ -62,6 +75,10 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Berlin"
     prices_cron: str = "30 22 * * mon-fri"
     commentary_cron: str = "0 18 * * sun"  # the weekly AI commentary (FR-54)
+    # Pushing alerts to Telegram and sending the email digests (FR-71, FR-72). Both run through
+    # the day, so an alert held back by quiet hours goes out when they end.
+    push_cron: str = "*/15 6-23 * * *"
+    digest_cron: str = "5 7-21 * * *"
     mapping_cron: str = "0 22 * * mon-fri"  # before the price job, so new ISINs get prices at once
     fx_cron: str = "30 16 * * mon-fri"
     backfill_days: int = 400

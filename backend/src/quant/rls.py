@@ -43,6 +43,7 @@ USER_TABLES = (
     "journal_entries",
     "position_tags",
     "watchlist",
+    "delivery_settings",
 )
 
 
