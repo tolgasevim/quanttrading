@@ -10,7 +10,7 @@ relevant FR-x before building anything, and cite it in the PR description.
   - `importers/`: broker file parsers (pure functions; statements: `tr_crypto_pdf`, `tr_depot_pdf`) and the preview/commit workflow.
   - `portfolio/`: position engine (`positions.py`), FIFO lots, cost basis and realised P&L (`lots.py`), statement reconciliation (`reconcile.py`), the German tax estimate (`tax.py`), manual transactions with their audit trail (`manual.py`), performance and risk (`performance.py`, with the pure statistics in `metrics.py`), cash, reserves and the opportunity unlock (`cash.py`), instrument types (`instruments.py`) and ETF look-through with the concentration view (`lookthrough.py`), targets, drift, guardrails, rebalancing and the deployment plan (`allocation.py`) the decision journal (`journal.py`), tech sub-groups (`subgroups.py`), tags and book settings (`book.py`), consolidation and redundancy (`consolidation.py`) the trading book (`trading.py`), crypto tax lots (`crypto.py`) commodities, drivers, regime and the hedge check (`markets.py`), factor scores and score history (`factors.py`) and the fund and ETC scorecards (`scorecards.py`) and the holdings read model (`service.py`).
   - `ai/`: the AI layer: `client.py` (the model adapter behind `LlmClient`), `service.py` (chat loop, consent, budget, picks), `tools.py` (read-only chat tools), `picks.py`, `scoring.py` (nightly pick scoring), `commentary.py` (weekly), `budget.py` (spend ledger and caps), `consent.py`. Tests use a fake `LlmClient`.
-  - `api/`: HTTP routers. `worker.py`: the scheduler. `cli.py`: admin commands.
+  - `passkeys.py`: the WebAuthn layer (FR-2). `api/`: HTTP routers (including the admin panel, FR-5). `worker.py`: the scheduler. `cli.py`: admin commands.
 - `frontend/`: Next.js (App Router). The browser only talks to Next, which proxies `/api/*` to FastAPI.
 - `docker-compose.yml`: db, api (runs the migrations), worker, web.
 
@@ -30,7 +30,7 @@ cd frontend && npm ci && npm run build && npm run typecheck
   Fixtures are synthetic. Checks against real exports run on the owner's Mac mini and print only
   pass/fail (PRD §9a).
 - Parsers drop personal data at parse time (FR-19a, FR-10a).
-- Every user-owned table is scoped by `user_id` and protected by Postgres row-level security (FR-3):
+- Every user-owned table is scoped by `user_id` and protected by Postgres row-level security (FR-3; the account tables `users`, `auth_sessions`, `invites` and `passkeys` are read before anyone is signed in and are the exception):
   add it to `quant.rls.USER_TABLES` and apply `policy_sql` to it in its migration. API handlers use
   the `UserDb` session *and* filter by `user_id` explicitly.
 - The app runs as the non-owner role `quant_app` (see `quant.db`); migrations run as the owner.

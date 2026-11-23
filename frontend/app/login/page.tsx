@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 import { ApiError, post } from "@/lib/api";
+import { getCredential, passkeysSupported } from "@/lib/passkeys";
 
 export default function Login() {
   const router = useRouter();
@@ -29,10 +30,36 @@ export default function Login() {
     }
   };
 
+  const withPasskey = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const { challenge_id, options } = await post<{ challenge_id: string; options: unknown }>(
+        "/api/auth/passkey/login/options",
+      );
+      const credential = await getCredential(options);
+      await post("/api/auth/passkey/login", { challenge_id, credential });
+      router.replace("/");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 429) setError("Too many attempts. Try again later.");
+      else setError("The passkey did not work. Use your email and password instead.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main>
       <div className="card narrow">
         <h1>Sign in</h1>
+        {passkeysSupported() && (
+          <>
+            <button type="button" disabled={busy} onClick={withPasskey}>
+              Sign in with a passkey
+            </button>
+            <p className="muted">Or use your email and password:</p>
+          </>
+        )}
         <form onSubmit={submit}>
           <label>
             Email

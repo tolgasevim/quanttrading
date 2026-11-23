@@ -917,3 +917,37 @@ export type FundCard = {
   overlaps: string[];
   tax_note: string;
 };
+
+export type Passkey = { id: string; name: string; created_at: string; last_used_at: string | null };
+
+export type AdminOverview = {
+  now: string;
+  users: {
+    id: string;
+    email: string;
+    display_name: string;
+    role: string;
+    totp_enabled: boolean;
+    passkeys: number;
+    created_at: string;
+    last_login_at: string | null;
+    locked: boolean;
+    last_import_at: string | null;
+    last_import_source: string | null;
+    ai_spend_eur: string;
+  }[];
+  jobs: {
+    job: string;
+    healthy: boolean;
+    problem: string | null;
+    last_status: string | null;
+    last_started: string | null;
+    last_finished: string | null;
+    last_success: string | null;
+    rows_written: number;
+    failures_7d: number;
+    error_count: number;
+  }[];
+  llm: { month: string; total_eur: string; total_cap_eur: string; user_cap_eur: string; by_purpose: Record<string, string> };
+  pending_invites: number;
+};

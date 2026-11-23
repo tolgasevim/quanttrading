@@ -51,7 +51,7 @@ the securities and crypto statements.
      `tailscale serve --bg 3000`, and use the `https://<mac-mini>.<tailnet>.ts.net` address. Keep
      `QT_COOKIE_SECURE=true` for this.
 
-Turn on two-factor sign-in under Settings after the first login.
+Turn on two-factor sign-in under Settings after the first login. You can also add a passkey there (fingerprint, face or device PIN). A passkey only works on the address it was made for, so first set `QT_WEBAUTHN_RP_ID` (the host name you type in the browser, no scheme, no port) and `QT_WEBAUTHN_ORIGIN` (the full address, for example `https://<mac-mini>.<tailnet>.ts.net`) in `.env`, and run `docker compose up -d` again. The password with the authenticator app keeps working.
 
 ## The AI guide (optional)
 
@@ -96,6 +96,11 @@ Set-up:
 | Performance | Time-weighted and money-weighted return against a benchmark (Nasdaq-100, MSCI World or S&P 500), and risk: volatility, largest fall, beta, one-day VaR and CVaR, correlation. |
 | Cash | Your cash balance, checked against your history. Reserves you set aside, and the strict rule for unlocking part of an opportunity reserve. |
 | Concentration | Weights by sector, country, currency and instrument type, with ETF look-through. An admin uploads each fund's holdings file (a CSV from the issuer). |
+| Allocation, Journal | Your target mix, guardrails, drift and a plan for new money; and a journal of why you made each decision. |
+| Positions | Tech sub-groups, tags, consolidation prompts, fund overlap and the short-term trading book. |
+| Scores | Factor scores for every share in the universe, with data-quality flags and history; a watchlist; fund and ETC scorecards. An admin loads universe lists, fundamentals and fund facts. |
+| Markets, Crypto | Commodities, key drivers, the regime and the gold hedge check; crypto lots with the day each turns tax-free. |
+| Admin | For the owner: users, last imports, the health of every data job and the AI spend. |
 
 ## Import your Trade Republic history
 
@@ -128,6 +133,14 @@ Holdings are rebuilt from the transaction history. To compare them with a statem
      --crypto-pdf /tmp/crypto.pdf --depot-pdf /tmp/depot.pdf
    docker compose exec api rm /tmp/tx.csv /tmp/crypto.pdf /tmp/depot.pdf
    ```
+
+A trade confirmation (*Wertpapierabrechnung*) can be checked the same way. The parser is new and has not seen a real file yet, so this dry run is its first test (it prints only pass or fail):
+
+```sh
+docker compose cp ~/Downloads/abrechnung.pdf api:/tmp/abrechnung.pdf
+docker compose exec api python -m quant.cli check-confirmation /tmp/abrechnung.pdf
+docker compose exec api rm /tmp/abrechnung.pdf
+```
 
 ## Development
 
