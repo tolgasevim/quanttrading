@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from quant import rls
 from quant.api.admin import EXPECTED_JOBS
 from quant.models import (
     Import,
@@ -125,6 +126,7 @@ def test_users_show_sign_in_methods_last_import_and_ai_spend(
 ) -> None:
     friend = make_user(db, "friend@example.com")
     admin = db.scalars(select(User).where(User.email == "owner@example.com")).one()
+    rls.bypass(db)  # imports and the AI ledger are row-level secured
     db.add(Passkey(user_id=friend.id, credential_id=b"c", public_key=b"k", sign_count=0, name="p"))
     friend.last_login_at = datetime.now(UTC) - timedelta(days=1)
     friend.locked_until = datetime.now(UTC) + timedelta(minutes=5)
@@ -170,6 +172,7 @@ def test_users_show_sign_in_methods_last_import_and_ai_spend(
 
 def test_the_panel_shows_counts_and_times_never_holdings(owner: TestClient, db: Session) -> None:
     friend = make_user(db, "friend@example.com")
+    rls.bypass(db)
     db.add(
         Import(
             user_id=friend.id, source="tr_transactions_csv", status=ImportStatus.COMMITTED,
