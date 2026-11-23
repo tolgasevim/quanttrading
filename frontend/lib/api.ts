@@ -951,3 +951,15 @@ export type AdminOverview = {
   llm: { month: string; total_eur: string; total_cap_eur: string; user_cap_eur: string; by_purpose: Record<string, string> };
   pending_invites: number;
 };
+
+export type Delivery = {
+  email_available: boolean;
+  email_mode: "off" | "weekly" | "daily";
+  email_to: string | null;
+  account_email: string;
+  telegram_available: boolean;
+  telegram_linked: boolean;
+  telegram_bot_name: string | null;
+  link_pending: boolean;
+  privacy: string;
+};

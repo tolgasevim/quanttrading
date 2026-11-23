@@ -325,6 +325,8 @@ class Notification(Base):
     dedupe_key: Mapped[str] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When it was pushed to the user's Telegram (FR-72), or NULL: not yet, or no chat is linked.
+    pushed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AlertSettings(Base):
@@ -797,3 +799,35 @@ class WebauthnChallenge(Base):
     purpose: Mapped[str] = mapped_column(String(10))  # register | login
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class DeliverySettings(Base):
+    """How a user wants alerts and digests delivered outside the app (FR-71, FR-72). No row means
+    nothing is sent: the in-app list is always on. `email_mode` is off, weekly or daily. A
+    Telegram chat is linked by sending a one-time code to the bot; only the hash of the code is
+    kept, and it expires."""
+
+    __tablename__ = "delivery_settings"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    email_mode: Mapped[str] = mapped_column(String(10), default="off", server_default="off")
+    email_to: Mapped[str | None] = mapped_column(String(320))  # NULL: the account's address
+    digest_sent_on: Mapped[date | None] = mapped_column(Date)  # the day the last digest went out
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    telegram_linked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    link_code_hash: Mapped[str | None] = mapped_column(String(64))
+    link_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TelegramState(Base):
+    """Where the bot stopped reading Telegram's updates (one row, id 1). Shared, not personal."""
+
+    __tablename__ = "telegram_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    next_offset: Mapped[int] = mapped_column(BigInteger, default=0)

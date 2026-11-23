@@ -87,6 +87,22 @@ Set-up:
 6. The code that talks to the live API was tested with a fake SDK only. Ask one question after
    set-up and check that it answers.
 
+## Alerts by email and Telegram (optional)
+
+Every alert is in the app. Two more channels are off until you set them up in `.env`
+(see `.env.example`), then run `docker compose up -d` again. Each person then chooses under
+Settings, Delivery. Quiet hours (Alerts page) hold messages until they end.
+
+- **Email digest**: set `QT_SMTP_HOST`, `QT_SMTP_USER`, `QT_SMTP_PASSWORD` and `QT_SMTP_FROM` for any SMTP
+  server (a relay with a free tier is enough). The mail goes through that server.
+- **Telegram**: open Telegram, talk to @BotFather, make a bot, and put its token in `QT_TELEGRAM_BOT_TOKEN` and its
+  @name in `QT_TELEGRAM_BOT_NAME`. Each person links their own chat in Settings with a one-time code.
+  Telegram sees the text of every alert it delivers.
+
+To try them without waiting: `docker compose exec api python -m quant.cli push-alerts` and
+`docker compose exec api python -m quant.cli send-digests`. The first real run of both is yours: they were
+tested with fakes only.
+
 ## What the pages show
 
 | Page | What it is for |

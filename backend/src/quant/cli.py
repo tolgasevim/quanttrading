@@ -272,6 +272,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("create-alerts", help="create the daily-move and failed-job alerts now")
     sub.add_parser("score-picks", help="score the AI picks against the benchmark now (FR-52)")
     sub.add_parser("weekly-commentary", help="write this week's AI commentary now (FR-54)")
+    sub.add_parser("score-factors", help="compute today's factor scores now (FR-31)")
+    sub.add_parser("push-alerts", help="push new alerts to linked Telegram chats now (FR-72)")
+    sub.add_parser("send-digests", help="send the email digests that are due now (FR-71)")
     sub.add_parser("ingest-fx", help="run the ECB FX job now")
     sub.add_parser("worker", help="run the scheduler")
 
@@ -296,6 +299,10 @@ def main(argv: list[str] | None = None) -> None:
         "ingest-fx",
         "create-alerts",
         "score-picks",
+        "score-factors",
+        "weekly-commentary",
+        "push-alerts",
+        "send-digests",
         "worker",
     ):
         from quant import worker
@@ -306,6 +313,9 @@ def main(argv: list[str] | None = None) -> None:
             "ingest-fx": worker.run_fx,
             "create-alerts": worker.run_alerts,
             "score-picks": worker.run_scoring,
+            "score-factors": worker.run_factor_scores,
+            "push-alerts": worker.run_push,
+            "send-digests": worker.run_digests,
             "weekly-commentary": worker.run_weekly_commentary,
             "worker": worker.main,
         }[args.command]()
