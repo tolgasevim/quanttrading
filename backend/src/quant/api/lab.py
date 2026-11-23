@@ -141,6 +141,7 @@ def get_lab(user: CurrentUser, db: UserDb) -> LabOut:
 
 @router.post("/backtest", response_model=BacktestOut)
 def run(body: BacktestIn, user: CurrentUser, db: UserDb) -> BacktestOut:
+    universe: tuple[str, ...]
     if body.strategy == "trend":
         if not body.instrument:
             raise HTTPException(
